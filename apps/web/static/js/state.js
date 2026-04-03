@@ -1,0 +1,15 @@
+export const state = {
+  route: "home",
+  serviceOnline: false,
+  systemInfo: null,
+  environment: null,
+  settings: null,
+  tasks: [],
+  selectedTaskId: null,
+  selectedTaskDetail: null,
+  selectedTaskEvents: [],
+  submitStatus: "",
+  settingsSaveStatus: "",
+  cudaActionStatus: "",
+  pollTimer: null,
+};

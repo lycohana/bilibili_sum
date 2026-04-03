@@ -1,0 +1,17 @@
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+dist/
+build/
+*.pyc
+*.pyo
+*.pyd
+*.sqlite3
+*.db
+node_modules/
+.DS_Store
+Thumbs.db
+temp_repo_inspect/
+.env
+.data/*

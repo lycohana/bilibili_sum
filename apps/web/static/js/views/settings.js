@@ -1,0 +1,315 @@
+import { escapeHtml } from "../utils.js";
+
+export function renderSettingsView(state) {
+  const settings = state.settings || {};
+  const info = state.systemInfo || {};
+  const env = state.environment || {};
+
+  return `
+    <section class="settings-grid">
+      <!-- 运行环境与CUDA -->
+      <article class="grid-card settings-wide env-card">
+        <div class="panel-header">
+          <h2>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
+              <line x1="8" y1="21" x2="16" y2="21"></line>
+              <line x1="12" y1="17" x2="12" y2="21"></line>
+            </svg>
+            运行环境与 CUDA
+          </h2>
+          <p>环境检测、推荐设备和 CUDA 配置</p>
+        </div>
+
+        <!-- 环境状态网格 -->
+        <div class="env-summary-grid">
+          ${renderEnvCard("推荐设备", env.recommendedDevice || "-", "cpu")}
+          ${renderEnvCard("推荐模型", env.recommendedModel || "-", "model")}
+          ${renderEnvCard("GPU 状态", env.cudaAvailable ? "已启用" : "未启用", env.cudaAvailable ? "success" : "warning")}
+          ${renderEnvCard("GPU 名称", env.gpuName || "未检测到", env.gpuName ? "success" : "neutral")}
+          ${renderEnvCard("Torch", env.torchInstalled ? env.torchVersion || "已安装" : "未安装", env.torchInstalled ? "success" : "warning")}
+          ${renderEnvCard("yt-dlp", env.ytDlpVersion || "未安装", env.ytDlpVersion ? "success" : "warning")}
+          ${renderEnvCard("faster-whisper", env.fasterWhisperVersion || "未安装", env.fasterWhisperVersion ? "success" : "warning")}
+          ${renderEnvCard("Python", env.pythonVersion || "-", "neutral")}
+        </div>
+
+        <!-- CUDA操作区 -->
+        <div class="cuda-actions">
+          <label class="input-row">
+            <span class="input-label">CUDA 目标版本</span>
+            <select id="cuda_variant" class="select-field">
+              <option value="cu128" ${settings.cuda_variant === "cu128" ? "selected" : ""}>CUDA 12.8</option>
+              <option value="cu126" ${settings.cuda_variant === "cu126" ? "selected" : ""}>CUDA 12.6</option>
+              <option value="cu124" ${settings.cuda_variant === "cu124" ? "selected" : ""}>CUDA 12.4</option>
+            </select>
+          </label>
+          <div class="settings-actions">
+            <button id="refresh-env" class="secondary-button" type="button">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="23 4 23 10 17 10"></polyline>
+                <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+              </svg>
+              重新检测
+            </button>
+            <button id="install-cuda" class="primary-button" type="button">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="12" y1="5" x2="12" y2="19"></line>
+                <line x1="5" y1="12" x2="19" y2="12"></line>
+              </svg>
+              安装 CUDA 支持
+            </button>
+          </div>
+          ${state.cudaActionStatus ? `
+            <div id="cuda-action-status" class="action-status ${state.cudaActionStatus.includes('成功') ? 'success' : state.cudaActionStatus.includes('失败') ? 'error' : ''}">
+              ${escapeHtml(state.cudaActionStatus)}
+            </div>
+          ` : ''}
+        </div>
+      </article>
+
+      <!-- 运行配置表单 -->
+      <article class="grid-card settings-form-card">
+        <div class="panel-header">
+          <h2>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="3"></circle>
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+            </svg>
+            运行配置
+          </h2>
+          <p>编辑并保存后端配置</p>
+        </div>
+
+        <form id="settings-form" class="setting-form settings-sections">
+          <!-- 基础运行 -->
+          <section class="settings-subsection">
+            <h3>基础运行</h3>
+            ${renderInput("host", "监听地址 Host", settings.host || "", "text", "0.0.0.0")}
+            ${renderInput("port", "监听端口", settings.port || "", "number", "3838")}
+            ${renderInput("data_dir", "数据目录", settings.data_dir || "", "text", "/path/to/data")}
+            ${renderInput("cache_dir", "缓存目录", settings.cache_dir || "", "text", "/path/to/cache")}
+            ${renderInput("tasks_dir", "任务目录", settings.tasks_dir || "", "text", "/path/to/tasks")}
+            ${renderInput("database_url", "数据库", settings.database_url || "", "text", "sqlite:///data.db")}
+          </section>
+
+          <!-- 转写模型 -->
+          <section class="settings-subsection">
+            <h3>转写模型</h3>
+            ${renderSelect("device_preference", "推理设备", settings.device_preference || "cpu", [
+              { value: "auto", label: "自动选择" },
+              { value: "cuda", label: "CUDA (GPU)" },
+              { value: "cpu", label: "CPU" }
+            ])}
+            ${renderSelect("compute_type", "计算精度", settings.compute_type || "int8", [
+              { value: "auto", label: "自动" },
+              { value: "float16", label: "Float16" },
+              { value: "int8", label: "Int8" },
+              { value: "float32", label: "Float32" }
+            ])}
+            ${renderSelect("model_mode", "模型模式", settings.model_mode || "fixed", [
+              { value: "auto", label: "自动" },
+              { value: "fixed", label: "固定" }
+            ])}
+            ${renderSelect("fixed_model", "固定模型", settings.fixed_model || "tiny", [
+              { value: "tiny", label: "Tiny (最快)" },
+              { value: "base", label: "Base (平衡)" },
+              { value: "large-v3-turbo", label: "Large v3 Turbo (最准)" }
+            ])}
+            ${renderInput("language", "语言", settings.language || "", "text", "zh")}
+          </section>
+
+          <!-- 输出与缓存 -->
+          <section class="settings-subsection">
+            <h3>输出与缓存</h3>
+            ${renderInput("output_dir", "输出目录", settings.output_dir || "", "text", "/path/to/output")}
+            <label class="toggle-row">
+              <span>保留临时音频</span>
+              <input id="preserve_temp_audio" type="checkbox" ${settings.preserve_temp_audio ? "checked" : ""} />
+            </label>
+            <label class="toggle-row">
+              <span>启用本地缓存</span>
+              <input id="enable_cache" type="checkbox" ${settings.enable_cache ? "checked" : ""} />
+            </label>
+          </section>
+
+          <!-- 摘要配置 -->
+          <section class="settings-subsection">
+            <h3>摘要配置</h3>
+            ${renderSelect("summary_mode", "摘要模式", settings.summary_mode || "llm", [
+              { value: "auto", label: "自动" },
+              { value: "rule", label: "规则摘要" },
+              { value: "llm", label: "LLM 摘要" }
+            ])}
+            <label class="toggle-row">
+              <span>启用 LLM 摘要</span>
+              <input id="llm_enabled" type="checkbox" ${settings.llm_enabled ? "checked" : ""} />
+            </label>
+            ${renderInput("llm_provider", "LLM Provider", settings.llm_provider || "", "text", "openai-compatible")}
+            ${renderInput("llm_base_url", "LLM Base URL", settings.llm_base_url || "", "text", "https://api.openai.com/v1")}
+            ${renderInput("llm_model", "LLM 模型", settings.llm_model || "", "text", "gpt-3.5-turbo")}
+            ${renderInput("llm_api_key", "LLM API Key", settings.llm_api_key || "", "password", "sk-...")}
+            ${renderTextarea("summary_system_prompt", "系统提示词", settings.summary_system_prompt || "", 4)}
+            ${renderTextarea("summary_user_prompt_template", "用户提示词模板", settings.summary_user_prompt_template || "", 6)}
+          </section>
+
+          <!-- 保存按钮 -->
+          <section class="settings-subsection settings-actions-section">
+            <div class="settings-actions">
+              <button class="primary-button" type="submit">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
+                  <polyline points="17 21 17 13 7 13 7 21"></polyline>
+                  <polyline points="7 3 7 8 15 8"></polyline>
+                </svg>
+                保存设置
+              </button>
+              ${state.settingsSaveStatus ? `
+                <div id="settings-save-status" class="action-status ${state.settingsSaveStatus.includes('成功') ? 'success' : state.settingsSaveStatus.includes('失败') ? 'error' : ''}">
+                  ${escapeHtml(state.settingsSaveStatus)}
+                </div>
+              ` : ''}
+            </div>
+          </section>
+        </form>
+      </article>
+
+      <!-- 摘要配置概览 -->
+      <article class="grid-card">
+        <div class="panel-header">
+          <h2>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+              <polyline points="14 2 14 8 20 8"></polyline>
+              <line x1="16" y1="13" x2="8" y2="13"></line>
+              <line x1="16" y1="17" x2="8" y2="17"></line>
+              <polyline points="10 9 9 9 8 9"></polyline>
+            </svg>
+            摘要配置概览
+          </h2>
+          <p>当前摘要相关运行参数</p>
+        </div>
+        <div class="setting-list">
+          ${renderRow("LLM 启用", settings.llm_enabled ? "✓ 是" : "✗ 否", settings.llm_enabled ? "success" : "neutral")}
+          ${renderRow("LLM Base URL", settings.llm_base_url || "-", settings.llm_base_url ? "success" : "neutral")}
+          ${renderRow("LLM 模型", settings.llm_model || "-", settings.llm_model ? "success" : "neutral")}
+          ${renderRow("摘要模式", settings.summary_mode || "-", "neutral")}
+          ${renderRow("API Key", settings.llm_api_key_configured ? "✓ 已配置" : "✗ 未配置", settings.llm_api_key_configured ? "success" : "warning")}
+        </div>
+      </article>
+
+      <!-- 后端信息 -->
+      <article class="grid-card">
+        <div class="panel-header">
+          <h2>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
+              <line x1="8" y1="21" x2="16" y2="21"></line>
+              <line x1="12" y1="17" x2="12" y2="21"></line>
+            </svg>
+            后端信息
+          </h2>
+          <p>系统运行详情</p>
+        </div>
+        <div class="setting-list">
+          ${renderRow("服务名", info.application?.name || "-")}
+          ${renderRow("版本", info.application?.version || "-")}
+          ${renderRow("任务状态", (info.taskModel?.statuses || []).join(", ") || "-")}
+        </div>
+      </article>
+
+      <!-- 关于 -->
+      <article class="grid-card about-card">
+        <div class="panel-header">
+          <h2>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="10"></circle>
+              <line x1="12" y1="16" x2="12" y2="12"></line>
+              <line x1="12" y1="8" x2="12.01" y2="8"></line>
+            </svg>
+            关于
+          </h2>
+          <p>项目信息</p>
+        </div>
+        <div class="setting-list">
+          ${renderRow("当前形态", "开发态可用 + 本地 Web UI", "info")}
+          ${renderRow("下一目标", "桌面 UI + 可执行后端", "info")}
+          ${renderRow("最终目标", "MSI / DMG / AppImage", "info")}
+        </div>
+      </article>
+    </section>
+  `;
+}
+
+function renderEnvCard(label, value, type) {
+  const icons = {
+    cpu: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2" ry="2"></rect><rect x="9" y="9" width="6" height="6"></rect><line x1="9" y1="1" x2="9" y2="4"></line><line x1="15" y1="1" x2="15" y2="4"></line><line x1="9" y1="20" x2="9" y2="23"></line><line x1="15" y1="20" x2="15" y2="23"></line><line x1="20" y1="9" x2="23" y2="9"></line><line x1="20" y1="14" x2="23" y2="14"></line><line x1="1" y1="9" x2="4" y2="9"></line><line x1="1" y1="14" x2="4" y2="14"></line></svg>`,
+    model: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"></path></svg>`,
+    success: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"></polyline></svg>`,
+    warning: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>`,
+    neutral: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>`,
+  };
+
+  const icon = icons[type] || icons.neutral;
+
+  return `
+    <div class="env-card-item ${type}">
+      <div class="env-card-icon">${icon}</div>
+      <div class="env-card-content">
+        <span class="env-card-label">${escapeHtml(label)}</span>
+        <span class="env-card-value">${escapeHtml(value)}</span>
+      </div>
+    </div>
+  `;
+}
+
+function renderRow(label, value, type = "neutral") {
+  const typeClass = type === "success" ? "row-success" : type === "warning" ? "row-warning" : type === "info" ? "row-info" : "";
+
+  return `
+    <div class="setting-row ${typeClass}">
+      <span class="setting-label">${escapeHtml(label)}</span>
+      <span class="setting-value">${escapeHtml(value)}</span>
+    </div>
+  `;
+}
+
+function renderInput(id, label, value, type = "text", placeholder = "") {
+  return `
+    <label class="input-row">
+      <span class="input-label">${escapeHtml(label)}</span>
+      <input 
+        id="${escapeHtml(id)}" 
+        type="${escapeHtml(type)}" 
+        value="${escapeHtml(value)}" 
+        placeholder="${escapeHtml(placeholder)}"
+        class="input-field"
+      />
+    </label>
+  `;
+}
+
+function renderSelect(id, label, selectedValue, options) {
+  return `
+    <label class="input-row">
+      <span class="input-label">${escapeHtml(label)}</span>
+      <select id="${escapeHtml(id)}" class="select-field">
+        ${options
+          .map((opt) => `<option value="${escapeHtml(opt.value)}" ${opt.value === selectedValue ? "selected" : ""}>${escapeHtml(opt.label)}</option>`)
+          .join("")}
+      </select>
+    </label>
+  `;
+}
+
+function renderTextarea(id, label, value, rows) {
+  return `
+    <label class="input-row">
+      <span class="input-label">${escapeHtml(label)}</span>
+      <textarea 
+        id="${escapeHtml(id)}" 
+        rows="${rows}"
+        class="textarea-field"
+      >${escapeHtml(value)}</textarea>
+    </label>
+  `;
+}

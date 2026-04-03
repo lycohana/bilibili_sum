@@ -1,0 +1,1 @@
+"""Pipeline contracts and orchestration."""

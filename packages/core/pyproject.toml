@@ -1,0 +1,18 @@
+[build-system]
+requires = ["hatchling>=1.27.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "video-sum-core"
+version = "0.1.0"
+description = "Core domain logic for the local video summarizer."
+requires-python = ">=3.12"
+dependencies = [
+  "pydantic>=2.10,<3.0",
+  "yt-dlp>=2025.3.31",
+  "faster-whisper>=1.1.1",
+  "httpx>=0.28,<1.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/video_sum_core"]
