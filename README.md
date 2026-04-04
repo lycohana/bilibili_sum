@@ -129,6 +129,10 @@ python -m video_sum_service
 
 返回当前任务的事件流记录。
 
+### `GET /api/v1/tasks/{task_id}/events/stream`
+
+返回当前任务的实时事件流，前端任务页会用它做更跟手的进度更新。
+
 ## 示例用法
 
 启动服务后，可以直接提交一个 B 站链接：
@@ -156,6 +160,7 @@ python -m video_sum_service
 - `GET /api/v1/tasks`
 - `GET /api/v1/tasks/{task_id}/result`
 - `GET /api/v1/tasks/{task_id}/events`
+- `GET /api/v1/tasks/{task_id}/events/stream`
 
 当前任务执行链路已经可运行，但还是 placeholder pipeline：
 
@@ -190,7 +195,8 @@ python -m video_sum_service
 - 当前任务已经落到 SQLite
 - 已接入最小 `task_results` 和 `task_events` 表
 - 已有最小后台线程 worker
-- 但还没有正式队列、取消、重试、SSE
+- 已接入任务页实时事件流
+- 但还没有正式队列、取消、重试
 
 ## 相关文档
 

@@ -147,7 +147,11 @@ export function renderSettingsView(state) {
             ${renderInput("llm_provider", "LLM Provider", settings.llm_provider || "", "text", "openai-compatible")}
             ${renderInput("llm_base_url", "LLM Base URL", settings.llm_base_url || "", "text", "https://api.openai.com/v1")}
             ${renderInput("llm_model", "LLM 模型", settings.llm_model || "", "text", "gpt-3.5-turbo")}
-            ${renderInput("llm_api_key", "LLM API Key", settings.llm_api_key || "", "password", "sk-...")}
+            ${renderInput("llm_api_key", "LLM API Key", settings.llm_api_key || "", "password", "sk-...", "current-password")}
+            ${renderInput("summary_chunk_target_chars", "分块目标字符数", settings.summary_chunk_target_chars || 2200, "number", "2200")}
+            ${renderInput("summary_chunk_overlap_segments", "分块重叠段数", settings.summary_chunk_overlap_segments || 2, "number", "2")}
+            ${renderInput("summary_chunk_concurrency", "分块并发数", settings.summary_chunk_concurrency || 3, "number", "3")}
+            ${renderInput("summary_chunk_retry_count", "单块重试次数", settings.summary_chunk_retry_count || 2, "number", "2")}
             ${renderTextarea("summary_system_prompt", "系统提示词", settings.summary_system_prompt || "", 4)}
             ${renderTextarea("summary_user_prompt_template", "用户提示词模板", settings.summary_user_prompt_template || "", 6)}
           </section>
@@ -193,6 +197,8 @@ export function renderSettingsView(state) {
           ${renderRow("LLM Base URL", settings.llm_base_url || "-", settings.llm_base_url ? "success" : "neutral")}
           ${renderRow("LLM 模型", settings.llm_model || "-", settings.llm_model ? "success" : "neutral")}
           ${renderRow("摘要模式", settings.summary_mode || "-", "neutral")}
+          ${renderRow("分块大小", String(settings.summary_chunk_target_chars || "-"), "neutral")}
+          ${renderRow("分块并发", String(settings.summary_chunk_concurrency || "-"), "neutral")}
           ${renderRow("API Key", settings.llm_api_key_configured ? "✓ 已配置" : "✗ 未配置", settings.llm_api_key_configured ? "success" : "warning")}
         </div>
       </article>
@@ -273,7 +279,7 @@ function renderRow(label, value, type = "neutral") {
   `;
 }
 
-function renderInput(id, label, value, type = "text", placeholder = "") {
+function renderInput(id, label, value, type = "text", placeholder = "", autocomplete = "") {
   return `
     <label class="input-row">
       <span class="input-label">${escapeHtml(label)}</span>
@@ -282,6 +288,7 @@ function renderInput(id, label, value, type = "text", placeholder = "") {
         type="${escapeHtml(type)}" 
         value="${escapeHtml(value)}" 
         placeholder="${escapeHtml(placeholder)}"
+        ${autocomplete ? `autocomplete="${escapeHtml(autocomplete)}"` : ""}
         class="input-field"
       />
     </label>

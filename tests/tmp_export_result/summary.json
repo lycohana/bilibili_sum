@@ -1,0 +1,26 @@
+{
+  "title": "测试标题",
+  "summary": {
+    "overview": "概览",
+    "bulletPoints": [
+      "要点一"
+    ],
+    "chapters": [
+      {
+        "title": "章节 1",
+        "start": 0.0,
+        "summary": "章节摘要"
+      }
+    ],
+    "llm_prompt_tokens": 123,
+    "llm_completion_tokens": 456,
+    "llm_total_tokens": 579
+  },
+  "segments": [
+    {
+      "start": 0.0,
+      "end": 1.0,
+      "text": "第一段"
+    }
+  ]
+}

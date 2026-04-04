@@ -5,7 +5,13 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
-from video_sum_infra.config import ServiceSettings
+from video_sum_infra.config import (
+    DEFAULT_SUMMARY_SYSTEM_PROMPT,
+    DEFAULT_SUMMARY_USER_PROMPT_TEMPLATE,
+    LEGACY_SUMMARY_SYSTEM_PROMPT,
+    LEGACY_SUMMARY_USER_PROMPT_TEMPLATE,
+    ServiceSettings,
+)
 
 
 class SettingsUpdatePayload(BaseModel):
@@ -35,6 +41,10 @@ class SettingsUpdatePayload(BaseModel):
     llm_api_key: str | None = None
     summary_system_prompt: str | None = None
     summary_user_prompt_template: str | None = None
+    summary_chunk_target_chars: int | None = None
+    summary_chunk_overlap_segments: int | None = None
+    summary_chunk_concurrency: int | None = None
+    summary_chunk_retry_count: int | None = None
 
 
 class SettingsManager:
@@ -50,6 +60,10 @@ class SettingsManager:
     def load(self) -> ServiceSettings:
         if self._settings_path.exists():
             stored = json.loads(self._settings_path.read_text(encoding="utf-8"))
+            if stored.get("summary_system_prompt") == LEGACY_SUMMARY_SYSTEM_PROMPT:
+                stored["summary_system_prompt"] = DEFAULT_SUMMARY_SYSTEM_PROMPT
+            if stored.get("summary_user_prompt_template") == LEGACY_SUMMARY_USER_PROMPT_TEMPLATE:
+                stored["summary_user_prompt_template"] = DEFAULT_SUMMARY_USER_PROMPT_TEMPLATE
             self._settings = ServiceSettings.model_validate({**self._base_settings.model_dump(), **stored})
         else:
             self._settings = self._base_settings
