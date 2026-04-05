@@ -521,8 +521,11 @@ function createWindow() {
     },
   });
 
-  // 禁用鼠标中键导航（防止打开新窗口）
-  mainWindow.webContents.setWindowOpenHandler(() => {
+  // 禁用鼠标中键导航（防止打开新窗口），但允许外部链接通过 shell.openExternal 打开
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    // 尝试使用 shell.openExternal 打开外部 URL
+    shell.openExternal(url);
+    // 阻止在 Electron 中创建新窗口
     return { action: "deny" };
   });
 

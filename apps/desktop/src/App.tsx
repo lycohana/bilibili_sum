@@ -132,6 +132,13 @@ export function App() {
       });
   }, [libraryFilter, query, snapshot.videos]);
 
+  // 首页最近视频列表：始终使用未过滤的视频列表，独立于视频库的搜索和状态过滤
+  const recentVideos = useMemo(() => {
+    return [...snapshot.videos]
+      .sort((left, right) => new Date(right.updated_at).getTime() - new Date(left.updated_at).getTime())
+      .slice(0, 6);
+  }, [snapshot.videos]);
+
   const runtimeDeviceLabel = useMemo(() => {
     const rawDevice = (
       snapshot.environment?.recommendedDevice
@@ -277,7 +284,7 @@ export function App() {
                     serviceOnline={snapshot.serviceOnline}
                     runtimeDeviceLabel={runtimeDeviceLabel}
                     onProbe={handleProbe}
-                    recentVideos={filteredVideos.slice(0, 6)}
+                    recentVideos={recentVideos}
                   />
                 )}
               />
@@ -862,6 +869,7 @@ function SettingsPage({ snapshot, desktop, onRefresh }: { snapshot: Snapshot; de
 
   async function save(event: FormEvent) {
     event.preventDefault();
+    if (!form) return;
     try {
       await api.updateSettings(form);
       setSaveStatus("设置已保存");
