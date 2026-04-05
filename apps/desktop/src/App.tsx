@@ -1,8 +1,18 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, SVGProps, useEffect, useMemo, useState } from "react";
 import { Link, Route, Routes, useLocation, useNavigate, useParams } from "react-router-dom";
 
 import { api } from "./api";
-import type { EnvironmentInfo, ServiceSettings, SystemInfo, TaskDetail, TaskEvent, TaskSummary, VideoAssetDetail, VideoAssetSummary } from "./types";
+import type {
+  EnvironmentInfo,
+  ServiceSettings,
+  SystemInfo,
+  TaskDetail,
+  TaskEvent,
+  TaskStatus,
+  TaskSummary,
+  VideoAssetDetail,
+  VideoAssetSummary,
+} from "./types";
 import { formatDateTime, formatDuration, formatTaskDuration, formatTokenCount, summarizeEvents, taskStatusLabel } from "./utils";
 
 type Snapshot = {
@@ -16,11 +26,12 @@ type Snapshot = {
 
 type DesktopState = {
   version: string;
-  autoLaunch: boolean;
-  closeBehavior: "ask" | "tray" | "exit";
   backend: DesktopBackendStatus | null;
   logPath: string;
 };
+
+type LibraryFilter = "all" | "completed" | "running" | "with-result";
+type MetricTone = "default" | "accent" | "success" | "info";
 
 const emptySnapshot: Snapshot = { serviceOnline: false, systemInfo: null, environment: null, settings: null, videos: [], error: "" };
 
@@ -28,8 +39,9 @@ export function App() {
   const location = useLocation();
   const navigate = useNavigate();
   const [snapshot, setSnapshot] = useState<Snapshot>(emptySnapshot);
-  const [desktop, setDesktop] = useState<DesktopState>({ version: "0.1.0", autoLaunch: false, closeBehavior: "ask", backend: null, logPath: "" });
+  const [desktop, setDesktop] = useState<DesktopState>({ version: "0.1.0", backend: null, logPath: "" });
   const [query, setQuery] = useState("");
+  const [libraryFilter, setLibraryFilter] = useState<LibraryFilter>("all");
   const [probeUrl, setProbeUrl] = useState("");
   const [submitStatus, setSubmitStatus] = useState("");
   const [probePreview, setProbePreview] = useState<VideoAssetSummary | null>(null);
@@ -39,14 +51,12 @@ export function App() {
     let cleanup: (() => void) | undefined;
     async function bootstrap() {
       if (!window.desktop) return;
-      const [version, autoLaunch, closeBehavior, backend, logPath] = await Promise.all([
+      const [version, backend, logPath] = await Promise.all([
         window.desktop.app.getVersion(),
-        window.desktop.app.getAutoLaunch(),
-        window.desktop.preferences.getCloseBehavior(),
         window.desktop.backend.status(),
         window.desktop.logs.getServiceLogPath(),
       ]);
-      setDesktop({ version, autoLaunch, closeBehavior, backend, logPath });
+      setDesktop({ version, backend, logPath });
       cleanup = window.desktop.backend.onStatus((status) => setDesktop((current) => ({ ...current, backend: status })));
     }
     void bootstrap();
@@ -81,21 +91,52 @@ export function App() {
     };
   }, [refreshSeed]);
 
+  const latestVideo = useMemo(() => {
+    return [...snapshot.videos].sort(
+      (left, right) => new Date(right.updated_at).getTime() - new Date(left.updated_at).getTime(),
+    )[0] ?? null;
+  }, [snapshot.videos]);
+
+  const libraryCounts = useMemo(() => {
+    const completed = snapshot.videos.filter((item) => item.latest_status === "completed").length;
+    const running = snapshot.videos.filter((item) => item.latest_status === "running").length;
+    const withResult = snapshot.videos.filter((item) => item.has_result).length;
+    return {
+      total: snapshot.videos.length,
+      completed,
+      running,
+      withResult,
+    };
+  }, [snapshot.videos]);
+
   const filteredVideos = useMemo(() => {
     const keyword = query.trim().toLowerCase();
-    if (!keyword) return snapshot.videos;
-    return snapshot.videos.filter((video) => video.title.toLowerCase().includes(keyword) || video.source_url.toLowerCase().includes(keyword));
-  }, [query, snapshot.videos]);
+    return [...snapshot.videos]
+      .sort((left, right) => new Date(right.updated_at).getTime() - new Date(left.updated_at).getTime())
+      .filter((video) => {
+        if (!keyword) return true;
+        return video.title.toLowerCase().includes(keyword) || video.source_url.toLowerCase().includes(keyword);
+      })
+      .filter((video) => {
+        if (libraryFilter === "completed") return video.latest_status === "completed";
+        if (libraryFilter === "running") return video.latest_status === "running";
+        if (libraryFilter === "with-result") return video.has_result;
+        return true;
+      });
+  }, [libraryFilter, query, snapshot.videos]);
 
-  async function refreshDesktop() {
-    if (!window.desktop) return;
-    const [autoLaunch, closeBehavior, backend] = await Promise.all([
-      window.desktop.app.getAutoLaunch(),
-      window.desktop.preferences.getCloseBehavior(),
-      window.desktop.backend.status(),
-    ]);
-    setDesktop((current) => ({ ...current, autoLaunch, closeBehavior, backend }));
-  }
+  const runtimeDeviceLabel = useMemo(() => {
+    const rawDevice = (
+      snapshot.environment?.recommendedDevice
+      || snapshot.settings?.device_preference
+      || ""
+    ).toLowerCase();
+
+    if (snapshot.environment?.cudaAvailable || rawDevice.includes("cuda") || rawDevice.includes("gpu")) {
+      return "GPU";
+    }
+    return "CPU";
+  }, [snapshot.environment, snapshot.settings]);
 
   async function handleProbe(event: FormEvent) {
     event.preventDefault();
@@ -110,7 +151,7 @@ export function App() {
       await api.createVideoTask(response.video.video_id);
       setSubmitStatus(response.cached ? "已从视频库读取并开始总结" : "视频已加入本地库并开始总结");
       setProbeUrl("");
-      setRefreshSeed((v) => v + 1);
+      setRefreshSeed((value) => value + 1);
       navigate(`/videos/${response.video.video_id}`);
     } catch (error) {
       setSubmitStatus(error instanceof Error ? error.message : "开始总结失败");
@@ -118,10 +159,22 @@ export function App() {
   }
 
   const pageMeta = location.pathname.startsWith("/settings")
-    ? { eyebrow: "设置页", title: "BriefVid 配置与桌面运行状态" }
+    ? {
+      eyebrow: "设置中心",
+      title: "运行配置、环境检测与日志",
+      description: "围绕本地推理环境、模型配置与桌面端服务控制，统一管理 BriefVid 的运行能力。",
+    }
     : location.pathname.startsWith("/videos/")
-      ? { eyebrow: "视频详情", title: "本地摘要结果与任务记录" }
-      : { eyebrow: "视频库", title: "BriefVid 本地视频库" };
+      ? {
+        eyebrow: "视频详情",
+        title: "本地摘要结果与任务记录",
+        description: "围绕单个视频集中查看摘要、时间轴、转写全文与任务处理进度。",
+      }
+      : {
+        eyebrow: "BriefVid Workspace",
+        title: "你的本地视频摘要工作台",
+        description: "输入链接、触发本地处理，并把视频结果沉淀成持续可检索的视频资产库。",
+      };
 
   return (
     <div className="app-shell">
@@ -131,130 +184,294 @@ export function App() {
             <img src="/static/assets/icons/icon.svg" alt="" />
           </div>
           <div className="brand-text">
-            <p className="eyebrow">Desktop Shell</p>
+            <p className="eyebrow">Local Video Summary</p>
             <h1>BriefVid</h1>
           </div>
         </div>
+
         <nav className="nav">
-          <Link className={`nav-item ${location.pathname === "/" ? "active" : ""}`} to="/">视频库</Link>
-          <Link className={`nav-item ${location.pathname.startsWith("/settings") ? "active" : ""}`} to="/settings">设置</Link>
+          <Link className={`nav-item ${location.pathname === "/" ? "active" : ""}`} to="/">
+            <span className="nav-icon" aria-hidden="true"><LibraryIcon /></span>
+            <span className="nav-copy">
+              <strong>视频库</strong>
+              <small>摘要与资产管理</small>
+            </span>
+          </Link>
+          <Link className={`nav-item ${location.pathname.startsWith("/settings") ? "active" : ""}`} to="/settings">
+            <span className="nav-icon" aria-hidden="true"><SettingsIcon /></span>
+            <span className="nav-copy">
+              <strong>设置</strong>
+              <small>环境与运行控制</small>
+            </span>
+          </Link>
         </nav>
+
         <section className="live-panel">
-          <div className="panel-header">
-            <h2>桌面状态</h2>
-            <p>托盘、自启动和后端桥接</p>
+          <div className="panel-header panel-header-subtle">
+            <h2>运行状态</h2>
+            <p>低频系统信息收纳在侧边，不打断主流程。</p>
           </div>
           <div className="status-stack">
-            <Metric label="桌面版本" value={desktop.version} />
-            <Metric label="后端状态" value={desktop.backend?.ready ? "已就绪" : desktop.backend?.running ? "启动中" : "未运行"} />
-            <Metric label="关闭行为" value={desktop.closeBehavior === "tray" ? "托盘" : desktop.closeBehavior === "exit" ? "退出" : "询问"} />
-            <Metric label="开机自启" value={desktop.autoLaunch ? "已启用" : "未启用"} />
+            <SidebarStatusItem
+              label="服务"
+              tone={snapshot.serviceOnline ? "success" : "default"}
+              value={snapshot.serviceOnline ? "在线" : desktop.backend?.running ? "启动中" : "离线"}
+            />
+            <SidebarStatusItem label="最近任务" value={latestVideo?.title ?? "暂无任务"} />
+            <SidebarStatusItem label="版本" value={desktop.version} />
+            <SidebarStatusItem label="运行设备" value={runtimeDeviceLabel} />
           </div>
         </section>
       </aside>
 
       <main className="content">
-        <header className="page-header">
-          <div className="page-header-content">
-            <p className="eyebrow">{pageMeta.eyebrow}</p>
-            <h2>{pageMeta.title}</h2>
-          </div>
-          <div className="header-actions">
-            <span className={`service-badge ${snapshot.serviceOnline ? "service-online" : "service-offline"}`}>
-              <span className="status-dot" aria-hidden="true"></span>
-              <span className="service-text">{snapshot.serviceOnline ? "服务在线" : "服务离线"}</span>
-            </span>
-          </div>
-        </header>
-
-        <div className="desktop-banner">
-          <div className="desktop-banner-copy">
-            <strong>桌面端已接管窗口、托盘和自启动</strong>
-            <span>关闭窗口可隐藏到托盘，真正退出请从托盘菜单或设置页执行。</span>
-          </div>
-          <div className="desktop-actions">
-            <button className="secondary-button" type="button" onClick={() => window.desktop?.window.show()}>显示窗口</button>
-            <button className="secondary-button" type="button" onClick={() => desktop.logPath && void window.desktop?.shell.openPath(desktop.logPath)}>打开日志</button>
-          </div>
-        </div>
-
-        {snapshot.error && !snapshot.serviceOnline ? (
-          <section className="grid-card empty-state-card">
-            <div className="spinner"></div>
-            <h3>后端暂未就绪</h3>
-            <p style={{ marginTop: 12, color: "var(--text-secondary)" }}>{snapshot.error}</p>
-            <div className="desktop-actions" style={{ justifyContent: "center", marginTop: 20 }}>
-              <button className="primary-button" type="button" onClick={async () => { await window.desktop?.backend.start(); setRefreshSeed((v) => v + 1); }}>重新拉起后端</button>
-              <button className="secondary-button" type="button" onClick={() => setRefreshSeed((v) => v + 1)}>重新检测</button>
+        <div className="content-frame">
+          <header className="page-header">
+            <div className="page-header-content">
+              <p className="eyebrow">{pageMeta.eyebrow}</p>
+              <h2>{pageMeta.title}</h2>
+              <p className="page-description">{pageMeta.description}</p>
             </div>
-          </section>
-        ) : (
-          <Routes>
-            <Route path="/" element={<LibraryPage filteredVideos={filteredVideos} probePreview={probePreview} probeUrl={probeUrl} query={query} setProbeUrl={setProbeUrl} setQuery={setQuery} snapshot={snapshot} submitStatus={submitStatus} onProbe={handleProbe} />} />
-            <Route path="/videos/:videoId" element={<VideoDetailPage desktop={desktop} onRefresh={() => setRefreshSeed((v) => v + 1)} />} />
-            <Route path="/settings" element={<SettingsPage desktop={desktop} onDesktopChange={refreshDesktop} onRefresh={() => setRefreshSeed((v) => v + 1)} snapshot={snapshot} />} />
-          </Routes>
-        )}
+          </header>
+
+          {snapshot.error && !snapshot.serviceOnline ? (
+            <section className="grid-card empty-state-card">
+              <div className="spinner"></div>
+              <h3>后端暂未就绪</h3>
+              <p>{snapshot.error}</p>
+              <div className="desktop-actions">
+                <button
+                  className="primary-button"
+                  type="button"
+                  onClick={async () => {
+                    await window.desktop?.backend.start();
+                    setRefreshSeed((value) => value + 1);
+                  }}
+                >
+                  重新拉起后端
+                </button>
+                <button className="secondary-button" type="button" onClick={() => setRefreshSeed((value) => value + 1)}>重新检测</button>
+              </div>
+            </section>
+          ) : (
+            <Routes>
+              <Route
+                path="/"
+                element={(
+                  <LibraryPage
+                    filteredVideos={filteredVideos}
+                    libraryCounts={libraryCounts}
+                    latestVideo={latestVideo}
+                    probePreview={probePreview}
+                    probeUrl={probeUrl}
+                    query={query}
+                    runtimeDeviceLabel={runtimeDeviceLabel}
+                    serviceOnline={snapshot.serviceOnline}
+                    setLibraryFilter={setLibraryFilter}
+                    setProbeUrl={setProbeUrl}
+                    setQuery={setQuery}
+                    snapshot={snapshot}
+                    submitStatus={submitStatus}
+                    activeFilter={libraryFilter}
+                    onProbe={handleProbe}
+                  />
+                )}
+              />
+              <Route path="/videos/:videoId" element={<VideoDetailPage onRefresh={() => setRefreshSeed((value) => value + 1)} />} />
+              <Route path="/settings" element={<SettingsPage desktop={desktop} onRefresh={() => setRefreshSeed((value) => value + 1)} snapshot={snapshot} />} />
+            </Routes>
+          )}
+        </div>
       </main>
     </div>
   );
 }
 
-function Metric({ label, value }: { label: string; value: string }) {
+function SidebarStatusItem({ label, value, tone = "default" }: { label: string; value: string; tone?: "default" | "success" }) {
   return (
-    <div className="summary-metric">
-      <strong>{value}</strong>
+    <div className={`sidebar-status-item ${tone === "success" ? "is-success" : ""}`}>
       <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  );
+}
+
+function Metric({
+  label,
+  value,
+  detail,
+  tone = "default",
+}: {
+  label: string;
+  value: string;
+  detail?: string;
+  tone?: MetricTone;
+}) {
+  return (
+    <div className={`summary-metric metric-${tone}`}>
+      <span>{label}</span>
+      <strong>{value}</strong>
+      {detail ? <small>{detail}</small> : null}
     </div>
   );
 }
 
 function LibraryPage({
-  snapshot, filteredVideos, query, setQuery, probeUrl, setProbeUrl, submitStatus, probePreview, onProbe,
+  snapshot,
+  filteredVideos,
+  libraryCounts,
+  latestVideo,
+  query,
+  setQuery,
+  probeUrl,
+  setProbeUrl,
+  submitStatus,
+  probePreview,
+  activeFilter,
+  setLibraryFilter,
+  serviceOnline,
+  runtimeDeviceLabel,
+  onProbe,
 }: {
   snapshot: Snapshot;
   filteredVideos: VideoAssetSummary[];
+  libraryCounts: { total: number; completed: number; running: number; withResult: number };
+  latestVideo: VideoAssetSummary | null;
   query: string;
   setQuery(value: string): void;
   probeUrl: string;
   setProbeUrl(value: string): void;
   submitStatus: string;
   probePreview: VideoAssetSummary | null;
+  activeFilter: LibraryFilter;
+  setLibraryFilter(value: LibraryFilter): void;
+  serviceOnline: boolean;
+  runtimeDeviceLabel: string;
   onProbe(event: FormEvent): Promise<void>;
 }) {
+  const filters: Array<{ id: LibraryFilter; label: string; count: number }> = [
+    { id: "all", label: "全部", count: libraryCounts.total },
+    { id: "completed", label: "已完成", count: libraryCounts.completed },
+    { id: "running", label: "处理中", count: libraryCounts.running },
+    { id: "with-result", label: "有结果", count: libraryCounts.withResult },
+  ];
+
   return (
     <section className="library-page">
       <section className="library-topbar">
         <article className="grid-card library-intake-card">
           <div className="panel-header">
-            <h2>开始总结</h2>
-            <p>输入视频链接后，系统会抓取封面和标题，并立即开始本地总结。</p>
+            <p className="section-kicker">Core Action</p>
+            <h2>输入视频链接，立即开始本地总结</h2>
+            <p>先抓取封面与标题，再在本地完成转写、摘要和结果沉淀，入口清晰且保持为第一视觉焦点。</p>
           </div>
-          <form className="task-form" onSubmit={onProbe}>
-            <label className="input-row">
-              <span className="input-label">视频链接</span>
-              <input className="input-field" type="url" value={probeUrl} onChange={(e) => setProbeUrl(e.target.value)} placeholder="https://www.bilibili.com/video/..." required />
-            </label>
-            <div className="hero-actions"><button className="primary-button" type="submit">开始总结</button></div>
+
+          <form className="task-form refined-task-form" onSubmit={onProbe}>
+            <div className="task-form-row">
+              <label className="input-row input-row-hero">
+                <span className="input-label">输入视频链接</span>
+                <div className="input-with-icon">
+                  <span className="input-icon" aria-hidden="true"><LinkIcon /></span>
+                  <input
+                    className="input-field input-field-hero"
+                    type="url"
+                    value={probeUrl}
+                    onChange={(event) => setProbeUrl(event.target.value)}
+                    placeholder="粘贴视频链接，例如 https://www.bilibili.com/video/..."
+                    required
+                  />
+                </div>
+                <span className="input-caption">支持常见在线视频链接，适合桌面端持续沉淀视频资料和摘要结果。</span>
+              </label>
+              <button className="primary-button primary-button-hero" type="submit">开始总结</button>
+            </div>
+
+            <div className="task-inline-meta">
+              <span className="helper-chip">本地处理</span>
+              <span className="helper-chip">自动抓取封面</span>
+              <span className="helper-chip">沉淀摘要结果</span>
+            </div>
+
             {submitStatus ? <div className="submit-status">{submitStatus}</div> : null}
           </form>
-          {probePreview ? <article className="probe-preview"><img src={probePreview.cover_url} alt={probePreview.title} /><div className="probe-preview-copy"><strong>{probePreview.title}</strong><span>{formatDuration(probePreview.duration)}</span></div></article> : null}
+
+          {probePreview ? (
+            <article className="probe-preview">
+              <img src={probePreview.cover_url} alt={probePreview.title} />
+              <div className="probe-preview-copy">
+                <span className="section-kicker">即将加入视频库</span>
+                <strong>{probePreview.title}</strong>
+                <small>{formatDuration(probePreview.duration)} · {platformLabel(probePreview.platform)}</small>
+              </div>
+            </article>
+          ) : null}
         </article>
+
         <article className="grid-card library-summary-card">
-          <div className="panel-header"><h2>视频库概览</h2><p>封面、本地缓存和任务结果统一管理</p></div>
+          <div className="panel-header">
+            <p className="section-kicker">Overview</p>
+            <h2>视频库概览</h2>
+            <p>数据层级保持在第二优先级，用更轻的卡片承接状态概览。</p>
+          </div>
+
           <div className="library-summary-grid">
-            <Metric label="视频总数" value={String(snapshot.videos.length)} />
-            <Metric label="已完成" value={String(snapshot.videos.filter((item) => item.latest_status === "completed").length)} />
-            <Metric label="处理中" value={String(snapshot.videos.filter((item) => item.latest_status === "running").length)} />
-            <Metric label="有摘要结果" value={String(snapshot.videos.filter((item) => item.has_result).length)} />
+            <Metric label="视频总数" value={String(libraryCounts.total)} detail="本地已收录资产" tone="accent" />
+            <Metric label="已完成" value={String(libraryCounts.completed)} detail="可查看完整摘要" tone="success" />
+            <Metric label="处理中" value={String(libraryCounts.running)} detail="正在进行转写或总结" tone="info" />
+            <Metric label="有结果" value={String(libraryCounts.withResult)} detail="摘要结果已沉淀" />
+          </div>
+
+          <div className="summary-insight">
+            <div className="summary-insight-copy">
+              <span>最近更新</span>
+              <strong>{latestVideo?.title ?? "等待首个视频进入视频库"}</strong>
+              <small>{latestVideo ? `${formatShortDate(latestVideo.updated_at)} · ${platformLabel(latestVideo.platform)}` : "输入链接后自动抓取并入库"}</small>
+            </div>
+            <span className={`summary-insight-pill ${serviceOnline ? "is-online" : ""}`}>
+              {serviceOnline ? `服务在线 · ${runtimeDeviceLabel}` : "服务离线"}
+            </span>
           </div>
         </article>
       </section>
+
       <section className="grid-card library-grid-card">
-        <div className="panel-header"><h2>视频库</h2><p>{snapshot.videos.length} 个视频资产，点击卡片打开详情子页</p></div>
-        <div className="library-toolbar"><input className="input-field" type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="搜索标题或链接..." /></div>
+        <div className="library-section-head">
+          <div className="panel-header">
+            <p className="section-kicker">Video Library</p>
+            <h2>视频库</h2>
+            <p>{snapshot.videos.length} 个视频资产，支持搜索、状态筛选与详情跳转。</p>
+          </div>
+
+          <label className="search-field">
+            <span className="search-icon" aria-hidden="true"><SearchIcon /></span>
+            <input
+              className="input-field input-field-search"
+              type="search"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="搜索标题或来源链接..."
+            />
+          </label>
+        </div>
+
+        <div className="filter-pill-row">
+          {filters.map((filter) => (
+            <button
+              key={filter.id}
+              className={`filter-pill ${activeFilter === filter.id ? "active" : ""}`}
+              type="button"
+              onClick={() => setLibraryFilter(filter.id)}
+            >
+              <span>{filter.label}</span>
+              <strong>{filter.count}</strong>
+            </button>
+          ))}
+        </div>
+
         <div className="video-grid">
-          {filteredVideos.length ? filteredVideos.map((video) => <VideoCard key={video.video_id} video={video} />) : <div className="empty-placeholder">还没有视频，先输入一个链接开始总结。</div>}
+          {filteredVideos.length ? filteredVideos.map((video) => <VideoCard key={video.video_id} video={video} />) : (
+            <div className="empty-placeholder">当前筛选条件下还没有视频，先输入一个链接开始总结。</div>
+          )}
         </div>
       </section>
     </section>
@@ -262,7 +479,9 @@ function LibraryPage({
 }
 
 function VideoCard({ video }: { video: VideoAssetSummary }) {
-  const badgeClass = video.latest_status === "completed" ? "status-success" : video.latest_status === "running" ? "status-running" : video.latest_status === "failed" ? "status-failed" : "status-pending";
+  const badgeClass = taskStatusClass(video.latest_status);
+  const statusCopy = video.has_result ? "可查看摘要结果" : `当前阶段：${stageLabel(video.latest_stage)}`;
+
   return (
     <Link className="video-card" to={`/videos/${video.video_id}`}>
       <div className="video-card-cover">
@@ -270,14 +489,28 @@ function VideoCard({ video }: { video: VideoAssetSummary }) {
         <span className="video-duration">{formatDuration(video.duration)}</span>
       </div>
       <div className="video-card-body">
+        <div className="video-card-topline">
+          <span className="video-platform-badge">{platformLabel(video.platform)}</span>
+          <span className={`task-status ${badgeClass}`}>{taskStatusLabel(video.latest_status)}</span>
+        </div>
         <h3>{video.title}</h3>
-        <div className="video-card-meta"><span className={`task-status ${badgeClass}`}>{taskStatusLabel(video.latest_status)}</span><span>{formatDateTime(video.updated_at)}</span></div>
+        <p className="video-card-caption">{statusCopy}</p>
+        <div className="video-card-meta-grid">
+          <div className="video-meta-block">
+            <span>最近更新</span>
+            <strong>{formatShortDate(video.updated_at)}</strong>
+          </div>
+          <div className="video-meta-block">
+            <span>结果状态</span>
+            <strong>{video.has_result ? "已输出" : "处理中"}</strong>
+          </div>
+        </div>
       </div>
     </Link>
   );
 }
 
-function VideoDetailPage({ desktop, onRefresh }: { desktop: DesktopState; onRefresh(): void }) {
+function VideoDetailPage({ onRefresh }: { onRefresh(): void }) {
   const { videoId = "" } = useParams();
   const navigate = useNavigate();
   const [video, setVideo] = useState<VideoAssetDetail | null>(null);
@@ -302,7 +535,10 @@ function VideoDetailPage({ desktop, onRefresh }: { desktop: DesktopState; onRefr
     onRefresh();
   }
 
-  useEffect(() => { void refreshDetail(); }, [videoId]);
+  useEffect(() => {
+    void refreshDetail();
+  }, [videoId]);
+
   useEffect(() => {
     if (!selectedTask?.task_id) return;
     const source = api.createTaskEventSource(selectedTask.task_id, events.at(-1)?.created_at);
@@ -320,57 +556,194 @@ function VideoDetailPage({ desktop, onRefresh }: { desktop: DesktopState; onRefr
   return (
     <section className="video-detail-page">
       <div className="detail-page-toolbar"><Link className="secondary-button" to="/">返回视频库</Link></div>
+
       <article className="video-detail-hero">
-        <a className="video-detail-cover" href={video.source_url} target="_blank" rel="noreferrer">{video.cover_url ? <img src={video.cover_url} alt={video.title} loading="lazy" /> : <div className="video-card-placeholder">VIDEO</div>}</a>
+        <a className="video-detail-cover" href={video.source_url} target="_blank" rel="noreferrer">
+          {video.cover_url ? <img src={video.cover_url} alt={video.title} loading="lazy" /> : <div className="video-card-placeholder">VIDEO</div>}
+        </a>
         <div className="video-detail-copy">
-          <div className="hero-chip-row"><span className="mini-chip">{taskStatusLabel(video.latest_status)}</span><span className="mini-chip">{formatDuration(video.duration)}</span><span className="mini-chip">{formatDateTime(video.updated_at)}</span></div>
+          <div className="hero-chip-row">
+            <span className={`mini-chip ${taskStatusClass(video.latest_status)}`}>{taskStatusLabel(video.latest_status)}</span>
+            <span className="mini-chip">{formatDuration(video.duration)}</span>
+            <span className="mini-chip">{formatDateTime(video.updated_at)}</span>
+          </div>
           <h1 className="video-detail-title">{video.title}</h1>
           <div className="detail-hero-actions">
-            <button className="primary-button" type="button" onClick={async () => { setStatus("正在创建处理任务..."); const task = await api.createVideoTask(video.video_id); await refreshDetail(task.task_id); setStatus("已开始新的摘要任务"); }}>重新生成摘要</button>
-            <button className="secondary-button" type="button" onClick={async () => { setStatus("正在刷新视频信息..."); await api.probeVideo({ url: video.source_url, force_refresh: true }); await refreshDetail(selectedTask?.task_id); setStatus("视频信息已刷新"); }}>刷新视频信息</button>
-            <button className="secondary-button danger-outline" type="button" onClick={async () => { if (!window.confirm("确定要从视频库删除这个视频吗？")) return; await api.deleteVideo(video.video_id); onRefresh(); navigate("/"); }}>从视频库删除</button>
+            <button
+              className="primary-button"
+              type="button"
+              onClick={async () => {
+                setStatus("正在创建处理任务...");
+                const task = await api.createVideoTask(video.video_id);
+                await refreshDetail(task.task_id);
+                setStatus("已开始新的摘要任务");
+              }}
+            >
+              重新生成摘要
+            </button>
+            <button
+              className="secondary-button"
+              type="button"
+              onClick={async () => {
+                setStatus("正在刷新视频信息...");
+                await api.probeVideo({ url: video.source_url, force_refresh: true });
+                await refreshDetail(selectedTask?.task_id);
+                setStatus("视频信息已刷新");
+              }}
+            >
+              刷新视频信息
+            </button>
+            <button
+              className="secondary-button danger-outline"
+              type="button"
+              onClick={async () => {
+                if (!window.confirm("确定要从视频库删除这个视频吗？")) return;
+                await api.deleteVideo(video.video_id);
+                onRefresh();
+                navigate("/");
+              }}
+            >
+              从视频库删除
+            </button>
           </div>
           {status ? <div className="submit-status">{status}</div> : null}
         </div>
       </article>
+
       <section className="video-detail-main">
         <section className="video-detail-primary">
           <article className="grid-card detail-section-card">
-            <div className="panel-header"><h2>摘要结果</h2><p>当前视频的最新结果</p></div>
+            <div className="panel-header">
+              <p className="section-kicker">Summary Result</p>
+              <h2>摘要结果</h2>
+              <p>当前视频的最新摘要、关键要点、时间轴和全文转写。</p>
+            </div>
             {video.latest_result ? (
               <div className="detail-result-stack">
-                <section className="grid-card result-card"><div className="card-header"><h3>摘要概览</h3></div><div className="timeline"><p>{video.latest_result.overview}</p></div></section>
-                <section className="grid-card result-card"><div className="card-header"><h3>关键要点</h3><span className="result-count">{video.latest_result.key_points.length} 条</span></div><ul className="bullet-list">{video.latest_result.key_points.map((item) => <li key={item}>{item}</li>)}</ul></section>
-                <section className="grid-card result-card"><div className="card-header"><h3>时间轴</h3></div><div className="timeline">{video.latest_result.timeline.map((item, index) => <article className="timeline-item" key={`${item.title}-${index}`}><div className="timeline-marker">{index + 1}</div><div className="timeline-content"><h4>{item.title || "章节"}</h4><div className="timeline-meta"><span className="timeline-time">{formatDuration(item.start ?? 0)}</span></div><p>{item.summary || ""}</p></div></article>)}</div></section>
-                <section className="grid-card transcript-card"><div className="card-header"><h3>转写全文</h3></div><pre className="transcript">{video.latest_result.transcript_text}</pre></section>
+                <section className="grid-card result-card">
+                  <div className="card-header"><h3>摘要概览</h3></div>
+                  <div className="timeline"><p>{video.latest_result.overview}</p></div>
+                </section>
+                <section className="grid-card result-card">
+                  <div className="card-header"><h3>关键要点</h3><span className="result-count">{video.latest_result.key_points.length} 条</span></div>
+                  <ul className="bullet-list">{video.latest_result.key_points.map((item) => <li key={item}>{item}</li>)}</ul>
+                </section>
+                <section className="grid-card result-card">
+                  <div className="card-header"><h3>时间轴</h3></div>
+                  <div className="timeline">
+                    {video.latest_result.timeline.map((item, index) => (
+                      <article className="timeline-item" key={`${item.title}-${index}`}>
+                        <div className="timeline-marker">{index + 1}</div>
+                        <div className="timeline-content">
+                          <h4>{item.title || "章节"}</h4>
+                          <div className="timeline-meta"><span className="timeline-time">{formatDuration(item.start ?? 0)}</span></div>
+                          <p>{item.summary || ""}</p>
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                </section>
+                <section className="grid-card transcript-card">
+                  <div className="card-header"><h3>转写全文</h3></div>
+                  <pre className="transcript">{video.latest_result.transcript_text}</pre>
+                </section>
               </div>
             ) : <div className="empty-placeholder">当前还没有可展示的摘要结果。</div>}
           </article>
         </section>
+
         <aside className="video-detail-sidebar">
           <article className="grid-card detail-side-card">
-            <div className="panel-header"><h2>处理进度</h2><p>{selectedTask ? `当前任务 ${selectedTask.task_id.slice(0, 8)}` : "尚未开始处理"}</p></div>
+            <div className="panel-header">
+              <p className="section-kicker">Progress</p>
+              <h2>处理进度</h2>
+              <p>{selectedTask ? `当前任务 ${selectedTask.task_id.slice(0, 8)}` : "尚未开始处理"}</p>
+            </div>
             {selectedTask ? (
               <div className="task-progress-simple">
                 <div className="progress-bar-wrapper">
-                  <div className="progress-bar-simple"><div className={`progress-fill-simple ${progress.hasError ? "error" : progress.isCompleted ? "success" : ""}`} style={{ width: `${progress.progress}%` }} /></div>
-                  <div className="progress-info-simple"><span className="progress-percent-simple">{Math.round(progress.progress)}%</span><span className="progress-status-simple">{progress.currentEvent?.message ?? "等待开始..."}</span></div>
+                  <div className="progress-bar-simple">
+                    <div
+                      className={`progress-fill-simple ${progress.hasError ? "error" : progress.isCompleted ? "success" : ""}`}
+                      style={{ width: `${progress.progress}%` }}
+                    />
+                  </div>
+                  <div className="progress-info-simple">
+                    <span className="progress-percent-simple">{Math.round(progress.progress)}%</span>
+                    <span className="progress-status-simple">{progress.currentEvent?.message ?? "等待开始..."}</span>
+                  </div>
                 </div>
-                <details className="progress-stage-card"><summary><div><strong>{progress.currentEvent?.stage ?? "阶段详情"}</strong><span>{progress.filtered.length} 条进度记录</span></div><span className="progress-stage-toggle">展开详细</span></summary><div className="progress-stage-list">{progress.filtered.map((event) => <article className="progress-event-card" key={event.event_id}><div className="progress-event-index">{event.stage}</div><div className="progress-event-copy"><div className="progress-event-topline"><strong>{event.message}</strong><span>{formatDateTime(event.created_at)}</span></div><div className="progress-event-meta">阶段进度 {event.progress}%</div></div></article>)}</div></details>
+                <details className="progress-stage-card">
+                  <summary>
+                    <div>
+                      <strong>{stageLabel(progress.currentEvent?.stage) || "阶段详情"}</strong>
+                      <span>{progress.filtered.length} 条进度记录</span>
+                    </div>
+                    <span className="progress-stage-toggle">展开详细</span>
+                  </summary>
+                  <div className="progress-stage-list">
+                    {progress.filtered.map((event) => (
+                      <article className={`progress-event-card ${progressEventClass(event.stage)}`} key={event.event_id}>
+                        <div className="progress-event-index">{stageLabel(event.stage)}</div>
+                        <div className="progress-event-copy">
+                          <div className="progress-event-topline">
+                            <strong>{event.message}</strong>
+                            <span>{formatDateTime(event.created_at)}</span>
+                          </div>
+                          <div className="progress-event-meta">阶段进度 {event.progress}%</div>
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                </details>
               </div>
             ) : <div className="empty-placeholder">点击“开始总结”后，这里会展示处理进度。</div>}
           </article>
+
           <article className="grid-card detail-side-card">
-            <div className="panel-header"><h2>任务历史</h2><p>{tasks.length} 条任务记录</p></div>
-            <div className="task-history-list">
-              {tasks.length ? tasks.map((task) => <details className={`task-history-item ${task.task_id === selectedTask?.task_id ? "active" : ""}`} key={task.task_id} open={task.task_id === selectedTask?.task_id}><summary className="task-history-summary" onClick={async (event) => { event.preventDefault(); const [detail, taskEvents] = await Promise.all([api.getTaskResult(task.task_id), api.getTaskEvents(task.task_id)]); setSelectedTask(detail); setEvents(taskEvents); }}><div className="task-history-main"><span className="task-history-status">{taskStatusLabel(task.status)}</span><span className="task-history-time">{formatDateTime(task.created_at)}</span></div><div className="task-history-meta"><span className="task-history-id">{task.task_id.slice(0, 8)}</span></div></summary><div className="task-history-details"><div className="task-history-info"><div className="info-row"><span className="info-label">LLM Token</span><span className="info-value">{formatTokenCount(task.llm_total_tokens)}</span></div><div className="info-row"><span className="info-label">任务耗时</span><span className="info-value">{formatTaskDuration(task.task_duration_seconds)}</span></div></div><div className="task-history-actions"><button className="tertiary-button danger" type="button" onClick={async () => { await api.deleteTask(task.task_id); await refreshDetail(selectedTask?.task_id); }}>删除</button></div></div></details>) : <div className="empty-placeholder">暂无历史任务</div>}
+            <div className="panel-header">
+              <p className="section-kicker">History</p>
+              <h2>任务历史</h2>
+              <p>{tasks.length} 条任务记录</p>
             </div>
-          </article>
-          <article className="grid-card detail-side-card desktop-card">
-            <div className="panel-header"><h2>桌面运行状态</h2><p>托盘常驻、自启动与后端桥接</p></div>
-            <div className="desktop-status-grid">
-              <div className="desktop-status-item"><strong>后端 URL</strong><span>{desktop.backend?.url ?? "-"}</span></div>
-              <div className="desktop-status-item"><strong>后端 PID</strong><span>{desktop.backend?.pid ?? "-"}</span></div>
+            <div className="task-history-list">
+              {tasks.length ? tasks.map((task) => (
+                <details className={`task-history-item ${task.task_id === selectedTask?.task_id ? "active" : ""}`} key={task.task_id} open={task.task_id === selectedTask?.task_id}>
+                  <summary
+                    className="task-history-summary"
+                    onClick={async (event) => {
+                      event.preventDefault();
+                      const [detail, taskEvents] = await Promise.all([api.getTaskResult(task.task_id), api.getTaskEvents(task.task_id)]);
+                      setSelectedTask(detail);
+                      setEvents(taskEvents);
+                    }}
+                  >
+                    <div className="task-history-main">
+                      <span className={`task-history-status ${taskStatusClass(task.status)}`}>{taskStatusLabel(task.status)}</span>
+                      <span className="task-history-time">{formatDateTime(task.created_at)}</span>
+                    </div>
+                    <div className="task-history-meta"><span className="task-history-id">{task.task_id.slice(0, 8)}</span></div>
+                  </summary>
+                  <div className="task-history-details">
+                    <div className="task-history-info">
+                      <div className="info-row"><span className="info-label">LLM Token</span><span className="info-value">{formatTokenCount(task.llm_total_tokens)}</span></div>
+                      <div className="info-row"><span className="info-label">任务耗时</span><span className="info-value">{formatTaskDuration(task.task_duration_seconds)}</span></div>
+                    </div>
+                    <div className="task-history-actions">
+                      <button
+                        className="tertiary-button danger"
+                        type="button"
+                        onClick={async () => {
+                          await api.deleteTask(task.task_id);
+                          await refreshDetail(selectedTask?.task_id);
+                        }}
+                      >
+                        删除
+                      </button>
+                    </div>
+                  </div>
+                </details>
+              )) : <div className="empty-placeholder">暂无历史任务</div>}
             </div>
           </article>
         </aside>
@@ -379,7 +752,7 @@ function VideoDetailPage({ desktop, onRefresh }: { desktop: DesktopState; onRefr
   );
 }
 
-function SettingsPage({ snapshot, desktop, onDesktopChange, onRefresh }: { snapshot: Snapshot; desktop: DesktopState; onDesktopChange(): Promise<void>; onRefresh(): void }) {
+function SettingsPage({ snapshot, desktop, onRefresh }: { snapshot: Snapshot; desktop: DesktopState; onRefresh(): void }) {
   const [form, setForm] = useState<ServiceSettings | null>(snapshot.settings);
   const [saveStatus, setSaveStatus] = useState("");
   const [cudaStatus, setCudaStatus] = useState("");
@@ -387,8 +760,13 @@ function SettingsPage({ snapshot, desktop, onDesktopChange, onRefresh }: { snaps
   const [logOutput, setLogOutput] = useState("");
   const [serviceStatus, setServiceStatus] = useState("");
 
-  useEffect(() => { setForm(snapshot.settings); }, [snapshot.settings]);
-  useEffect(() => { void refreshLogs(); }, []);
+  useEffect(() => {
+    setForm(snapshot.settings);
+  }, [snapshot.settings]);
+
+  useEffect(() => {
+    void refreshLogs();
+  }, []);
 
   async function refreshLogs() {
     try {
@@ -414,59 +792,261 @@ function SettingsPage({ snapshot, desktop, onDesktopChange, onRefresh }: { snaps
   return (
     <section className="settings-grid">
       <article className="grid-card settings-wide env-card">
-        <div className="panel-header"><h2>运行环境与 CUDA</h2><p>环境检测、推荐设备和 CUDA 配置</p></div>
-        <section className="env-panel"><div className="env-panel-head"><span className="env-panel-kicker">Environment Snapshot</span><p>当前硬件、依赖版本和运行时建议一览</p></div><div className="env-summary-grid"><Metric label="推荐设备" value={snapshot.environment?.recommendedDevice || "-"} /><Metric label="推荐模型" value={snapshot.environment?.recommendedModel || "-"} /><Metric label="GPU 状态" value={snapshot.environment?.cudaAvailable ? "已启用" : "未启用"} /><Metric label="运行时通道" value={snapshot.environment?.runtimeChannel || form.runtime_channel || "base"} /></div></section>
+        <div className="panel-header">
+          <p className="section-kicker">Environment</p>
+          <h2>运行环境与 CUDA</h2>
+          <p>环境检测、推荐设备和 CUDA 配置保持在统一的浅色卡片体系中。</p>
+        </div>
+        <section className="env-panel">
+          <div className="env-panel-head">
+            <span className="env-panel-kicker">Environment Snapshot</span>
+            <p>当前硬件、依赖版本和运行时建议一览。</p>
+          </div>
+          <div className="env-summary-grid">
+            <Metric label="推荐设备" value={snapshot.environment?.recommendedDevice || "-"} tone="accent" />
+            <Metric label="推荐模型" value={snapshot.environment?.recommendedModel || "-"} />
+            <Metric label="GPU 状态" value={snapshot.environment?.cudaAvailable ? "已启用" : "未启用"} tone={snapshot.environment?.cudaAvailable ? "success" : "default"} />
+            <Metric label="运行时通道" value={snapshot.environment?.runtimeChannel || form.runtime_channel || "base"} tone="info" />
+          </div>
+        </section>
+
         <section className="cuda-control-panel">
-          <div className="cuda-control-copy"><span className="env-panel-kicker">CUDA Control</span><h3>CUDA 目标版本</h3><p>选择目标运行时后，可重新检测环境或安装对应 CUDA 支持。</p></div>
-          <div className="cuda-actions"><label className="input-row cuda-picker"><span className="input-label">CUDA 目标版本</span><select className="select-field" value={form.cuda_variant} onChange={(e) => setForm({ ...form, cuda_variant: e.target.value })}><option value="cu128">CUDA 12.8</option><option value="cu126">CUDA 12.6</option><option value="cu124">CUDA 12.4</option></select></label><div className="settings-actions cuda-button-row"><button className="secondary-button" type="button" onClick={() => onRefresh()}>重新检测</button><button className="primary-button" type="button" onClick={async () => { try { const result = await api.installCuda({ cuda_variant: form.cuda_variant }); setCudaStatus(result.message || "CUDA 安装命令已执行"); setCudaOutput(result.output || ""); onRefresh(); } catch (error) { setCudaStatus(error instanceof Error ? error.message : "CUDA 安装失败"); } }}>安装 CUDA 支持</button></div></div>
+          <div className="cuda-control-copy">
+            <span className="env-panel-kicker">CUDA Control</span>
+            <h3>CUDA 目标版本</h3>
+            <p>选择目标运行时后，可重新检测环境或安装对应 CUDA 支持。</p>
+          </div>
+          <div className="cuda-actions">
+            <label className="input-row cuda-picker">
+              <span className="input-label">CUDA 目标版本</span>
+              <select className="select-field" value={form.cuda_variant} onChange={(event) => setForm({ ...form, cuda_variant: event.target.value })}>
+                <option value="cu128">CUDA 12.8</option>
+                <option value="cu126">CUDA 12.6</option>
+                <option value="cu124">CUDA 12.4</option>
+              </select>
+            </label>
+            <div className="settings-actions cuda-button-row">
+              <button className="secondary-button" type="button" onClick={() => onRefresh()}>重新检测</button>
+              <button
+                className="primary-button"
+                type="button"
+                onClick={async () => {
+                  try {
+                    const result = await api.installCuda({ cuda_variant: form.cuda_variant });
+                    setCudaStatus(result.message || "CUDA 安装命令已执行");
+                    setCudaOutput(result.output || "");
+                    onRefresh();
+                  } catch (error) {
+                    setCudaStatus(error instanceof Error ? error.message : "CUDA 安装失败");
+                  }
+                }}
+              >
+                安装 CUDA 支持
+              </button>
+            </div>
+          </div>
           {cudaStatus ? <div className="action-status">{cudaStatus}</div> : null}
-          {cudaOutput ? <label className="input-row"><span className="input-label">CUDA 安装输出</span><textarea className="textarea-field log-viewer" rows={8} readOnly value={cudaOutput}></textarea></label> : null}
+          {cudaOutput ? (
+            <label className="input-row">
+              <span className="input-label">CUDA 安装输出</span>
+              <textarea className="textarea-field log-viewer" rows={8} readOnly value={cudaOutput}></textarea>
+            </label>
+          ) : null}
         </section>
       </article>
 
-      <article className="grid-card">
-        <div className="panel-header"><h2>桌面偏好</h2><p>托盘、自启动和关闭行为</p></div>
-        <div className="desktop-card">
-          <div className="desktop-status-grid"><div className="desktop-status-item"><strong>关闭按钮行为</strong><span>{desktop.closeBehavior === "tray" ? "隐藏到托盘" : desktop.closeBehavior === "exit" ? "直接退出" : "首次询问"}</span></div><div className="desktop-status-item"><strong>开机自启动</strong><span>{desktop.autoLaunch ? "已启用" : "未启用"}</span></div></div>
-          <div className="desktop-actions">
-            <button className="secondary-button" type="button" onClick={async () => { await window.desktop?.preferences.setCloseBehavior("tray"); await onDesktopChange(); }}>关闭时隐藏到托盘</button>
-            <button className="secondary-button" type="button" onClick={async () => { await window.desktop?.preferences.setCloseBehavior("exit"); await onDesktopChange(); }}>关闭时直接退出</button>
-            <button className="secondary-button" type="button" onClick={async () => { await window.desktop?.preferences.resetCloseBehavior(); await onDesktopChange(); }}>恢复首次询问</button>
-            <button className="primary-button" type="button" onClick={async () => { await window.desktop?.app.setAutoLaunch(!desktop.autoLaunch); await onDesktopChange(); }}>{desktop.autoLaunch ? "关闭开机自启" : "开启开机自启"}</button>
-          </div>
-        </div>
-      </article>
-
       <article className="grid-card settings-form-card">
-        <div className="panel-header"><h2>运行配置</h2><p>编辑并保存后端配置</p></div>
+        <div className="panel-header">
+          <p className="section-kicker">Configuration</p>
+          <h2>运行配置</h2>
+          <p>编辑并保存后端配置，保持字段分组清晰、对齐统一。</p>
+        </div>
         <form className="setting-form settings-sections" onSubmit={save}>
-          <section className="settings-subsection"><h3>基础运行</h3><Field label="监听地址" value={form.host} onChange={(value) => setForm({ ...form, host: value })} /><Field label="监听端口" value={String(form.port)} type="number" onChange={(value) => setForm({ ...form, port: Number(value) })} /><Field label="数据目录" value={form.data_dir} onChange={(value) => setForm({ ...form, data_dir: value })} /><Field label="缓存目录" value={form.cache_dir} onChange={(value) => setForm({ ...form, cache_dir: value })} /><Field label="任务目录" value={form.tasks_dir} onChange={(value) => setForm({ ...form, tasks_dir: value })} /></section>
-          <section className="settings-subsection"><h3>模型与摘要</h3><Field label="推理设备" value={form.device_preference} onChange={(value) => setForm({ ...form, device_preference: value })} /><Field label="固定模型" value={form.fixed_model} onChange={(value) => setForm({ ...form, fixed_model: value })} /><Field label="LLM Base URL" value={form.llm_base_url} onChange={(value) => setForm({ ...form, llm_base_url: value })} /><Field label="LLM 模型" value={form.llm_model} onChange={(value) => setForm({ ...form, llm_model: value })} /><Field label="LLM API Key" value={form.llm_api_key} type="password" onChange={(value) => setForm({ ...form, llm_api_key: value })} /></section>
-          <section className="settings-subsection settings-actions-section"><div className="settings-actions"><button className="primary-button" type="submit">保存设置</button>{saveStatus ? <div className="action-status">{saveStatus}</div> : null}</div></section>
+          <section className="settings-subsection">
+            <h3>基础运行</h3>
+            <Field label="监听地址" value={form.host} onChange={(value) => setForm({ ...form, host: value })} />
+            <Field label="监听端口" value={String(form.port)} type="number" onChange={(value) => setForm({ ...form, port: Number(value) })} />
+            <Field label="数据目录" value={form.data_dir} onChange={(value) => setForm({ ...form, data_dir: value })} />
+            <Field label="缓存目录" value={form.cache_dir} onChange={(value) => setForm({ ...form, cache_dir: value })} />
+            <Field label="任务目录" value={form.tasks_dir} onChange={(value) => setForm({ ...form, tasks_dir: value })} />
+          </section>
+
+          <section className="settings-subsection">
+            <h3>模型与摘要</h3>
+            <Field label="推理设备" value={form.device_preference} onChange={(value) => setForm({ ...form, device_preference: value })} />
+            <Field label="固定模型" value={form.fixed_model} onChange={(value) => setForm({ ...form, fixed_model: value })} />
+            <Field label="LLM Base URL" value={form.llm_base_url} onChange={(value) => setForm({ ...form, llm_base_url: value })} />
+            <Field label="LLM 模型" value={form.llm_model} onChange={(value) => setForm({ ...form, llm_model: value })} />
+            <Field label="LLM API Key" value={form.llm_api_key} type="password" onChange={(value) => setForm({ ...form, llm_api_key: value })} />
+          </section>
+
+          <section className="settings-subsection settings-actions-section">
+            <div className="settings-actions">
+              <button className="primary-button" type="submit">保存设置</button>
+              {saveStatus ? <div className="action-status">{saveStatus}</div> : null}
+            </div>
+          </section>
         </form>
       </article>
 
       <article className="grid-card">
-        <div className="panel-header"><h2>后端信息</h2><p>系统运行详情</p></div>
-        <div className="setting-list"><div className="setting-row"><span className="setting-label">服务名</span><span className="setting-value">{snapshot.systemInfo?.application?.name || "-"}</span></div><div className="setting-row"><span className="setting-label">版本</span><span className="setting-value">{snapshot.systemInfo?.application?.version || "-"}</span></div><div className="setting-row"><span className="setting-label">日志文件</span><span className="setting-value">{snapshot.systemInfo?.service?.log_file || desktop.logPath || "-"}</span></div></div>
+        <div className="panel-header">
+          <p className="section-kicker">Service Info</p>
+          <h2>服务信息</h2>
+          <p>系统运行详情与日志路径。</p>
+        </div>
+        <div className="setting-list">
+          <div className="setting-row"><span className="setting-label">服务名</span><span className="setting-value">{snapshot.systemInfo?.application?.name || "-"}</span></div>
+          <div className="setting-row"><span className="setting-label">版本</span><span className="setting-value">{snapshot.systemInfo?.application?.version || "-"}</span></div>
+          <div className="setting-row"><span className="setting-label">服务状态</span><span className="setting-value">{snapshot.serviceOnline ? "在线" : "离线"}</span></div>
+          <div className="setting-row"><span className="setting-label">日志文件</span><span className="setting-value">{snapshot.systemInfo?.service?.log_file || desktop.logPath || "-"}</span></div>
+        </div>
       </article>
 
       <article className="grid-card settings-wide">
-        <div className="panel-header"><h2>日志与控制</h2><p>查看后端日志，并直接控制当前内置后端</p></div>
+        <div className="panel-header">
+          <p className="section-kicker">Logs & Control</p>
+          <h2>日志与控制</h2>
+          <p>查看后端日志，并直接控制当前内置后端。</p>
+        </div>
         <div className="desktop-actions">
           <button className="secondary-button" type="button" onClick={() => void refreshLogs()}>刷新日志</button>
-          <button className="secondary-button" type="button" onClick={async () => { await window.desktop?.backend.start(); setServiceStatus("已请求启动后端"); await onDesktopChange(); }}>启动后端</button>
-          <button className="secondary-button danger-button" type="button" onClick={async () => { await window.desktop?.backend.stop(); setServiceStatus("后端已停止"); await onDesktopChange(); }}>停止后端</button>
-          <button className="secondary-button danger-button" type="button" onClick={async () => { await api.shutdownService(); setServiceStatus("已向服务发送关闭请求"); onRefresh(); }}>通过 API 关闭服务</button>
+          <button
+            className="secondary-button"
+            type="button"
+            onClick={async () => {
+              await window.desktop?.backend.start();
+              setServiceStatus("已请求启动后端");
+              onRefresh();
+            }}
+          >
+            启动后端
+          </button>
+          <button
+            className="secondary-button danger-button"
+            type="button"
+            onClick={async () => {
+              await window.desktop?.backend.stop();
+              setServiceStatus("后端已停止");
+              onRefresh();
+            }}
+          >
+            停止后端
+          </button>
+          <button
+            className="secondary-button danger-button"
+            type="button"
+            onClick={async () => {
+              await api.shutdownService();
+              setServiceStatus("已向服务发送关闭请求");
+              onRefresh();
+            }}
+          >
+            通过 API 关闭服务
+          </button>
         </div>
         {serviceStatus ? <div className="action-status">{serviceStatus}</div> : null}
-        <label className="input-row"><span className="input-label">当前日志文件</span><input className="input-field" value={snapshot.systemInfo?.service?.log_file || desktop.logPath} readOnly /></label>
-        <label className="input-row"><span className="input-label">最近日志</span><textarea className="textarea-field log-viewer" rows={16} readOnly value={logOutput}></textarea></label>
+        <label className="input-row">
+          <span className="input-label">当前日志文件</span>
+          <input className="input-field" value={snapshot.systemInfo?.service?.log_file || desktop.logPath} readOnly />
+        </label>
+        <label className="input-row">
+          <span className="input-label">最近日志</span>
+          <textarea className="textarea-field log-viewer" rows={16} readOnly value={logOutput}></textarea>
+        </label>
       </article>
     </section>
   );
 }
 
 function Field({ label, value, onChange, type = "text" }: { label: string; value: string; onChange(value: string): void; type?: string }) {
-  return <label className="input-row"><span className="input-label">{label}</span><input className="input-field" type={type} value={value} onChange={(e) => onChange(e.target.value)} /></label>;
+  return (
+    <label className="input-row">
+      <span className="input-label">{label}</span>
+      <input className="input-field" type={type} value={value} onChange={(event) => onChange(event.target.value)} />
+    </label>
+  );
+}
+
+function formatShortDate(value?: string | null) {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return `${date.getFullYear()}.${String(date.getMonth() + 1).padStart(2, "0")}.${String(date.getDate()).padStart(2, "0")}`;
+}
+
+function platformLabel(platform?: string | null) {
+  const labels: Record<string, string> = {
+    bilibili: "Bilibili",
+    youtube: "YouTube",
+    local: "Local",
+  };
+  return (platform && labels[platform.toLowerCase()]) || "Video";
+}
+
+function stageLabel(stage?: string | null) {
+  const labels: Record<string, string> = {
+    queued: "排队中",
+    downloading: "下载中",
+    transcribing: "转写中",
+    summarizing: "总结中",
+    completed: "已完成",
+    failed: "失败",
+  };
+  return (stage && labels[stage]) || "待开始";
+}
+
+function taskStatusClass(status?: TaskStatus | null) {
+  if (status === "completed") return "status-success";
+  if (status === "running") return "status-running";
+  if (status === "failed") return "status-failed";
+  return "status-pending";
+}
+
+function progressEventClass(stage?: string | null) {
+  if (stage === "completed") return "completed";
+  if (stage === "failed") return "error";
+  if (stage === "summarizing" || stage === "transcribing" || stage === "downloading") return "active";
+  return "";
+}
+
+function LibraryIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" {...props}>
+      <path d="M3.5 7.5A2.5 2.5 0 0 1 6 5h12a2.5 2.5 0 0 1 2.5 2.5v9A2.5 2.5 0 0 1 18 19H6a2.5 2.5 0 0 1-2.5-2.5v-9Z" />
+      <path d="M7.5 9h9" />
+      <path d="M7.5 13h6" />
+      <path d="M7.5 16h4" />
+    </svg>
+  );
+}
+
+function SettingsIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" {...props}>
+      <path d="M12 8.25A3.75 3.75 0 1 0 12 15.75A3.75 3.75 0 1 0 12 8.25Z" />
+      <path d="M19.4 15a1 1 0 0 0 .2 1.1l.1.1a2 2 0 0 1-2.8 2.8l-.1-.1a1 1 0 0 0-1.1-.2 1 1 0 0 0-.6.9V20a2 2 0 0 1-4 0v-.1a1 1 0 0 0-.6-.9 1 1 0 0 0-1.1.2l-.1.1a2 2 0 0 1-2.8-2.8l.1-.1A1 1 0 0 0 6 15.3a1 1 0 0 0-.9-.6H5a2 2 0 0 1 0-4h.1a1 1 0 0 0 .9-.6 1 1 0 0 0-.2-1.1l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1 1 0 0 0 1.1.2h.1a1 1 0 0 0 .6-.9V4a2 2 0 0 1 4 0v.1a1 1 0 0 0 .6.9h.1a1 1 0 0 0 1.1-.2l.1-.1a2 2 0 0 1 2.8 2.8l-.1.1a1 1 0 0 0-.2 1.1v.1a1 1 0 0 0 .9.6h.1a2 2 0 0 1 0 4h-.1a1 1 0 0 0-.9.6V15Z" />
+    </svg>
+  );
+}
+
+function LinkIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" {...props}>
+      <path d="M10 13.5L14 9.5" />
+      <path d="M8.25 16.25L6.5 18a3 3 0 1 1-4.24-4.24L4 12" />
+      <path d="M15.75 7.75L17.5 6a3 3 0 1 1 4.24 4.24L20 12" />
+      <path d="M8 12L6.75 13.25a3.5 3.5 0 0 0 4.95 4.95L13 17" />
+      <path d="M16 12L17.25 10.75a3.5 3.5 0 0 0-4.95-4.95L11 7" />
+    </svg>
+  );
+}
+
+function SearchIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" {...props}>
+      <circle cx="11" cy="11" r="6.5" />
+      <path d="M16 16L20 20" />
+    </svg>
+  );
 }

@@ -662,12 +662,30 @@ function renderLiveStatus(errorMessage) {
   const latest = state.videos[0];
   const latestTitle = latest ? latest.title : "暂无视频";
   const latestStatus = latest?.latest_status || "未开始";
+  const statusColor = state.serviceOnline ? "var(--color-success)" : "var(--color-error)";
+  const statusText = state.serviceOnline ? "运行中" : "不可访问";
+  
+  // 截断标题，最多显示20个字符
+  const truncatedTitle = latestTitle.length > 20 ? latestTitle.slice(0, 20) + "..." : latestTitle;
+  
   return `
-    <div class="status-card"><strong>服务状态</strong><div class="status-caption">${state.serviceOnline ? "运行中" : "不可访问"}</div></div>
-    <div class="status-card"><strong>视频数量</strong><div class="status-caption">${state.videos.length}</div></div>
-    <div class="status-card"><strong>最近视频</strong><div class="status-caption">${escapeHtml(latestTitle)}</div></div>
-    <div class="status-card"><strong>最近状态</strong><div class="status-caption">${escapeHtml(latestStatus)}</div></div>
-    ${errorMessage ? `<div class="status-card"><strong>错误</strong><div class="status-caption">${escapeHtml(errorMessage)}</div></div>` : ""}
+    <div class="status-card">
+      <strong>服务状态</strong>
+      <div class="status-caption" style="color: ${statusColor}; font-weight: 600;">${statusText}</div>
+    </div>
+    <div class="status-card">
+      <strong>视频数量</strong>
+      <div class="status-caption" style="font-size: 18px; font-weight: 700;">${state.videos.length}</div>
+    </div>
+    <div class="status-card">
+      <strong>最近视频</strong>
+      <div class="status-caption" title="${escapeHtml(latestTitle)}">${escapeHtml(truncatedTitle)}</div>
+    </div>
+    <div class="status-card">
+      <strong>最近状态</strong>
+      <div class="status-caption">${escapeHtml(latestStatus)}</div>
+    </div>
+    ${errorMessage ? `<div class="status-card" style="background: var(--bg-error); border: 1px solid var(--error);"><strong style="color: var(--error);">错误</strong><div class="status-caption">${escapeHtml(errorMessage)}</div></div>` : ""}
   `;
 }
 

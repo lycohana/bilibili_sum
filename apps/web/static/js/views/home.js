@@ -181,20 +181,14 @@ function renderLibraryRegions(state) {
     `,
     grid: `
       <section class="grid-card library-grid-card">
-        <div class="panel-header">
-          <h2>
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-              <rect x="3" y="3" width="7" height="7"></rect>
-              <rect x="14" y="3" width="7" height="7"></rect>
-              <rect x="14" y="14" width="7" height="7"></rect>
-              <rect x="3" y="14" width="7" height="7"></rect>
-            </svg>
-            视频库
-          </h2>
-          <p>${state.videos.length} 个视频资产，点击卡片打开详情子页</p>
-        </div>
-        <div class="library-toolbar">
-          <input id="library-search" class="input-field" type="search" value="${escapeHtml(state.librarySearch)}" placeholder="搜索标题或链接..." aria-label="搜索视频" />
+        <div class="card-header">
+          <div>
+            <h2 style="font-size: 16px; margin-bottom: 4px;">视频库</h2>
+            <p style="font-size: 13px; color: var(--text-secondary); margin: 0;">${state.videos.length} 个视频资产，点击卡片打开详情</p>
+          </div>
+          <div class="library-toolbar">
+            <input id="library-search" class="input-field" type="search" value="${escapeHtml(state.librarySearch)}" placeholder="搜索标题或链接..." aria-label="搜索视频" style="min-width: 280px;" />
+          </div>
         </div>
         <div id="library-list-region" class="video-grid">
           ${videos.length ? videos.map((video) => renderVideoCard(video)).join("") : renderEmptyLibrary()}
@@ -376,6 +370,11 @@ function renderVideoCard(video) {
         : video.latest_status === "failed"
           ? "status-failed"
           : "status-pending";
+  
+  // 截断过长的时间显示
+  const timeStr = formatDateTime(video.updated_at);
+  const shortTime = timeStr.length > 16 ? timeStr.slice(0, 16) + "..." : timeStr;
+  
   return `
     <article class="video-card" data-video-id="${video.video_id}" role="button" tabindex="0" aria-label="打开视频详情：${escapeHtml(video.title)}">
       <div class="video-card-cover">
@@ -383,10 +382,10 @@ function renderVideoCard(video) {
         <span class="video-duration">${escapeHtml(formatDuration(video.duration))}</span>
       </div>
       <div class="video-card-body">
-        <h3>${escapeHtml(video.title)}</h3>
+        <h3 title="${escapeHtml(video.title)}">${escapeHtml(video.title)}</h3>
         <div class="video-card-meta">
           <span class="task-status ${badgeClass}">${escapeHtml(taskStatusLabel(video.latest_status))}</span>
-          <span>${escapeHtml(formatDateTime(video.updated_at))}</span>
+          <span style="color: var(--text-tertiary);" title="${escapeHtml(timeStr)}">${escapeHtml(shortTime)}</span>
         </div>
       </div>
     </article>
