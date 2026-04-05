@@ -33,8 +33,24 @@ def latest_version_tag() -> str:
     ) else ""
 
 
-def commits_since(tag: str) -> list[tuple[str, str]]:
-    revision_range = f"{tag}..HEAD" if tag else "HEAD"
+def latest_release_commit() -> str:
+    return run_git("log", "--fixed-strings", "--grep", "chore(release): v", "--format=%H", "-n", "1")
+
+
+def release_base_ref() -> tuple[str, str]:
+    tag = latest_version_tag()
+    if tag:
+        return tag, "tag"
+
+    commit = latest_release_commit()
+    if commit:
+        return commit, "release-commit"
+
+    return "", "root"
+
+
+def commits_since(ref: str) -> list[tuple[str, str]]:
+    revision_range = f"{ref}..HEAD" if ref else "HEAD"
     raw = run_git("log", "--format=%s%x1f%b%x1e", revision_range)
     commits: list[tuple[str, str]] = []
     for entry in raw.split(COMMIT_SEPARATOR):
@@ -80,20 +96,22 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     current_version = read_source_version()
-    tag = latest_version_tag()
-    commits = commits_since(tag)
+    base_ref, base_kind = release_base_ref()
+    commits = commits_since(base_ref)
     bump = detect_bump(commits)
     next_version = bump_version(current_version, bump) if bump else current_version
 
     print(f"current_version={current_version}")
-    print(f"latest_tag={tag or 'none'}")
+    print(f"release_base={base_ref or 'none'}")
+    print(f"release_base_kind={base_kind}")
     print(f"bump={bump or 'none'}")
     print(f"next_version={next_version}")
 
     if args.github_output:
         with open(args.github_output, "a", encoding="utf-8") as handle:
             handle.write(f"current_version={current_version}\n")
-            handle.write(f"latest_tag={tag}\n")
+            handle.write(f"release_base={base_ref}\n")
+            handle.write(f"release_base_kind={base_kind}\n")
             handle.write(f"bump={bump}\n")
             handle.write(f"next_version={next_version}\n")
 
