@@ -37,6 +37,8 @@ const desktop = {
   },
   logs: {
     getServiceLogPath: () => ipcRenderer.invoke("desktop:logs:get-service-log-path") as Promise<string>,
+    readServiceLogTail: (lines = 200) =>
+      ipcRenderer.invoke("desktop:logs:read-service-log-tail", lines) as Promise<{ path: string; lines: number; content: string }>,
   },
   preferences: {
     getCloseBehavior: () => ipcRenderer.invoke("desktop:preferences:get-close-behavior") as Promise<CloseBehavior>,

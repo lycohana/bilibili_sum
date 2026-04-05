@@ -1,6 +1,7 @@
 import type {
   EnvironmentInfo,
   ServiceSettings,
+  SystemLogResponse,
   SystemInfo,
   TaskDetail,
   TaskEvent,
@@ -39,7 +40,7 @@ export const api = {
     });
   },
   getSystemLogs(lines = 200) {
-    return fetchJson<string>(`/api/v1/system/logs?lines=${lines}`);
+    return fetchJson<SystemLogResponse>(`/api/v1/system/logs?lines=${lines}`);
   },
   shutdownService() {
     return fetchJson<{ ok: boolean }>("/api/v1/system/shutdown", { method: "POST" });

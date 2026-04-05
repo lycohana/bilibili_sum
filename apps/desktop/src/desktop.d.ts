@@ -28,6 +28,7 @@ type DesktopBridge = {
   };
   logs: {
     getServiceLogPath(): Promise<string>;
+    readServiceLogTail(lines?: number): Promise<{ path: string; lines: number; content: string }>;
   };
   preferences: {
     getCloseBehavior(): Promise<CloseBehavior>;

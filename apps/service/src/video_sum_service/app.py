@@ -70,6 +70,22 @@ settings.tasks_dir.mkdir(parents=True, exist_ok=True)
 log_dir().mkdir(parents=True, exist_ok=True)
 _environment_probe_cache: dict[str, dict[str, object]] = {}
 _environment_probe_failures: dict[str, str] = {}
+MAX_LOG_CHARS = 20_000
+MAX_LOG_LINE_CHARS = 1_000
+
+
+def _trim_log_text(content: str, *, max_chars: int = MAX_LOG_CHARS, max_line_chars: int = MAX_LOG_LINE_CHARS) -> str:
+    lines = content.splitlines()
+    trimmed_lines = [
+        f"{line[:max_line_chars]}... [line truncated]"
+        if len(line) > max_line_chars
+        else line
+        for line in lines
+    ]
+    trimmed = "\n".join(trimmed_lines)
+    if len(trimmed) <= max_chars:
+        return trimmed
+    return f"... [log truncated, showing last {max_chars} chars]\n{trimmed[-max_chars:]}"
 
 
 def read_log_tail(max_lines: int = 200) -> str:
@@ -80,7 +96,7 @@ def read_log_tail(max_lines: int = 200) -> str:
         lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError:
         return ""
-    return "\n".join(lines[-max(1, max_lines) :])
+    return _trim_log_text("\n".join(lines[-max(1, max_lines) :]))
 
 
 def _runtime_subprocess_env(runtime_channel: str) -> dict[str, str]:

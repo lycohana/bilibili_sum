@@ -578,7 +578,11 @@ textarea {
 .detail-hero-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: 12px;
+}
+
+.cuda-button-row {
+  margin-top: 8px;
 }
 
 .helper-chip,
@@ -612,6 +616,13 @@ textarea {
   border: 1px solid rgba(251, 114, 153, 0.14);
   background: rgba(255, 247, 249, 0.92);
   color: var(--brand-700);
+}
+
+.control-status-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 14px;
 }
 
 .probe-preview {
@@ -652,13 +663,13 @@ textarea {
 .env-summary-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
+  gap: 16px;
 }
 
 .summary-metric {
   display: grid;
-  gap: 6px;
-  padding: 16px;
+  gap: 10px;
+  padding: 20px;
   border-radius: 18px;
   border: 1px solid rgba(148, 163, 184, 0.14);
   background: rgba(251, 252, 255, 0.98);
@@ -1296,12 +1307,15 @@ textarea {
 .task-history-main {
   display: grid;
   gap: 8px;
+  min-width: 0;
+  justify-items: start;
 }
 
 .task-history-meta {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-shrink: 0;
 }
 
 .task-history-id {
@@ -1311,6 +1325,11 @@ textarea {
   color: var(--text-tertiary);
   font-family: var(--font-mono);
   font-size: 0.78rem;
+}
+
+.task-history-status {
+  width: fit-content;
+  max-width: 100%;
 }
 
 .task-history-details {
@@ -1362,10 +1381,18 @@ textarea {
 .settings-subsection,
 .env-panel,
 .cuda-control-panel {
-  padding: 18px;
+  padding: 24px;
   border-radius: 20px;
   border: 1px solid rgba(148, 163, 184, 0.14);
   background: rgba(248, 250, 255, 0.88);
+}
+
+.env-panel {
+  margin-bottom: 20px;
+}
+
+.cuda-control-panel {
+  margin-top: 20px;
 }
 
 .settings-subsection h3,
@@ -1382,7 +1409,13 @@ textarea {
 .env-panel-head,
 .cuda-control-copy {
   display: grid;
-  gap: 6px;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.env-panel-head {
+  padding-bottom: 12px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.12);
 }
 
 .env-panel-kicker {

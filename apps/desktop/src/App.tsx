@@ -1,4 +1,4 @@
-import { FormEvent, SVGProps, useEffect, useMemo, useState } from "react";
+import { FormEvent, SVGProps, useEffect, useMemo, useRef, useState } from "react";
 import { Link, Route, Routes, useLocation, useNavigate, useParams } from "react-router-dom";
 
 import { api } from "./api";
@@ -518,6 +518,7 @@ function VideoDetailPage({ onRefresh }: { onRefresh(): void }) {
   const [selectedTask, setSelectedTask] = useState<TaskDetail | null>(null);
   const [events, setEvents] = useState<TaskEvent[]>([]);
   const [status, setStatus] = useState("");
+  const lastAutoRefreshEventRef = useRef<string | null>(null);
 
   async function refreshDetail(taskId?: string | null) {
     const [videoDetail, videoTasks] = await Promise.all([api.getVideo(videoId), api.getVideoTasks(videoId)]);
@@ -549,6 +550,27 @@ function VideoDetailPage({ onRefresh }: { onRefresh(): void }) {
     source.onerror = () => source.close();
     return () => source.close();
   }, [selectedTask?.task_id]);
+
+  useEffect(() => {
+    lastAutoRefreshEventRef.current = null;
+  }, [selectedTask?.task_id]);
+
+  useEffect(() => {
+    if (!selectedTask?.task_id || !events.length) return;
+    const terminalEvent = [...events].reverse().find((event) => (
+      event.stage === "completed" || event.stage === "failed" || event.stage === "cancelled"
+    ));
+    if (!terminalEvent) return;
+    const refreshKey = `${selectedTask.task_id}:${terminalEvent.event_id}`;
+    if (lastAutoRefreshEventRef.current === refreshKey) return;
+    lastAutoRefreshEventRef.current = refreshKey;
+
+    const timer = window.setTimeout(() => {
+      void refreshDetail(selectedTask.task_id);
+    }, 300);
+
+    return () => window.clearTimeout(timer);
+  }, [events, selectedTask?.task_id]);
 
   if (!video) return <section className="grid-card empty-state-card">正在加载视频详情...</section>;
   const progress = summarizeEvents(events);
@@ -758,6 +780,7 @@ function SettingsPage({ snapshot, desktop, onRefresh }: { snapshot: Snapshot; de
   const [cudaStatus, setCudaStatus] = useState("");
   const [cudaOutput, setCudaOutput] = useState("");
   const [logOutput, setLogOutput] = useState("");
+  const [logPath, setLogPath] = useState(snapshot.systemInfo?.service?.log_file || desktop.logPath || "");
   const [serviceStatus, setServiceStatus] = useState("");
 
   useEffect(() => {
@@ -765,16 +788,38 @@ function SettingsPage({ snapshot, desktop, onRefresh }: { snapshot: Snapshot; de
   }, [snapshot.settings]);
 
   useEffect(() => {
+    setLogPath(snapshot.systemInfo?.service?.log_file || desktop.logPath || "");
+  }, [desktop.logPath, snapshot.systemInfo?.service?.log_file]);
+
+  useEffect(() => {
     void refreshLogs();
   }, []);
 
   async function refreshLogs() {
     try {
-      setLogOutput(await api.getSystemLogs());
+      const response = await api.getSystemLogs();
+      setLogOutput(response.content || "日志文件存在，但当前还没有内容。");
+      setLogPath(response.path || snapshot.systemInfo?.service?.log_file || desktop.logPath || "");
     } catch (error) {
+      try {
+        const fallback = await window.desktop?.logs.readServiceLogTail(200);
+        if (fallback) {
+          setLogOutput(fallback.content || "本地日志文件存在，但当前还没有内容。");
+          setLogPath(fallback.path || snapshot.systemInfo?.service?.log_file || desktop.logPath || "");
+          setServiceStatus("服务接口不可用，已切换为本地日志读取。");
+          return;
+        }
+      } catch {
+        // Ignore local fallback errors and surface the original request error below.
+      }
       setLogOutput(error instanceof Error ? error.message : "读取日志失败");
     }
   }
+
+  const backendRunning = Boolean(desktop.backend?.running);
+  const backendReady = Boolean(desktop.backend?.ready);
+  const serviceOnline = snapshot.serviceOnline;
+  const effectiveLogPath = logPath || snapshot.systemInfo?.service?.log_file || desktop.logPath || "-";
 
   if (!form) return <section className="grid-card empty-state-card">正在加载设置...</section>;
 
@@ -909,46 +954,60 @@ function SettingsPage({ snapshot, desktop, onRefresh }: { snapshot: Snapshot; de
           <h2>日志与控制</h2>
           <p>查看后端日志，并直接控制当前内置后端。</p>
         </div>
+        <div className="control-status-row">
+          <span className={`helper-chip ${serviceOnline ? "status-success" : "status-failed"}`}>{serviceOnline ? "服务在线" : "服务离线"}</span>
+          <span className={`helper-chip ${backendRunning ? (backendReady ? "status-success" : "status-running") : "status-pending"}`}>
+            {backendRunning ? (backendReady ? "内置后端运行中" : "内置后端启动中") : "内置后端未运行"}
+          </span>
+          {desktop.backend?.pid ? <span className="helper-chip">PID {desktop.backend.pid}</span> : null}
+        </div>
         <div className="desktop-actions">
           <button className="secondary-button" type="button" onClick={() => void refreshLogs()}>刷新日志</button>
+          <button
+            className={backendRunning ? "secondary-button danger-button" : "primary-button"}
+            type="button"
+            onClick={async () => {
+              if (backendRunning) {
+                await window.desktop?.backend.stop();
+                setServiceStatus("内置后端已停止");
+              } else {
+                await window.desktop?.backend.start();
+                setServiceStatus("已请求启动内置后端");
+              }
+              onRefresh();
+              await refreshLogs();
+            }}
+          >
+            {backendRunning ? "停止内置后端" : "启动内置后端"}
+          </button>
           <button
             className="secondary-button"
             type="button"
             onClick={async () => {
-              await window.desktop?.backend.start();
-              setServiceStatus("已请求启动后端");
-              onRefresh();
+              await window.desktop?.shell.openPath(effectiveLogPath);
             }}
           >
-            启动后端
+            打开日志文件
           </button>
           <button
             className="secondary-button danger-button"
             type="button"
-            onClick={async () => {
-              await window.desktop?.backend.stop();
-              setServiceStatus("后端已停止");
-              onRefresh();
-            }}
-          >
-            停止后端
-          </button>
-          <button
-            className="secondary-button danger-button"
-            type="button"
+            disabled={!serviceOnline}
             onClick={async () => {
               await api.shutdownService();
               setServiceStatus("已向服务发送关闭请求");
               onRefresh();
+              await refreshLogs();
             }}
           >
-            通过 API 关闭服务
+            强制关闭服务
           </button>
         </div>
+        {desktop.backend?.lastError ? <div className="action-status">{desktop.backend.lastError}</div> : null}
         {serviceStatus ? <div className="action-status">{serviceStatus}</div> : null}
         <label className="input-row">
           <span className="input-label">当前日志文件</span>
-          <input className="input-field" value={snapshot.systemInfo?.service?.log_file || desktop.logPath} readOnly />
+          <input className="input-field" value={effectiveLogPath} readOnly />
         </label>
         <label className="input-row">
           <span className="input-label">最近日志</span>

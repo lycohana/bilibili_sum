@@ -61,6 +61,45 @@ function getServiceLogPath() {
   return path.join(getLocalAppDataDir(), "briefvid", "logs", "service.log");
 }
 
+const MAX_LOG_CHARS = 20_000;
+const MAX_LOG_LINE_CHARS = 1_000;
+
+function trimLogText(content: string) {
+  const trimmed = content
+    .split(/\r?\n/)
+    .map((line) => line.length > MAX_LOG_LINE_CHARS ? `${line.slice(0, MAX_LOG_LINE_CHARS)}... [line truncated]` : line)
+    .join("\n");
+
+  if (trimmed.length <= MAX_LOG_CHARS) {
+    return trimmed;
+  }
+
+  return `... [log truncated, showing last ${MAX_LOG_CHARS} chars]\n${trimmed.slice(-MAX_LOG_CHARS)}`;
+}
+
+function readServiceLogTail(lines = 200) {
+  const logPath = getServiceLogPath();
+  const lineCount = Math.max(20, Math.min(lines, 1000));
+  if (!fs.existsSync(logPath)) {
+    return { path: logPath, lines: lineCount, content: "" };
+  }
+
+  try {
+    const content = fs.readFileSync(logPath, "utf-8");
+    return {
+      path: logPath,
+      lines: lineCount,
+      content: trimLogText(content.split(/\r?\n/).slice(-lineCount).join("\n")),
+    };
+  } catch (error) {
+    return {
+      path: logPath,
+      lines: lineCount,
+      content: error instanceof Error ? error.message : "读取日志失败",
+    };
+  }
+}
+
 function loadPreferences(): DesktopPreferences {
   try {
     const raw = fs.readFileSync(preferencesPath, "utf-8");
@@ -449,6 +488,7 @@ function registerIpcHandlers() {
   ipcMain.handle("desktop:backend:status", () => backendStatus);
   ipcMain.handle("desktop:shell:open-path", (_event, targetPath: string) => shell.openPath(targetPath));
   ipcMain.handle("desktop:logs:get-service-log-path", () => getServiceLogPath());
+  ipcMain.handle("desktop:logs:read-service-log-tail", (_event, lines = 200) => readServiceLogTail(lines));
   ipcMain.handle("desktop:preferences:get-close-behavior", () => getPreferences().closeBehavior);
   ipcMain.handle("desktop:preferences:set-close-behavior", (_event, value: CloseBehavior) => {
     setCloseBehavior(value, true);

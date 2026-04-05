@@ -665,7 +665,8 @@ body {
 .env-summary-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: var(--space-3);
+  gap: var(--space-4);
+  margin-bottom: var(--space-2);
 }
 
 .stats-grid {
@@ -1510,11 +1511,12 @@ body {
 /* CUDA 面板 */
 .cuda-control-panel {
   display: grid;
-  gap: var(--space-4);
-  padding: var(--space-4);
+  gap: var(--space-5);
+  padding: var(--space-5);
   border: 1px solid var(--primary-border);
   border-radius: var(--radius-xl);
   background: var(--bg-overlay);
+  margin-top: var(--space-5);
 }
 
 .cuda-control-copy h3 {
@@ -1540,15 +1542,17 @@ body {
 
 /* 环境卡片 */
 .env-panel {
-  padding: var(--space-4);
-  margin-bottom: var(--space-5);
+  padding: var(--space-5);
+  margin-bottom: var(--space-6);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-xl);
   background: var(--bg-overlay);
 }
 
 .env-panel-head {
-  margin-bottom: var(--space-4);
+  margin-bottom: var(--space-5);
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--border-subtle);
 }
 
 .env-panel-kicker {
@@ -1568,12 +1572,12 @@ body {
 .env-card-item {
   display: flex;
   align-items: center;
-  gap: var(--space-3);
-  padding: var(--space-3);
-  border-radius: var(--radius-md);
+  gap: var(--space-4);
+  padding: var(--space-4);
+  border-radius: var(--radius-lg);
   background: var(--bg-surface);
   border: 1px solid var(--border-subtle);
-  min-height: 72px;
+  min-height: 80px;
   transition: all 0.15s ease;
 }
 

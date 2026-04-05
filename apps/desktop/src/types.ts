@@ -129,3 +129,9 @@ export type SystemInfo = {
   settings?: ServiceSettings;
   environment?: EnvironmentInfo;
 };
+
+export type SystemLogResponse = {
+  path: string;
+  lines: number;
+  content: string;
+};
