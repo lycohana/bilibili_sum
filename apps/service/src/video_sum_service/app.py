@@ -521,9 +521,9 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(
-    title="Video Summarizer Service",
+    title="BriefVid Service",
     version=app_info.version,
-    description="Local-first backend service for video summarization tasks.",
+    description="Local-first backend service for BriefVid video summarization tasks.",
     lifespan=lifespan,
 )
 app.mount("/static", StaticFiles(directory=WEB_STATIC_DIR), name="static")

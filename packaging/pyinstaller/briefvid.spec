@@ -7,6 +7,7 @@ from PyInstaller.utils.hooks import collect_data_files, collect_submodules, copy
 ROOT = Path.cwd().resolve()
 BUILD_ROOT = ROOT / "build" / "pyinstaller"
 WEB_STATIC_DIR = ROOT / "apps" / "web" / "static"
+ICON_PATH = WEB_STATIC_DIR / "favicon.ico"
 RUNTIME_SEED_DIR = BUILD_ROOT / "runtime" / "base"
 BIN_DIR = BUILD_ROOT / "bin"
 
@@ -56,12 +57,13 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name="video-summarizer",
+    name="BriefVid",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
     upx=False,
     console=True,
+    icon=str(ICON_PATH) if ICON_PATH.exists() else None,
 )
 
 coll = COLLECT(
@@ -70,5 +72,5 @@ coll = COLLECT(
     a.datas,
     strip=False,
     upx=False,
-    name="video-summarizer",
+    name="BriefVid",
 )

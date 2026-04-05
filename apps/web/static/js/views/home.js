@@ -274,28 +274,28 @@ function renderVideoDetailRegions(state) {
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
                 <polygon points="5 3 19 12 5 21 5 3"></polygon>
               </svg>
-              ${video.latest_task_id ? "重新总结" : "开始总结"}
+              ${video.latest_task_id ? "重新生成摘要" : "生成摘要"}
             </button>
             <button class="secondary-button" data-action="refresh-video" data-video-id="${video.video_id}" data-video-url="${escapeHtml(video.source_url)}">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
                 <polyline points="23 4 23 10 17 10"></polyline>
                 <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
               </svg>
-              刷新信息
+              刷新视频信息
             </button>
             ${latestTask ? `<button class="secondary-button" data-action="delete-task" data-task-id="${latestTask.task_id}">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
                 <polyline points="3 6 5 6 21 6"></polyline>
                 <path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"></path>
               </svg>
-              删除当前任务
+              删除本次任务
             </button>` : ""}
             <button class="secondary-button danger-outline" data-action="delete-video" data-video-id="${video.video_id}">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
                 <polyline points="3 6 5 6 21 6"></polyline>
                 <path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"></path>
               </svg>
-              删除视频
+              从视频库删除
             </button>
           </div>
         </div>

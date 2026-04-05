@@ -88,7 +88,7 @@ class ServiceSettings(BaseSettings):
     summary_user_prompt_template: str = DEFAULT_SUMMARY_USER_PROMPT_TEMPLATE
     summary_chunk_target_chars: int = 2200
     summary_chunk_overlap_segments: int = 2
-    summary_chunk_concurrency: int = 3
+    summary_chunk_concurrency: int = 2
     summary_chunk_retry_count: int = 2
 
     model_config = SettingsConfigDict(

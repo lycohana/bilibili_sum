@@ -22,43 +22,56 @@ export function renderSettingsView(state) {
         </div>
 
         <!-- 环境状态网格 -->
-        <div class="env-summary-grid">
-          ${renderEnvCard("推荐设备", env.recommendedDevice || "-", "cpu")}
-          ${renderEnvCard("推荐模型", env.recommendedModel || "-", "model")}
-          ${renderEnvCard("GPU 状态", env.cudaAvailable ? "已启用" : "未启用", env.cudaAvailable ? "success" : "warning")}
-          ${renderEnvCard("GPU 名称", env.gpuName || "未检测到", env.gpuName ? "success" : "neutral")}
-          ${renderEnvCard("Torch", env.torchInstalled ? env.torchVersion || "已安装" : "未安装", env.torchInstalled ? "success" : "warning")}
-          ${renderEnvCard("yt-dlp", env.ytDlpVersion || "未安装", env.ytDlpVersion ? "success" : "warning")}
-          ${renderEnvCard("faster-whisper", env.fasterWhisperVersion || "未安装", env.fasterWhisperVersion ? "success" : "warning")}
-          ${renderEnvCard("Python", env.pythonVersion || "-", "neutral")}
-          ${renderEnvCard("运行时通道", env.runtimeChannel || settings.runtime_channel || "base", "neutral")}
-        </div>
+        <section class="env-panel">
+          <div class="env-panel-head">
+            <span class="env-panel-kicker">Environment Snapshot</span>
+            <p>当前硬件、依赖版本和运行时建议一览</p>
+          </div>
+          <div class="env-summary-grid">
+            ${renderEnvCard("推荐设备", env.recommendedDevice || "-", "cpu")}
+            ${renderEnvCard("推荐模型", env.recommendedModel || "-", "model")}
+            ${renderEnvCard("GPU 状态", env.cudaAvailable ? "已启用" : "未启用", env.cudaAvailable ? "success" : "warning")}
+            ${renderEnvCard("GPU 名称", env.gpuName || "未检测到", env.gpuName ? "success" : "neutral")}
+            ${renderEnvCard("Torch", env.torchInstalled ? env.torchVersion || "已安装" : "未安装", env.torchInstalled ? "success" : "warning")}
+            ${renderEnvCard("yt-dlp", env.ytDlpVersion || "未安装", env.ytDlpVersion ? "success" : "warning")}
+            ${renderEnvCard("faster-whisper", env.fasterWhisperVersion || "未安装", env.fasterWhisperVersion ? "success" : "warning")}
+            ${renderEnvCard("Python", env.pythonVersion || "-", "neutral")}
+            ${renderEnvCard("运行时通道", env.runtimeChannel || settings.runtime_channel || "base", "neutral")}
+          </div>
+        </section>
 
         <!-- CUDA 操作区 -->
-        <div class="cuda-actions">
-          <label class="input-row cuda-actions">
-            <span class="input-label">CUDA 目标版本</span>
-            <select id="cuda_variant" class="select-field">
-              <option value="cu128" ${settings.cuda_variant === "cu128" ? "selected" : ""}>CUDA 12.8</option>
-              <option value="cu126" ${settings.cuda_variant === "cu126" ? "selected" : ""}>CUDA 12.6</option>
-              <option value="cu124" ${settings.cuda_variant === "cu124" ? "selected" : ""}>CUDA 12.4</option>
-            </select>
-          </label>
-          <div class="settings-actions">
-            <button id="refresh-env" class="secondary-button" type="button">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                <polyline points="23 4 23 10 17 10"></polyline>
-                <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
-              </svg>
-              重新检测
-            </button>
-            <button id="install-cuda" class="primary-button" type="button">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                <line x1="12" y1="5" x2="12" y2="19"></line>
-                <line x1="5" y1="12" x2="19" y2="12"></line>
-              </svg>
-              安装 CUDA 支持
-            </button>
+        <section class="cuda-control-panel">
+          <div class="cuda-control-copy">
+            <span class="env-panel-kicker">CUDA Control</span>
+            <h3>CUDA 目标版本</h3>
+            <p>选择目标运行时后，可重新检测环境或安装对应 CUDA 支持。</p>
+          </div>
+          <div class="cuda-actions">
+            <label class="input-row cuda-picker">
+              <span class="input-label">CUDA 目标版本</span>
+              <select id="cuda_variant" class="select-field">
+                <option value="cu128" ${settings.cuda_variant === "cu128" ? "selected" : ""}>CUDA 12.8</option>
+                <option value="cu126" ${settings.cuda_variant === "cu126" ? "selected" : ""}>CUDA 12.6</option>
+                <option value="cu124" ${settings.cuda_variant === "cu124" ? "selected" : ""}>CUDA 12.4</option>
+              </select>
+            </label>
+            <div class="settings-actions cuda-button-row">
+              <button id="refresh-env" class="secondary-button" type="button">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                  <polyline points="23 4 23 10 17 10"></polyline>
+                  <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+                </svg>
+                重新检测
+              </button>
+              <button id="install-cuda" class="primary-button" type="button">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                  <line x1="12" y1="5" x2="12" y2="19"></line>
+                  <line x1="5" y1="12" x2="19" y2="12"></line>
+                </svg>
+                安装 CUDA 支持
+              </button>
+            </div>
           </div>
           ${state.cudaActionStatus ? `
             <div id="cuda-action-status" class="action-status ${state.cudaActionStatus.includes('成功') ? 'success' : state.cudaActionStatus.includes('失败') ? 'error' : ''}">
@@ -77,7 +90,7 @@ export function renderSettingsView(state) {
               <textarea class="textarea-field log-viewer" rows="8" readonly>${escapeHtml(env.runtimeError)}</textarea>
             </label>
           ` : ''}
-        </div>
+        </section>
       </article>
 
       <!-- 运行配置表单 -->
@@ -164,7 +177,7 @@ export function renderSettingsView(state) {
             ${renderInput("llm_api_key", "LLM API Key", settings.llm_api_key || "", "password", "sk-...", "current-password")}
             ${renderInput("summary_chunk_target_chars", "分块目标字符数", settings.summary_chunk_target_chars || 2200, "number", "2200")}
             ${renderInput("summary_chunk_overlap_segments", "分块重叠段数", settings.summary_chunk_overlap_segments || 2, "number", "2")}
-            ${renderInput("summary_chunk_concurrency", "分块并发数", settings.summary_chunk_concurrency || 3, "number", "3")}
+            ${renderInput("summary_chunk_concurrency", "分块并发数", settings.summary_chunk_concurrency || 2, "number", "2")}
             ${renderInput("summary_chunk_retry_count", "单块重试次数", settings.summary_chunk_retry_count || 2, "number", "2")}
             ${renderTextarea("summary_system_prompt", "系统提示词", settings.summary_system_prompt || "", 4)}
             ${renderTextarea("summary_user_prompt_template", "用户提示词模板", settings.summary_user_prompt_template || "", 6)}

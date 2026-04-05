@@ -87,6 +87,26 @@ def _extract_json_object_text(value: str) -> str:
     return text
 
 
+def _should_retry_llm_transport_error(error: Exception) -> bool:
+    return isinstance(
+        error,
+        (
+            httpx.ConnectError,
+            httpx.ConnectTimeout,
+            httpx.ReadTimeout,
+            httpx.WriteTimeout,
+            httpx.ReadError,
+            httpx.WriteError,
+            httpx.CloseError,
+            httpx.ProxyError,
+            httpx.RemoteProtocolError,
+            httpx.NetworkError,
+            httpx.ProtocolError,
+            httpx.TransportError,
+        ),
+    )
+
+
 @dataclass(slots=True)
 class PipelineSettings:
     tasks_dir: Path
@@ -102,7 +122,7 @@ class PipelineSettings:
     summary_user_prompt_template: str = ""
     summary_chunk_target_chars: int = 2200
     summary_chunk_overlap_segments: int = 2
-    summary_chunk_concurrency: int = 3
+    summary_chunk_concurrency: int = 2
     summary_chunk_retry_count: int = 2
 
 
@@ -819,8 +839,30 @@ class RealPipelineRunner(PipelineRunner):
             "Authorization": f"Bearer {self._settings.llm_api_key}",
             "Content-Type": "application/json",
         }
-        with httpx.Client(timeout=180) as client:
-            response = client.post(f"{base_url}/chat/completions", headers=headers, json=payload)
+        transport_retry_count = max(0, int(self._settings.summary_chunk_retry_count))
+        last_error: Exception | None = None
+        response: httpx.Response | None = None
+        for attempt in range(transport_retry_count + 1):
+            try:
+                with httpx.Client(timeout=180, follow_redirects=True) as client:
+                    response = client.post(f"{base_url}/chat/completions", headers=headers, json=payload)
+                break
+            except Exception as exc:
+                last_error = exc
+                if attempt >= transport_retry_count or not _should_retry_llm_transport_error(exc):
+                    raise
+                backoff_seconds = min(6.0, 1.5 * (attempt + 1))
+                logger.warning(
+                    "llm summary transport retry model=%s attempt=%d/%d error=%s backoff=%.1fs",
+                    self._settings.llm_model,
+                    attempt + 1,
+                    transport_retry_count + 1,
+                    exc,
+                    backoff_seconds,
+                )
+                time.sleep(backoff_seconds)
+        if response is None:
+            raise VideoSumError(str(last_error) if last_error else "LLM request failed before receiving response.")
         try:
             response.raise_for_status()
         except httpx.HTTPStatusError as exc:

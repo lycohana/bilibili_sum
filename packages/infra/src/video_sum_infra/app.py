@@ -8,4 +8,4 @@ class AppInfo:
 
     @classmethod
     def load(cls) -> "AppInfo":
-        return cls(name="video-summarizer", version="0.1.0")
+        return cls(name="BriefVid", version="0.1.0")

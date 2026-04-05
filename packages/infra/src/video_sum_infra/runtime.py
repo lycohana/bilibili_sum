@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 
-APP_SLUG = "video-summarizer"
+APP_SLUG = "briefvid"
 
 
 def is_frozen() -> bool:

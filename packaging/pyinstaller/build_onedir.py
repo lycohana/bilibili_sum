@@ -13,7 +13,7 @@ BUILD_ROOT = ROOT / "build" / "pyinstaller"
 BUILD_VENV_DIR = BUILD_ROOT / "build-venv"
 RUNTIME_DIR = BUILD_ROOT / "runtime" / "base"
 BIN_DIR = BUILD_ROOT / "bin"
-SPEC_PATH = ROOT / "packaging" / "pyinstaller" / "video-summarizer.spec"
+SPEC_PATH = ROOT / "packaging" / "pyinstaller" / "briefvid.spec"
 
 
 def run(command: list[str], cwd: Path | None = None) -> None:

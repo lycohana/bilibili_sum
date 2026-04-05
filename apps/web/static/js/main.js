@@ -382,7 +382,7 @@ async function handleSettingsSubmit(event) {
     ),
     summary_chunk_target_chars: Number(readValue("summary_chunk_target_chars", current.summary_chunk_target_chars || 2200)),
     summary_chunk_overlap_segments: Number(readValue("summary_chunk_overlap_segments", current.summary_chunk_overlap_segments || 2)),
-    summary_chunk_concurrency: Number(readValue("summary_chunk_concurrency", current.summary_chunk_concurrency || 3)),
+    summary_chunk_concurrency: Number(readValue("summary_chunk_concurrency", current.summary_chunk_concurrency || 2)),
     summary_chunk_retry_count: Number(readValue("summary_chunk_retry_count", current.summary_chunk_retry_count || 2)),
   };
   state.settingsSaveStatus = "正在保存设置...";

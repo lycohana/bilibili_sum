@@ -4,11 +4,11 @@ Windows 打包主路线已经切到 `PyInstaller onedir`。
 
 ## 产物形态
 
-- `dist/video-summarizer/video-summarizer.exe`
-- `dist/video-summarizer/_internal/...`
-- `dist/video-summarizer/web/static/...`
-- `dist/video-summarizer/runtime/base/...`
-- `dist/video-summarizer/bin/ffmpeg.exe`
+- `dist/BriefVid/BriefVid.exe`
+- `dist/BriefVid/_internal/...`
+- `dist/BriefVid/web/static/...`
+- `dist/BriefVid/runtime/base/...`
+- `dist/BriefVid/bin/ffmpeg.exe`
 
 ## 构建前提
 
@@ -34,11 +34,11 @@ python .\packaging\pyinstaller\build_onedir.py
 
 - `onedir` 基础包默认只保证 CPU 路径可运行
 - 设置页的一键安装会把 CUDA 版 `torch` 装到用户目录下的 managed runtime
-- 安装路径默认在 `%LOCALAPPDATA%/video-summarizer/runtime/gpu-cu12x`
+- 安装路径默认在 `%LOCALAPPDATA%/briefvid/runtime/gpu-cu12x`
 - 安装完成后需要重启应用生效
 
 ## 运行时目录
 
-- 用户数据目录：`%LOCALAPPDATA%/video-summarizer/data`
-- managed runtime：`%LOCALAPPDATA%/video-summarizer/runtime`
-- 打包内置 seed runtime：`dist/video-summarizer/runtime/base`
+- 用户数据目录：`%LOCALAPPDATA%/briefvid/data`
+- managed runtime：`%LOCALAPPDATA%/briefvid/runtime`
+- 打包内置 seed runtime：`dist/BriefVid/runtime/base`

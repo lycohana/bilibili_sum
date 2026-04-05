@@ -1,4 +1,4 @@
-# Video Summarizer
+# BriefVid
 
 [![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -37,7 +37,7 @@
 
 ## 简介
 
-Video Summarizer 是一个本地优先的视频总结工具，面向 B 站视频链接，提供下载、转写、结构化摘要、任务记录和本地 Web UI。
+BriefVid 是一个本地优先的视频总结工具，面向 B 站视频链接，提供下载、转写、结构化摘要、任务记录和本地 Web UI。
 
 这个仓库已经可以作为一个可运行的开源项目使用，而不只是原型代码。
 
@@ -217,8 +217,8 @@ python .\packaging\pyinstaller\build_onedir.py
 
 产物位于：
 
-- `dist/video-summarizer/video-summarizer.exe`
-- `dist/video-summarizer/_internal/...`
+- `dist/BriefVid/BriefVid.exe`
+- `dist/BriefVid/_internal/...`
 
 更详细的打包说明见 [`packaging/pyinstaller/README.md`](packaging/pyinstaller/README.md)。
 
@@ -230,7 +230,7 @@ python .\packaging\pyinstaller\build_onedir.py
 
 - ✅ 基础包默认保证 CPU 可用
 - ✅ 设置页可一键安装 CUDA 支持
-- ✅ CUDA 依赖安装到 `%LOCALAPPDATA%/video-summarizer/runtime/`
+- ✅ CUDA 依赖安装到 `%LOCALAPPDATA%/briefvid/runtime/`
 - ✅ 安装完成后需要重启应用
 - ✅ 环境检测、日志和运行时切换都在设置页可见
 
@@ -242,7 +242,7 @@ python .\packaging\pyinstaller\build_onedir.py
 
 ### 数据目录
 
-默认数据目录位于 `%LOCALAPPDATA%/video-summarizer/data/`：
+默认数据目录位于 `%LOCALAPPDATA%/briefvid/data/`：
 
 | 文件/目录 | 描述 |
 |-----------|------|
@@ -253,14 +253,14 @@ python .\packaging\pyinstaller\build_onedir.py
 
 ### 日志目录
 
-日志目录位于 `%LOCALAPPDATA%/video-summarizer/logs/`。
+日志目录位于 `%LOCALAPPDATA%/briefvid/logs/`。
 
 ---
 
 ## 项目结构
 
 ```
-bilibili_sum/
+BriefVid/
 ├── apps/
 │   ├── service/          # FastAPI 后端服务
 │   └── web/              # 本地 Web UI 静态资源
@@ -350,7 +350,7 @@ python -m pytest
 
 <div align="center">
 
-**Video Summarizer** - 让视频总结更高效
+**BriefVid** - 让视频总结更高效
 
 Made with ❤️ by the community
 
