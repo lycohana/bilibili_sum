@@ -99,24 +99,29 @@ jobs:
 
       - name: Collect release assets
         shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ needs.detect-release.outputs.next_version }}
         run: |
-          $sourceDir = Join-Path $env:GITHUB_WORKSPACE "dist\desktop"
+          $distDir = Join-Path $env:GITHUB_WORKSPACE "dist"
           $assetDir = Join-Path $env:GITHUB_WORKSPACE "dist\release-assets"
+          $installerPattern = "BriefVid-$env:RELEASE_VERSION-*-Setup.exe"
 
-          if (-not (Test-Path $sourceDir)) {
-            throw "Desktop build output directory not found: $sourceDir"
+          if (-not (Test-Path $distDir)) {
+            throw "Build output directory not found: $distDir"
           }
 
           New-Item -ItemType Directory -Force -Path $assetDir | Out-Null
 
-          $installer = Get-ChildItem -Path $sourceDir -Recurse -File |
-            Where-Object { $_.Name -like "BriefVid-*-Setup.exe" } |
+          Write-Host "Searching for release assets under $distDir"
+
+          $installer = Get-ChildItem -Path $distDir -Recurse -File |
+            Where-Object { $_.Name -like $installerPattern } |
             Select-Object -First 1
           if (-not $installer) {
-            Get-ChildItem -Path $sourceDir -Recurse | Select-Object FullName
-            throw "No Windows installer matching BriefVid-*-Setup.exe was found under $sourceDir"
+            throw "No Windows installer matching $installerPattern was found under $distDir"
           }
 
+          $sourceDir = Split-Path -Parent $installer.FullName
           $blockmap = Get-Item -LiteralPath "$($installer.FullName).blockmap" -ErrorAction SilentlyContinue
           if (-not $blockmap) {
             throw "Installer blockmap not found for $($installer.Name)"
@@ -124,7 +129,7 @@ jobs:
 
           $latestYml = Join-Path $sourceDir "latest.yml"
           if (-not (Test-Path $latestYml)) {
-            throw "latest.yml was not found under $sourceDir"
+            throw "latest.yml was not found next to installer under $sourceDir"
           }
 
           Copy-Item -LiteralPath $installer.FullName -Destination $assetDir -Force
