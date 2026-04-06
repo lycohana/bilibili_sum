@@ -2,7 +2,7 @@ import { FormEvent, SVGProps, useEffect, useMemo, useRef, useState } from "react
 import { Link, Route, Routes, useLocation, useNavigate, useParams } from "react-router-dom";
 
 import { TitleBar } from "./components/TitleBar";
-import { UpdateDialog } from "./components/UpdateDialog";
+import { UpdateDialog, type UpdateInfo } from "./components/UpdateDialog";
 import { api } from "./api";
 import type {
   EnvironmentInfo,
@@ -357,7 +357,7 @@ export function App() {
       
       <UpdateDialog
         isOpen={updateDialogOpen}
-        updateInfo={updateState as any}
+        updateInfo={updateState as UpdateInfo}
         currentVersion={desktop.version}
         onClose={() => setUpdateDialogOpen(false)}
         onCheck={async () => {

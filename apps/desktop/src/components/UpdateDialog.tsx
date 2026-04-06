@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 
-type UpdateStatus = "idle" | "checking" | "available" | "not-available" | "downloading" | "downloaded" | "error";
+export type UpdateStatus = "idle" | "checking" | "available" | "not-available" | "downloading" | "downloaded" | "error";
 
-type UpdateInfo = {
+export type UpdateInfo = {
   status: UpdateStatus;
   version: string;
   releaseDate: string;
@@ -269,9 +269,15 @@ export function UpdateDialog({
         </div>
 
         <div className="update-dialog-footer">
-          {updateInfo?.status === "idle" || updateInfo?.status === "not-available" || updateInfo?.status === "error" ? (
+          {updateInfo?.status === "idle" || updateInfo?.status === "not-available" ? (
             <button className="primary-button" onClick={handleCheck} disabled={isChecking}>
               {isChecking ? "检查中..." : "检查更新"}
+            </button>
+          ) : null}
+
+          {updateInfo?.status === "error" ? (
+            <button className="primary-button" onClick={handleCheck} disabled={isChecking}>
+              {isChecking ? "检查中..." : "重试"}
             </button>
           ) : null}
 

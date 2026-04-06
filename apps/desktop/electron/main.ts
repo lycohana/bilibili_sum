@@ -328,26 +328,46 @@ async function waitForBackendReady(timeoutMs = 60_000): Promise<boolean> {
   return false;
 }
 
-function resolveDevPython(): { command: string; args: string[]; cwd: string } {
+function resolveDevPython(): { command: string; args: string[]; cwd: string; forceHidden?: boolean } {
+  // 1. 优先使用环境变量指定的 Python
   if (process.env.BRIEFVID_DEV_PYTHON) {
     return {
       command: process.env.BRIEFVID_DEV_PYTHON,
       args: ["-m", "video_sum_service"],
       cwd: repoRoot,
+      forceHidden: true,
     };
   }
+
   if (process.platform === "win32") {
+    // 2. 检查 GPU runtime 的 pythonw.exe（优先使用 GPU 版本）
+    const localAppData = getLocalAppDataDir();
+    const gpuRuntimePythonw = path.join(localAppData, "briefvid", "runtime", "gpu-cu128", "Scripts", "pythonw.exe");
+    if (fs.existsSync(gpuRuntimePythonw)) {
+      return { command: gpuRuntimePythonw, args: ["-m", "video_sum_service"], cwd: repoRoot };
+    }
+
+    // 3. 检查 .venv 的 pythonw.exe
     const venvPythonw = path.resolve(repoRoot, ".venv/Scripts/pythonw.exe");
     if (fs.existsSync(venvPythonw)) {
       return { command: venvPythonw, args: ["-m", "video_sum_service"], cwd: repoRoot };
     }
 
+    // 4. 回退到 GPU runtime 的 python.exe
+    const gpuRuntimePython = path.join(localAppData, "briefvid", "runtime", "gpu-cu128", "Scripts", "python.exe");
+    if (fs.existsSync(gpuRuntimePython)) {
+      return { command: gpuRuntimePython, args: ["-m", "video_sum_service"], cwd: repoRoot, forceHidden: true };
+    }
+
+    // 5. 回退到 .venv 的 python.exe
     const venvPython = path.resolve(repoRoot, ".venv/Scripts/python.exe");
     if (fs.existsSync(venvPython)) {
-      return { command: venvPython, args: ["-m", "video_sum_service"], cwd: repoRoot };
+      return { command: venvPython, args: ["-m", "video_sum_service"], cwd: repoRoot, forceHidden: true };
     }
   }
-  return { command: "python", args: ["-m", "video_sum_service"], cwd: repoRoot };
+
+  // 6. 最后回退到系统 python
+  return { command: "python", args: ["-m", "video_sum_service"], cwd: repoRoot, forceHidden: true };
 }
 
 function resolvePackagedBackend(): { command: string; args: string[]; cwd: string } {
@@ -366,7 +386,14 @@ async function startBackend(): Promise<BackendStatus> {
   }
 
   const target = isDev ? resolveDevPython() : resolvePackagedBackend();
-  
+
+  console.log("[Backend] Starting backend with:", {
+    command: target.command,
+    args: target.args,
+    cwd: target.cwd,
+    isDev,
+  });
+
   // Windows 上隐藏控制台窗口
   const spawnOptions: SpawnOptions = {
     cwd: target.cwd,
@@ -375,17 +402,21 @@ async function startBackend(): Promise<BackendStatus> {
       VIDEO_SUM_HOST: "127.0.0.1",
       VIDEO_SUM_PORT: "3838",
     },
-    stdio: "ignore",
+    stdio: ["ignore", "ignore", "ignore"],  // 完全忽略子进程的 stdio，避免窗口弹出和管道阻塞
     detached: false,
     windowsHide: true,
     shell: false,
   };
-  
-  // 在 Windows 上，如果子进程是控制台应用，使用 CREATE_NO_WINDOW 标志
+
+  // 在 Windows 上，使用 CREATE_NO_WINDOW 标志隐藏控制台窗口
+  // CREATE_NO_WINDOW = 0x08000000
   if (process.platform === "win32") {
+    const CREATE_NO_WINDOW = 0x08000000;
     (spawnOptions as any).windowsVerbatimArguments = true;
+    (spawnOptions as any).creationFlags = CREATE_NO_WINDOW;
+    console.log("[Backend] Windows: setting creationFlags = CREATE_NO_WINDOW (0x08000000)");
   }
-  
+
   backendProcess = spawn(target.command, target.args, spawnOptions);
 
   backendProcess.once("exit", (_code, signal) => {
@@ -775,6 +806,10 @@ function installAndRestart(): void {
   if (isDev || !canUseAutoUpdater()) {
     return;
   }
+  if (updateStatus.status !== "downloaded") {
+    console.warn("Cannot install: update not downloaded");
+    return;
+  }
   autoUpdater.quitAndInstall();
 }
 
@@ -849,6 +884,8 @@ app.whenReady().then(async () => {
 
 app.on("before-quit", () => {
   forceQuit = true;
+  // 清理 autoUpdater 监听器，防止在应用退出后仍触发
+  autoUpdater.removeAllListeners();
 });
 
 app.on("window-all-closed", () => {

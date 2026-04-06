@@ -4,7 +4,9 @@
       "Bash(where upx:*)",
       "Bash(where upx3:*)",
       "Bash(\"C:\\\\ProgramData\\\\chocolatey\\\\bin\\\\upx.exe\" --version)",
-      "Bash(cd \"C:\\\\Users\\\\lycohana\\\\Desktop\\\\code\\\\bilibili_sum\" && \"build\\\\pyinstaller\\\\build-venv\\\\Scripts\\\\python.exe\" -c \"\nimport subprocess\nfor candidate in ['upx', 'upx3', r'C:\\\\ProgramData\\\\chocolatey\\\\bin\\\\upx.exe']:\n    try:\n        result = subprocess.run\\([candidate, '--version'], capture_output=True, timeout=5\\)\n        if result.returncode == 0:\n            print\\(f'UPX found: {candidate}'\\)\n            break\n    except \\(FileNotFoundError, subprocess.TimeoutExpired\\):\n        print\\(f'{candidate}: not found'\\)\n\")"
+      "Bash(cd \"C:\\\\Users\\\\lycohana\\\\Desktop\\\\code\\\\bilibili_sum\" && \"build\\\\pyinstaller\\\\build-venv\\\\Scripts\\\\python.exe\" -c \"\nimport subprocess\nfor candidate in ['upx', 'upx3', r'C:\\\\ProgramData\\\\chocolatey\\\\bin\\\\upx.exe']:\n    try:\n        result = subprocess.run\\([candidate, '--version'], capture_output=True, timeout=5\\)\n        if result.returncode == 0:\n            print\\(f'UPX found: {candidate}'\\)\n            break\n    except \\(FileNotFoundError, subprocess.TimeoutExpired\\):\n        print\\(f'{candidate}: not found'\\)\n\")",
+      "Bash(ls -la \"C:\\\\Users\\\\lycohana\\\\Desktop\\\\code\\\\bilibili_sum\\\\.venv\\\\Scripts\\\\\" 2>/dev/null | grep -i python || echo \"目录不存在或无 Python 文件\")",
+      "Bash(echo $BRIEFVID_DEV_PYTHON)"
     ]
   }
 }
