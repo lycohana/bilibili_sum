@@ -39,7 +39,11 @@ module.exports = {
     allowToChangeInstallationDirectory: true,
     allowElevation: true,
     createDesktopShortcut: true,
-    perMachine: false
+    perMachine: false,
+    shortcutName: "BriefVid",
+    uninstallDisplayName: "BriefVid",
+    installerIcon: "build/icon.ico",
+    uninstallerIcon: "build/icon.ico"
   },
   publish: {
     provider: "github",
