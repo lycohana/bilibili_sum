@@ -1946,6 +1946,44 @@ textarea {
     flex: 1;
   }
   
+  .error-alert {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 16px;
+    background: var(--bg-danger);
+    border-radius: var(--radius-md);
+    margin-bottom: 20px;
+    border: 1px solid rgba(239, 68, 68, 0.2);
+  }
+
+  .error-alert-icon {
+    width: 20px;
+    height: 20px;
+    color: var(--danger);
+    flex-shrink: 0;
+  }
+
+  .error-alert-content {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .error-alert-content h4 {
+    margin: 0 0 4px;
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: var(--danger);
+  }
+
+  .error-alert-content p {
+    margin: 0;
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    line-height: 1.5;
+    word-break: break-word;
+  }
+
   .download-progress {
     margin-bottom: 20px;
   }

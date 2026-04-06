@@ -53,12 +53,40 @@ export function UpdateDialog({
 
   const handleCheck = async () => {
     setIsChecking(true);
-    await onCheck();
+    try {
+      await onCheck();
+    } catch (error) {
+      // 错误已在 main.ts 中处理并更新状态，这里不需要额外处理
+      // 状态会自动变为 "error" 并显示错误信息
+    }
   };
 
   const handleDownload = async () => {
     setIsDownloading(true);
-    await onDownload();
+    try {
+      await onDownload();
+    } catch (error) {
+      // 错误已在 main.ts 中处理并更新状态
+    }
+  };
+
+  const renderErrorAlert = () => {
+    if (!updateInfo?.errorMessage || updateInfo.status !== "error") {
+      return null;
+    }
+
+    return (
+      <div className="error-alert">
+        <svg className="error-alert-icon" viewBox="0 0 24 24" fill="none">
+          <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" />
+          <path d="M12 8V12M12 16H12.01" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+        </svg>
+        <div className="error-alert-content">
+          <h4>检查更新失败</h4>
+          <p>{updateInfo.errorMessage}</p>
+        </div>
+      </div>
+    );
   };
 
   const getStatusText = () => {
@@ -199,6 +227,8 @@ export function UpdateDialog({
             {getStatusIcon()}
             <span className="status-text">{getStatusText()}</span>
           </div>
+
+          {updateInfo?.status === "error" && renderErrorAlert()}
 
           {updateInfo?.status === "downloading" && (
             <div className="download-progress">
