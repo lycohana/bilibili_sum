@@ -26,6 +26,7 @@ from video_sum_core.pipeline.base import PipelineContext, PipelineEvent, Pipelin
 from video_sum_core.utils import ensure_directory, normalize_video_url, sanitize_filename
 from video_sum_infra.runtime import (
     ffmpeg_location,
+    is_frozen,
     runtime_library_dirs,
     runtime_worker_executable,
     runtime_python_executable,
@@ -402,31 +403,44 @@ class RealPipelineRunner(PipelineRunner):
         duration: float | None,
         emit: Callable[[str, int, str, dict[str, object] | None], None],
     ) -> tuple[str, list[dict[str, object]]]:
-        attempts = [
-            {
-                "model": self._settings.whisper_model,
-                "device": self._settings.whisper_device,
-                "compute_type": self._settings.whisper_compute_type,
-                "message": f"正在加载转写模型 {self._settings.whisper_model}",
-            }
-        ]
-        if self._settings.whisper_device == "cuda":
+        attempts: list[dict[str, str]] = []
+
+        def append_attempt(device: str, compute_type: str, message: str) -> None:
+            model = self._settings.whisper_model
+            key = (model, device, compute_type)
+            for existing in attempts:
+                if (existing["model"], existing["device"], existing["compute_type"]) == key:
+                    return
             attempts.append(
                 {
-                    "model": self._settings.whisper_model,
-                    "device": "cpu",
-                    "compute_type": "int8",
-                    "message": f"CUDA 转写异常，正在切换到 CPU 模式重试 {self._settings.whisper_model}",
+                    "model": model,
+                    "device": device,
+                    "compute_type": compute_type,
+                    "message": message,
                 }
             )
-        if self._settings.whisper_device == "cpu" and self._settings.whisper_compute_type != "float32":
-            attempts.append(
-                {
-                    "model": self._settings.whisper_model,
-                    "device": "cpu",
-                    "compute_type": "float32",
-                    "message": f"兼容模式重试，正在加载转写模型 {self._settings.whisper_model}",
-                }
+
+        append_attempt(
+            self._settings.whisper_device,
+            self._settings.whisper_compute_type,
+            f"正在加载转写模型 {self._settings.whisper_model}",
+        )
+        if self._settings.whisper_device == "cuda":
+            append_attempt(
+                "cpu",
+                "int8",
+                f"CUDA 转写异常，正在切换到 CPU 模式重试 {self._settings.whisper_model}",
+            )
+            append_attempt(
+                "cpu",
+                "float32",
+                f"CPU int8 转写异常，正在切换到 CPU float32 兼容模式重试 {self._settings.whisper_model}",
+            )
+        elif self._settings.whisper_device == "cpu" and self._settings.whisper_compute_type != "float32":
+            append_attempt(
+                "cpu",
+                "float32",
+                f"兼容模式重试，正在加载转写模型 {self._settings.whisper_model}",
             )
 
         last_error: VideoSumError | None = None
@@ -507,7 +521,10 @@ class RealPipelineRunner(PipelineRunner):
         env = os.environ.copy()
         env.setdefault("PYTHONIOENCODING", "utf-8")
         env.setdefault("PYTHONUTF8", "1")
-        runtime_paths = [str(path) for path in runtime_library_dirs(self._settings.runtime_channel)]
+        effective_runtime_channel = self._settings.runtime_channel
+        if is_frozen() and effective_runtime_channel != "base":
+            effective_runtime_channel = "base"
+        runtime_paths = [str(path) for path in runtime_library_dirs(effective_runtime_channel)]
         ffmpeg_dir = ffmpeg_location()
         if ffmpeg_dir is not None:
             runtime_paths.append(str(ffmpeg_dir.parent))
@@ -518,6 +535,15 @@ class RealPipelineRunner(PipelineRunner):
             if item and item not in merged_path:
                 merged_path.append(item)
         env["PATH"] = os.pathsep.join(merged_path)
+        
+        # 记录子进程启动信息以便调试
+        logger.info(
+            "transcription subprocess command=%s cwd=%s PYTHONPATH=%s",
+            command,
+            str(audio_path.parent),
+            env.get("PYTHONPATH", ""),
+        )
+        
         with sanitized_subprocess_dll_search():
             process = subprocess.Popen(
                 command,
@@ -557,9 +583,26 @@ class RealPipelineRunner(PipelineRunner):
             # 检查是否是 CUDA 清理时的访问冲突，但输出文件已成功写入
             is_native_crash = self._is_native_crash_returncode(process.returncode)
             output_valid = output_path.exists()
+            worker_error_detail = ""
             if output_valid:
                 try:
                     payload = json.loads(output_path.read_text(encoding="utf-8"))
+                    error_payload = payload.get("error") if isinstance(payload, dict) else None
+                    if isinstance(error_payload, dict):
+                        error_type = str(error_payload.get("type") or "").strip()
+                        error_message = str(error_payload.get("message") or "").strip()
+                        traceback_text = str(error_payload.get("traceback") or "").strip()
+                        parts = [part for part in [error_type, error_message] if part]
+                        worker_error_detail = ": ".join(parts) if parts else error_message
+                        if traceback_text:
+                            logger.error(
+                                "transcription worker traceback audio=%s model=%s device=%s compute_type=%s traceback=%s",
+                                audio_path,
+                                model_name,
+                                device,
+                                compute_type,
+                                traceback_text,
+                            )
                     transcript = str(payload.get("transcript") or "")
                     segments = list(payload.get("segments") or [])
                     if transcript.strip() and segments:
@@ -592,9 +635,10 @@ class RealPipelineRunner(PipelineRunner):
             native_hint = ""
             if is_native_crash:
                 native_hint = " The transcription runtime crashed at the native library level."
+            detail_suffix = f" Detail={worker_error_detail}" if worker_error_detail else ""
             raise VideoSumError(
                 f"Transcription subprocess failed with exit code {process.returncode}."
-                f"{native_hint} Runtime={device}/{compute_type} model={model_name}."
+                f"{native_hint} Runtime={device}/{compute_type} model={model_name}.{detail_suffix}"
             )
         if stderr.strip():
             logger.info("transcription subprocess stderr audio=%s stderr=%s", audio_path, stderr.strip())
@@ -617,15 +661,18 @@ class RealPipelineRunner(PipelineRunner):
         progress_path: Path,
         output_path: Path,
     ) -> list[str]:
-        from video_sum_infra.runtime import is_frozen
-        
         if is_frozen():
-            worker_executable = runtime_worker_executable(self._settings.runtime_channel)
+            runtime_channel = "base" if self._settings.runtime_channel != "base" else self._settings.runtime_channel
+            worker_executable = runtime_worker_executable(runtime_channel)
             if worker_executable is None:
                 raise VideoSumError("Packaged transcription worker is missing.")
+            logger.info("using frozen transcription worker executable=%s", worker_executable)
             command = [str(worker_executable)]
         else:
             runtime_python = runtime_python_executable(self._settings.runtime_channel) or Path(sys.executable)
+            if not runtime_python.exists():
+                logger.error("python executable not found path=%s", runtime_python)
+            logger.info("using python executable=%s for transcription subprocess", runtime_python)
             command = [str(runtime_python), "-m", "video_sum_core.transcribe_subprocess"]
 
         command.extend(
@@ -649,7 +696,10 @@ class RealPipelineRunner(PipelineRunner):
     def _should_retry_transcription(self, error: VideoSumError) -> bool:
         message = str(error)
         native_exit_codes = ("3221226505", "3221225477", "-1073740791", "-1073741819")
-        return "native library level" in message or any(code in message for code in native_exit_codes)
+        if "native library level" in message or any(code in message for code in native_exit_codes):
+            return True
+        # Keep compatibility fallback active for non-native failures on GPU/cpu-int8 attempts.
+        return "Runtime=cuda/" in message or "Runtime=cpu/int8" in message
 
     def _is_native_crash_returncode(self, returncode: int) -> bool:
         return returncode in {3221226505, 3221225477, -1073740791, -1073741819}

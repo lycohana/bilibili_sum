@@ -1,16 +1,23 @@
 import asyncio
+from collections import deque
 from contextlib import asynccontextmanager
+from dataclasses import dataclass, field
 import importlib.metadata
 import json
 import logging
 import os
 from pathlib import Path
+import queue
+import re
 import shutil
 import subprocess
 import sys
 import textwrap
 import threading
+import time
+import uuid
 import venv
+from typing import Callable, Iterator
 
 from fastapi import FastAPI, HTTPException, status
 from fastapi.responses import FileResponse, StreamingResponse
@@ -35,6 +42,7 @@ from video_sum_infra.runtime import (
     runtime_library_dirs,
     runtime_python_candidates,
     runtime_python_executable,
+    runtime_worker_executable,
     runtime_scripts_dir,
     sanitized_subprocess_dll_search,
     service_log_path,
@@ -73,6 +81,272 @@ _environment_probe_cache: dict[str, dict[str, object]] = {}
 _environment_probe_failures: dict[str, str] = {}
 MAX_LOG_CHARS = 20_000
 MAX_LOG_LINE_CHARS = 1_000
+CUDA_INSTALL_TERMINAL_STATES = {"completed", "failed", "cancelled"}
+
+
+class CudaInstallCancelled(RuntimeError):
+    pass
+
+
+@dataclass
+class CudaInstallTask:
+    install_id: str
+    cuda_variant: str
+    status: str = "running"
+    stage: str = "pending"
+    progress: int = 0
+    message: str = ""
+    error: str = ""
+    created_at: float = field(default_factory=lambda: time.time())
+    updated_at: float = field(default_factory=lambda: time.time())
+    runtime_channel: str = ""
+    installed: bool = False
+    restart_required: bool = False
+    stdout_tail: str = ""
+    environment: dict[str, object] | None = None
+    seq: int = 0
+    events: deque[dict[str, object]] = field(default_factory=lambda: deque(maxlen=400))
+    cancel_event: threading.Event = field(default_factory=threading.Event)
+    thread: threading.Thread | None = None
+    process: subprocess.Popen[str] | None = None
+    condition: threading.Condition = field(default_factory=lambda: threading.Condition(threading.Lock()))
+
+    def snapshot(self) -> dict[str, object]:
+        with self.condition:
+            return {
+                "install_id": self.install_id,
+                "cuda_variant": self.cuda_variant,
+                "status": self.status,
+                "stage": self.stage,
+                "progress": self.progress,
+                "message": self.message,
+                "error": self.error,
+                "created_at": int(self.created_at),
+                "updated_at": int(self.updated_at),
+                "runtime_channel": self.runtime_channel,
+                "installed": self.installed,
+                "restartRequired": self.restart_required,
+                "stdoutTail": self.stdout_tail,
+                "environment": self.environment or {},
+                "seq": self.seq,
+            }
+
+
+class CudaInstallManager:
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._tasks: dict[str, CudaInstallTask] = {}
+        self._active_id: str | None = None
+
+    def _get_task_unlocked(self, install_id: str) -> CudaInstallTask | None:
+        return self._tasks.get(install_id)
+
+    def _active_task_unlocked(self) -> CudaInstallTask | None:
+        if self._active_id is None:
+            return None
+        return self._tasks.get(self._active_id)
+
+    def _append_event(self, task: CudaInstallTask, event: dict[str, object]) -> None:
+        with task.condition:
+            task.seq += 1
+            item = dict(event)
+            item.setdefault("install_id", task.install_id)
+            item["seq"] = task.seq
+            task.updated_at = time.time()
+            task.stage = str(item.get("stage") or task.stage)
+            if isinstance(item.get("progress"), (int, float)):
+                task.progress = int(item["progress"])
+            if isinstance(item.get("message"), str):
+                task.message = str(item["message"])
+            if isinstance(item.get("status"), str) and str(item.get("status")):
+                task.status = str(item["status"])
+            if isinstance(item.get("runtime_channel"), str):
+                task.runtime_channel = str(item["runtime_channel"])
+            if item.get("installed") is True:
+                task.installed = True
+                task.status = "completed"
+            if isinstance(item.get("stdoutTail"), str):
+                task.stdout_tail = str(item["stdoutTail"])
+            if isinstance(item.get("environment"), dict):
+                task.environment = item["environment"]  # type: ignore[assignment]
+            if isinstance(item.get("restartRequired"), bool):
+                task.restart_required = bool(item["restartRequired"])
+            task.events.append(item)
+            task.condition.notify_all()
+
+    def _finalize_task(self, task: CudaInstallTask, *, status: str, error: str = "") -> None:
+        with task.condition:
+            task.status = status
+            task.error = error
+            task.updated_at = time.time()
+            task.condition.notify_all()
+        with self._lock:
+            if self._active_id == task.install_id:
+                self._active_id = None
+            # Keep only recent tasks in memory.
+            if len(self._tasks) > 20:
+                stale = sorted(self._tasks.values(), key=lambda item: item.updated_at)[:-20]
+                stale_ids = {item.install_id for item in stale if item.install_id != self._active_id}
+                for stale_id in stale_ids:
+                    self._tasks.pop(stale_id, None)
+
+    def _set_process(self, task: CudaInstallTask, process: subprocess.Popen[str] | None) -> None:
+        with task.condition:
+            task.process = process
+            task.condition.notify_all()
+
+    def _run_task(self, task: CudaInstallTask) -> None:
+        try:
+            for event in _cuda_install_event_iter(
+                task.cuda_variant,
+                install_id=task.install_id,
+                cancel_event=task.cancel_event,
+                process_callback=lambda proc: self._set_process(task, proc),
+            ):
+                self._append_event(task, event)
+            final_status = "completed" if task.installed else "failed"
+            if final_status == "failed" and not task.error:
+                task.error = "CUDA installation finished without completion event."
+            self._finalize_task(task, status=final_status, error=task.error)
+        except CudaInstallCancelled:
+            self._append_event(
+                task,
+                {
+                    "install_id": task.install_id,
+                    "stage": task.stage,
+                    "progress": task.progress,
+                    "message": "CUDA 安装已取消",
+                    "error": "CUDA installation cancelled by user.",
+                    "status": "cancelled",
+                },
+            )
+            self._finalize_task(task, status="cancelled", error="CUDA installation cancelled by user.")
+        except HTTPException as exc:
+            detail = str(exc.detail)
+            self._append_event(
+                task,
+                {
+                    "install_id": task.install_id,
+                    "stage": task.stage,
+                    "progress": task.progress,
+                    "message": "CUDA 安装失败",
+                    "error": detail,
+                    "status": "failed",
+                },
+            )
+            self._finalize_task(task, status="failed", error=detail)
+        except Exception as exc:
+            logger.exception("cuda install background task crashed install_id=%s", task.install_id)
+            detail = str(exc)
+            self._append_event(
+                task,
+                {
+                    "install_id": task.install_id,
+                    "stage": task.stage,
+                    "progress": task.progress,
+                    "message": "CUDA 安装失败",
+                    "error": detail,
+                    "status": "failed",
+                },
+            )
+            self._finalize_task(task, status="failed", error=detail)
+
+    def start(self, cuda_variant: str) -> CudaInstallTask:
+        normalized_variant = _normalize_cuda_variant(cuda_variant)
+        with self._lock:
+            active = self._active_task_unlocked()
+            if active is not None and active.status == "running":
+                if active.cuda_variant == normalized_variant:
+                    return active
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Another CUDA installation is in progress (install_id={active.install_id}).",
+                )
+
+            install_id = uuid.uuid4().hex[:12]
+            task = CudaInstallTask(install_id=install_id, cuda_variant=normalized_variant)
+            self._tasks[install_id] = task
+            self._active_id = install_id
+            thread = threading.Thread(target=self._run_task, args=(task,), daemon=True)
+            task.thread = thread
+            thread.start()
+            return task
+
+    def get(self, install_id: str | None = None) -> CudaInstallTask | None:
+        with self._lock:
+            if install_id:
+                return self._get_task_unlocked(install_id)
+            return self._active_task_unlocked()
+
+    def cancel(self, install_id: str | None = None) -> CudaInstallTask:
+        task = self.get(install_id)
+        if task is None:
+            raise HTTPException(status_code=404, detail="CUDA install task not found.")
+
+        with task.condition:
+            if task.status in CUDA_INSTALL_TERMINAL_STATES:
+                return task
+            task.cancel_event.set()
+            proc = task.process
+        if proc is not None and proc.poll() is None:
+            try:
+                proc.terminate()
+            except OSError:
+                pass
+        return task
+
+    def wait_terminal(self, install_id: str, timeout_seconds: int = 3600) -> CudaInstallTask:
+        task = self.get(install_id)
+        if task is None:
+            raise HTTPException(status_code=404, detail="CUDA install task not found.")
+        deadline = time.monotonic() + timeout_seconds
+        while True:
+            with task.condition:
+                if task.status in CUDA_INSTALL_TERMINAL_STATES:
+                    return task
+                remaining = max(0.0, deadline - time.monotonic())
+                if remaining <= 0:
+                    raise HTTPException(status_code=504, detail="Timed out waiting for CUDA installation.")
+                task.condition.wait(timeout=min(1.0, remaining))
+
+    def stream(self, install_id: str, after_seq: int = 0) -> Iterator[dict[str, object]]:
+        task = self.get(install_id)
+        if task is None:
+            raise HTTPException(status_code=404, detail="CUDA install task not found.")
+
+        last_seq = max(0, int(after_seq))
+        while True:
+            pending: list[dict[str, object]] = []
+            status_value = ""
+            with task.condition:
+                if task.seq <= last_seq and task.status not in CUDA_INSTALL_TERMINAL_STATES:
+                    task.condition.wait(timeout=2.0)
+                pending = [event for event in task.events if int(event.get("seq", 0)) > last_seq]
+                status_value = task.status
+
+            if pending:
+                for item in pending:
+                    last_seq = max(last_seq, int(item.get("seq", 0)))
+                    payload = dict(item)
+                    payload.setdefault("status", status_value)
+                    yield payload
+            elif status_value not in CUDA_INSTALL_TERMINAL_STATES:
+                yield {
+                    "install_id": task.install_id,
+                    "seq": last_seq,
+                    "stage": task.stage,
+                    "progress": task.progress,
+                    "message": "安装任务仍在进行，等待新的进度输出...",
+                    "status": status_value,
+                    "heartbeat": True,
+                    "timestamp": int(time.time()),
+                }
+
+            if status_value in CUDA_INSTALL_TERMINAL_STATES:
+                break
+
+
+cuda_install_manager = CudaInstallManager()
 
 
 def _windows_hidden_subprocess_kwargs() -> dict[str, object]:
@@ -169,6 +443,9 @@ def _runtime_subprocess_env(runtime_channel: str) -> dict[str, str]:
 
 
 def _run_command(command: list[str], runtime_channel: str, timeout: int = 3600) -> subprocess.CompletedProcess[str]:
+    runtime_cwd = managed_runtime_dir(runtime_channel)
+    if not runtime_cwd.exists():
+        runtime_cwd = repo_root()
     with sanitized_subprocess_dll_search():
         return subprocess.run(
             command,
@@ -179,7 +456,7 @@ def _run_command(command: list[str], runtime_channel: str, timeout: int = 3600) 
             timeout=timeout,
             check=True,
             env=_runtime_subprocess_env(runtime_channel),
-            cwd=managed_runtime_dir(runtime_channel),
+            cwd=runtime_cwd,
             **_windows_hidden_subprocess_kwargs(),
         )
 
@@ -217,17 +494,19 @@ def _create_source_runtime(runtime_channel: str) -> Path:
     return runtime_dir
 
 
+def _managed_runtime_ready(runtime_channel: str) -> bool:
+    runtime_dir = managed_runtime_dir(runtime_channel)
+    return any(candidate.exists() for candidate in runtime_python_candidates(runtime_dir))
+
+
 def ensure_runtime_channel(runtime_channel: str) -> Path | None:
     if runtime_channel == "base":
         if is_frozen():
             return None
         bootstrap_managed_runtime("base")
-        python_executable = runtime_python_executable("base")
-        if python_executable is not None:
+        if _managed_runtime_ready("base"):
             return managed_runtime_dir("base")
-        if not is_frozen():
-            return _create_source_runtime("base")
-        raise HTTPException(status_code=500, detail="Bundled base runtime is missing.")
+        return _create_source_runtime("base")
 
     if is_frozen():
         raise HTTPException(
@@ -236,19 +515,23 @@ def ensure_runtime_channel(runtime_channel: str) -> Path | None:
         )
 
     target_dir = managed_runtime_dir(runtime_channel)
-    if runtime_python_executable(runtime_channel) is not None:
+    if _managed_runtime_ready(runtime_channel):
         return target_dir
 
     base_dir = ensure_runtime_channel("base")
-    if base_dir is None or not base_dir.exists():
-        raise HTTPException(status_code=500, detail="Base runtime is unavailable.")
+    if base_dir is not None and base_dir.exists():
+        shutil.copytree(base_dir, target_dir, dirs_exist_ok=True)
+        if _managed_runtime_ready(runtime_channel):
+            return target_dir
 
-    shutil.copytree(base_dir, target_dir, dirs_exist_ok=True)
-    return target_dir
+    return _create_source_runtime(runtime_channel)
 
 
 def detect_environment(runtime_channel: str | None = None) -> dict[str, object]:
     active_channel = runtime_channel or settings_manager.current.runtime_channel
+    if is_frozen() and active_channel != "base":
+        logger.warning("packaged runtime channel %s is unsupported, forcing base", active_channel)
+        active_channel = "base"
     cached = _environment_probe_cache.get(active_channel)
     if cached is not None:
         return dict(cached)
@@ -262,6 +545,9 @@ def detect_environment(runtime_channel: str | None = None) -> dict[str, object]:
 
             cuda_available = bool(torch is not None and torch.cuda.is_available())
             gpu_name = torch.cuda.get_device_name(0) if cuda_available else ""
+            # 根据设备推荐计算精度
+            recommended_compute_type = "float16" if cuda_available else "int8"
+            
             payload = {
                 "pythonVersion": sys.version.split()[0],
                 "torchInstalled": torch is not None,
@@ -273,6 +559,7 @@ def detect_environment(runtime_channel: str | None = None) -> dict[str, object]:
                 "ffmpegLocation": str(ffmpeg_location() or ""),
                 "recommendedModel": "large-v3-turbo" if cuda_available else "base",
                 "recommendedDevice": "cuda" if cuda_available else "cpu",
+                "recommendedComputeType": recommended_compute_type,
                 "runtimeChannel": active_channel,
                 "runtimeReady": True,
                 "runtimePython": str(Path(sys.executable).resolve()),
@@ -319,6 +606,9 @@ def detect_environment(runtime_channel: str | None = None) -> dict[str, object]:
 
         cuda_available = bool(torch is not None and torch.cuda.is_available())
         gpu_name = torch.cuda.get_device_name(0) if cuda_available else ""
+        # 根据设备推荐计算精度
+        recommended_compute_type = "float16" if cuda_available else "int8"
+        
         payload = {
             "pythonVersion": sys.version.split()[0],
             "torchInstalled": torch is not None,
@@ -330,6 +620,7 @@ def detect_environment(runtime_channel: str | None = None) -> dict[str, object]:
             "ffmpegLocation": "",
             "recommendedModel": "large-v3-turbo" if cuda_available else "base",
             "recommendedDevice": "cuda" if cuda_available else "cpu",
+            "recommendedComputeType": recommended_compute_type,
         }
         print(json.dumps(payload, ensure_ascii=False))
         """
@@ -394,7 +685,13 @@ def clear_environment_probe_cache(runtime_channel: str | None = None) -> None:
 
 def build_worker(repository: SqliteTaskRepository, current_settings: ServiceSettings) -> TaskWorker:
     selected_runtime_channel = current_settings.runtime_channel
-    if selected_runtime_channel != "base" and runtime_python_executable(selected_runtime_channel) is None:
+    if is_frozen():
+        if selected_runtime_channel != "base":
+            logger.warning("packaged build does not support runtime channel %s, forcing base", selected_runtime_channel)
+        selected_runtime_channel = "base"
+        if runtime_worker_executable(selected_runtime_channel) is None:
+            raise RuntimeError("Packaged transcription worker is missing.")
+    elif selected_runtime_channel != "base" and runtime_python_executable(selected_runtime_channel) is None:
         logger.warning("runtime channel %s is not ready, falling back to base", selected_runtime_channel)
         selected_runtime_channel = "base"
 
@@ -432,8 +729,9 @@ def build_worker(repository: SqliteTaskRepository, current_settings: ServiceSett
 
 
 def serialize_settings(current_settings: ServiceSettings) -> dict[str, object]:
+    effective_runtime_channel = "base" if is_frozen() else current_settings.runtime_channel
     runtime_settings = current_settings.with_resolved_runtime(
-        cuda_available=bool(detect_environment(current_settings.runtime_channel).get("cudaAvailable"))
+        cuda_available=bool(detect_environment(effective_runtime_channel).get("cudaAvailable"))
     )
     return {
         "host": current_settings.host,
@@ -450,7 +748,7 @@ def serialize_settings(current_settings: ServiceSettings) -> dict[str, object]:
         "model_mode": current_settings.model_mode,
         "fixed_model": current_settings.fixed_model,
         "cuda_variant": current_settings.cuda_variant,
-        "runtime_channel": current_settings.runtime_channel,
+        "runtime_channel": effective_runtime_channel,
         "output_dir": current_settings.output_dir,
         "preserve_temp_audio": current_settings.preserve_temp_audio,
         "enable_cache": current_settings.enable_cache,
@@ -528,33 +826,192 @@ def localize_video_cover(task_store: SqliteTaskRepository, video: VideoAssetReco
     return task_store.upsert_video_asset(updated)
 
 
-def install_cuda_support(cuda_variant: str) -> dict[str, object]:
+def _normalize_cuda_variant(cuda_variant: str | None) -> str:
+    return str(cuda_variant or "cu128").strip().lower()
+
+
+_PIP_PERCENT_PATTERN = re.compile(r"(?<!\d)(\d{1,3})%")
+_PIP_SIZE_PATTERN = re.compile(
+    r"(?P<downloaded>\d+(?:\.\d+)?)\s*(?P<downloaded_unit>[kKmMgGtT]i?[bB])?\s*/\s*"
+    r"(?P<total>\d+(?:\.\d+)?)\s*(?P<total_unit>[kKmMgGtT]i?[bB])"
+)
+_SIZE_FACTORS = {
+    "B": 1,
+    "KB": 1024,
+    "MB": 1024**2,
+    "GB": 1024**3,
+    "TB": 1024**4,
+}
+
+
+def _size_to_bytes(value: str, unit: str | None) -> int | None:
+    if unit is None:
+        return None
+    normalized_unit = unit.strip().upper().replace("IB", "B")
+    factor = _SIZE_FACTORS.get(normalized_unit)
+    if factor is None:
+        return None
+    return int(float(value) * factor)
+
+
+def _format_size_bytes(value: int | None) -> str:
+    if value is None:
+        return "-"
+    size = float(max(value, 0))
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if size < 1024 or unit == "TB":
+            if unit == "B":
+                return f"{int(size)}{unit}"
+            return f"{size:.1f}{unit}"
+        size /= 1024
+    return f"{int(size)}B"
+
+
+def _extract_pip_download_progress(line: str) -> tuple[int | None, int | None, int | None]:
+    percent: int | None = None
+    downloaded_bytes: int | None = None
+    total_bytes: int | None = None
+
+    percent_match = _PIP_PERCENT_PATTERN.search(line)
+    if percent_match:
+        percent = max(0, min(100, int(percent_match.group(1))))
+
+    size_match = _PIP_SIZE_PATTERN.search(line)
+    if size_match:
+        total_unit = size_match.group("total_unit")
+        downloaded_unit = size_match.group("downloaded_unit") or total_unit
+        downloaded_bytes = _size_to_bytes(size_match.group("downloaded"), downloaded_unit)
+        total_bytes = _size_to_bytes(size_match.group("total"), total_unit)
+        if percent is None and downloaded_bytes is not None and total_bytes and total_bytes > 0:
+            percent = max(0, min(100, int(downloaded_bytes * 100 / total_bytes)))
+
+    return percent, downloaded_bytes, total_bytes
+
+
+def _cuda_event(
+    install_id: str,
+    *,
+    stage: str,
+    progress: int,
+    message: str,
+    output: str | None = None,
+) -> dict[str, object]:
+    event: dict[str, object] = {
+        "install_id": install_id,
+        "stage": stage,
+        "progress": progress,
+        "message": message,
+        "timestamp": int(time.time()),
+    }
+    if output:
+        event["output"] = output
+    return event
+
+
+def _cuda_install_event_iter(
+    cuda_variant: str,
+    *,
+    install_id: str | None = None,
+    cancel_event: threading.Event | None = None,
+    process_callback: Callable[[subprocess.Popen[str] | None], None] | None = None,
+) -> Iterator[dict[str, object]]:
+    effective_install_id = install_id or uuid.uuid4().hex[:12]
+    cancellation = cancel_event or threading.Event()
+
+    def _raise_if_cancelled(*, stage: str, progress: int, message: str) -> None:
+        if cancellation.is_set():
+            logger.info(
+                "cuda install cancelled install_id=%s stage=%s progress=%s",
+                effective_install_id,
+                stage,
+                progress,
+            )
+            raise CudaInstallCancelled(message)
+
+    def _terminate_process(process: subprocess.Popen[str]) -> None:
+        if process.poll() is not None:
+            return
+        try:
+            process.terminate()
+            process.wait(timeout=10)
+            return
+        except subprocess.TimeoutExpired:
+            pass
+        except OSError:
+            return
+        try:
+            process.kill()
+            process.wait(timeout=5)
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+
+    normalized_variant = _normalize_cuda_variant(cuda_variant)
     allowed_variants = {"cu124", "cu126", "cu128"}
-    if cuda_variant not in allowed_variants:
+    if normalized_variant not in allowed_variants:
+        logger.warning("cuda install rejected install_id=%s cuda_variant=%s", effective_install_id, cuda_variant)
         raise HTTPException(status_code=400, detail="Unsupported CUDA variant.")
 
     if is_frozen():
+        logger.warning("cuda install unsupported in packaged build install_id=%s", effective_install_id)
         raise HTTPException(
             status_code=status.HTTP_501_NOT_IMPLEMENTED,
             detail="CUDA managed runtime installation is not supported in packaged builds yet.",
         )
 
-    runtime_channel = f"gpu-{cuda_variant}"
+    runtime_channel = f"gpu-{normalized_variant}"
+    logger.info(
+        "cuda install start install_id=%s cuda_variant=%s runtime_channel=%s",
+        effective_install_id,
+        normalized_variant,
+        runtime_channel,
+    )
+    yield _cuda_event(
+        effective_install_id,
+        stage="workspace",
+        progress=5,
+        message="正在准备运行时目录...",
+    )
+    _raise_if_cancelled(stage="workspace", progress=5, message="CUDA installation cancelled before workspace setup.")
+
     runtime_dir = ensure_runtime_channel(runtime_channel)
     python_executable = runtime_python_executable(runtime_channel)
     if runtime_dir is None or python_executable is None:
+        logger.error(
+            "cuda install runtime unavailable install_id=%s runtime_channel=%s runtime_dir=%s",
+            effective_install_id,
+            runtime_channel,
+            runtime_dir,
+        )
         raise HTTPException(status_code=500, detail="Managed runtime is unavailable.")
 
-    # Keep managed GPU runtimes aligned with the current workspace package set.
-    # This prevents older side runtimes from retaining stale console entrypoints.
+    logger.info(
+        "cuda install runtime ready install_id=%s runtime_dir=%s python=%s",
+        effective_install_id,
+        runtime_dir,
+        python_executable,
+    )
+    yield _cuda_event(
+        effective_install_id,
+        stage="workspace",
+        progress=12,
+        message="正在安装工作区依赖...",
+    )
+    _raise_if_cancelled(stage="workspace", progress=12, message="CUDA installation cancelled before dependency install.")
     try:
         _install_workspace_packages(python_executable, runtime_channel=runtime_channel)
     except subprocess.CalledProcessError as exc:
+        logger.error(
+            "cuda install workspace dependencies failed install_id=%s detail=%s",
+            effective_install_id,
+            (exc.stderr or exc.stdout or str(exc))[-1200:],
+        )
         clear_environment_probe_cache(runtime_channel)
         raise HTTPException(
             status_code=500,
             detail=((exc.stderr or exc.stdout or str(exc))[-1500:]),
         ) from exc
+    _raise_if_cancelled(stage="workspace", progress=35, message="CUDA installation cancelled after dependency install.")
+    yield _cuda_event(effective_install_id, stage="workspace", progress=35, message="工作区依赖安装完成")
 
     command = [
         str(python_executable),
@@ -562,49 +1019,254 @@ def install_cuda_support(cuda_variant: str) -> dict[str, object]:
         "pip",
         "install",
         "--upgrade",
+        "--progress-bar",
+        "on",
         "torch",
         "torchvision",
         "torchaudio",
         "--index-url",
-        f"https://download.pytorch.org/whl/{cuda_variant}",
+        f"https://download.pytorch.org/whl/{normalized_variant}",
     ]
+    logger.info("cuda install pip command install_id=%s command=%s", effective_install_id, command)
+    yield _cuda_event(
+        effective_install_id,
+        stage="pytorch",
+        progress=40,
+        message="正在安装 PyTorch CUDA 组件...",
+    )
+    _raise_if_cancelled(stage="pytorch", progress=40, message="CUDA installation cancelled before pip install.")
+
+    output_tail: deque[str] = deque(maxlen=160)
+    line_count = 0
+    last_reported = 0
+    current_progress = 40
+    last_download_percent = -1
+    latest_download_bytes: int | None = None
+    latest_total_bytes: int | None = None
+    with sanitized_subprocess_dll_search():
+        process = subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            bufsize=1,
+            cwd=str(runtime_dir),
+            env=_runtime_subprocess_env(runtime_channel),
+            **_windows_hidden_subprocess_kwargs(),
+        )
+    if process_callback is not None:
+        process_callback(process)
+
+    output_queue: queue.Queue[str | None] = queue.Queue()
+    reader: threading.Thread | None = None
+    text_buffer = ""
     try:
-        result = _run_command(command, runtime_channel=runtime_channel)
-    except subprocess.CalledProcessError as exc:
+        if process.stdout is None:
+            _terminate_process(process)
+            raise HTTPException(status_code=500, detail="Failed to capture pip output for CUDA installation.")
+
+        def read_output() -> None:
+            assert process.stdout is not None
+            while True:
+                chunk = process.stdout.read(1024)
+                if not chunk:
+                    break
+                output_queue.put(chunk)
+            output_queue.put(None)
+
+        reader = threading.Thread(target=read_output, daemon=True)
+        reader.start()
+
+        last_heartbeat = time.monotonic()
+        while True:
+            if cancellation.is_set():
+                _terminate_process(process)
+                raise CudaInstallCancelled("CUDA installation cancelled while installing PyTorch dependencies.")
+            try:
+                raw_chunk = output_queue.get(timeout=1.0)
+            except queue.Empty:
+                now = time.monotonic()
+                if now - last_heartbeat >= 5:
+                    last_heartbeat = now
+                    yield _cuda_event(
+                        effective_install_id,
+                        stage="pytorch",
+                        progress=current_progress,
+                        message=f"正在安装 PyTorch CUDA 组件（已输出 {line_count} 行，仍在进行）",
+                    )
+                continue
+
+            if raw_chunk is None:
+                break
+
+            text_buffer += raw_chunk
+            segments = re.split(r"[\r\n]+", text_buffer)
+            text_buffer = segments.pop() if segments else ""
+
+            for raw_segment in segments:
+                line = raw_segment.strip()
+                if not line:
+                    continue
+                output_tail.append(line)
+                line_count += 1
+
+                percent, downloaded_bytes, total_bytes = _extract_pip_download_progress(line)
+                if downloaded_bytes is not None:
+                    latest_download_bytes = downloaded_bytes
+                if total_bytes is not None:
+                    latest_total_bytes = total_bytes
+
+                if percent is not None and percent != last_download_percent:
+                    last_download_percent = percent
+                    mapped_progress = int(min(88, max(current_progress, 40 + int(percent * 0.48))))
+                    current_progress = mapped_progress
+                    logger.info(
+                        "cuda install download progress install_id=%s percent=%s downloaded=%s total=%s",
+                        effective_install_id,
+                        percent,
+                        _format_size_bytes(latest_download_bytes),
+                        _format_size_bytes(latest_total_bytes),
+                    )
+                    progress_message = (
+                        f"正在下载 PyTorch 包 {percent}% "
+                        f"({ _format_size_bytes(latest_download_bytes) } / { _format_size_bytes(latest_total_bytes) })"
+                    )
+                    yield _cuda_event(
+                        effective_install_id,
+                        stage="pytorch",
+                        progress=current_progress,
+                        message=progress_message,
+                        output=line,
+                    )
+                    continue
+
+                if line_count - last_reported >= 25:
+                    last_reported = line_count
+                    current_progress = int(min(88, max(current_progress, 40 + line_count // 4)))
+                    logger.info(
+                        "cuda install output install_id=%s progress=%s line_count=%s line=%s",
+                        effective_install_id,
+                        current_progress,
+                        line_count,
+                        line[:500],
+                    )
+                    yield _cuda_event(
+                        effective_install_id,
+                        stage="pytorch",
+                        progress=current_progress,
+                        message=f"正在安装 PyTorch CUDA 组件... ({line_count} 行输出)",
+                        output=line,
+                    )
+
+        remaining = text_buffer.strip()
+        if remaining:
+            output_tail.append(remaining)
+
+        if cancellation.is_set():
+            _terminate_process(process)
+            raise CudaInstallCancelled("CUDA installation cancelled while finalizing pip install.")
+
+        returncode = process.wait()
+    finally:
+        if process.stdout is not None:
+            try:
+                process.stdout.close()
+            except OSError:
+                pass
+        if reader is not None:
+            reader.join(timeout=2)
+        if process_callback is not None:
+            process_callback(None)
+
+    stdout_tail = "\n".join(output_tail)
+    if returncode != 0:
+        logger.error(
+            "cuda install pip failed install_id=%s returncode=%s stdout_tail=%s",
+            effective_install_id,
+            returncode,
+            stdout_tail[-1200:],
+        )
         clear_environment_probe_cache(runtime_channel)
-        raise HTTPException(status_code=500, detail=((exc.stderr or exc.stdout or str(exc))[-1500:])) from exc
+        raise HTTPException(
+            status_code=500,
+            detail=f"pip install failed with code {returncode}: {stdout_tail[-1200:]}",
+        )
+
+    yield _cuda_event(effective_install_id, stage="pytorch", progress=88, message="PyTorch CUDA 组件安装完成")
+    yield _cuda_event(effective_install_id, stage="config", progress=92, message="正在写入运行时配置...")
+    _raise_if_cancelled(stage="config", progress=92, message="CUDA installation cancelled before writing runtime config.")
 
     current_settings = settings_manager.save(
-        SettingsUpdatePayload(cuda_variant=cuda_variant, runtime_channel=runtime_channel)
+        SettingsUpdatePayload(cuda_variant=normalized_variant, runtime_channel=runtime_channel)
     )
     clear_environment_probe_cache(runtime_channel)
     clear_environment_probe_cache("base")
     write_runtime_metadata(
         runtime_channel,
         {
-            "runtimeChannel": runtime_channel,
-            "cudaVariant": cuda_variant,
+            "runtime_channel": runtime_channel,
+            "cuda_variant": normalized_variant,
             "python": str(python_executable),
         },
     )
     environment = detect_environment(runtime_channel)
     app.state.task_worker = build_worker(app.state.task_repository, current_settings)
+    logger.info(
+        "cuda install completed install_id=%s runtime_channel=%s torch_installed=%s cuda_available=%s",
+        effective_install_id,
+        runtime_channel,
+        bool(environment.get("torchInstalled")),
+        bool(environment.get("cudaAvailable")),
+    )
 
-    return {
+    yield {
+        "install_id": effective_install_id,
         "installed": True,
-        "cudaVariant": cuda_variant,
-        "runtimeChannel": runtime_channel,
+        "cuda_variant": normalized_variant,
+        "runtime_channel": runtime_channel,
         "restartRequired": True,
-        "stdoutTail": (result.stdout or "")[-1500:],
+        "stdoutTail": stdout_tail[-1500:],
         "environment": environment,
+        "progress": 100,
+        "status": "completed",
+        "stage": "complete",
+        "message": "CUDA 安装完成",
     }
+
+
+def install_cuda_support_stream(cuda_variant: str) -> Iterator[str]:
+    logger.info("cuda install stream request cuda_variant=%s", cuda_variant)
+    try:
+        for event in _cuda_install_event_iter(cuda_variant):
+            yield json.dumps(event, ensure_ascii=False)
+    except HTTPException as exc:
+        logger.warning("cuda install stream failed detail=%s", exc.detail)
+        yield json.dumps({"error": str(exc.detail)}, ensure_ascii=False)
+    except Exception as exc:  # pragma: no cover - defensive logging for unexpected runtime failures.
+        logger.exception("cuda install stream failed")
+        yield json.dumps({"error": str(exc)}, ensure_ascii=False)
+
+
+def install_cuda_support(cuda_variant: str) -> dict[str, object]:
+    logger.info("cuda install sync request cuda_variant=%s", cuda_variant)
+    final_event: dict[str, object] | None = None
+    for event in _cuda_install_event_iter(cuda_variant):
+        final_event = event
+
+    if final_event is None:
+        raise HTTPException(status_code=500, detail="CUDA installation produced no result.")
+    logger.info("cuda install sync completed install_id=%s", final_event.get("install_id"))
+    return final_event
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     current_settings = settings_manager.current
-    bootstrap_managed_runtime(current_settings.runtime_channel)
-    prepend_runtime_path(current_settings.runtime_channel)
+    active_runtime_channel = "base" if is_frozen() else current_settings.runtime_channel
+    bootstrap_managed_runtime(active_runtime_channel)
+    prepend_runtime_path(active_runtime_channel)
     connection = connect_sqlite(current_settings.database_url)
     repository = SqliteTaskRepository(connection)
     repository.initialize()
@@ -655,7 +1317,8 @@ def health() -> dict[str, str]:
 @app.get("/api/v1/system/info")
 def system_info() -> dict[str, object]:
     current_settings = settings_manager.current
-    environment = detect_environment(current_settings.runtime_channel)
+    effective_runtime_channel = "base" if is_frozen() else current_settings.runtime_channel
+    environment = detect_environment(effective_runtime_channel)
     runtime_settings = current_settings.with_resolved_runtime(
         cuda_available=bool(environment.get("cudaAvailable"))
     )
@@ -672,7 +1335,7 @@ def system_info() -> dict[str, object]:
             "log_file": str(service_log_path()),
         },
         "runtime": {
-            "runtime_channel": current_settings.runtime_channel,
+            "runtime_channel": effective_runtime_channel,
             "whisper_model": runtime_settings.whisper_model,
             "whisper_device": runtime_settings.whisper_device,
             "whisper_compute_type": runtime_settings.whisper_compute_type,
@@ -692,10 +1355,19 @@ def get_settings() -> dict[str, object]:
 
 @app.put("/api/v1/settings")
 def update_settings(payload: SettingsUpdatePayload) -> dict[str, object]:
-    current_settings = settings_manager.save(payload)
+    logger.info("update_settings received payload: %s", payload.model_dump())
+    effective_payload = payload
+    if is_frozen() and payload.runtime_channel and payload.runtime_channel != "base":
+        logger.warning("ignoring non-base runtime channel %s for packaged build", payload.runtime_channel)
+        effective_payload = payload.model_copy(update={"runtime_channel": "base"})
+
+    current_settings = settings_manager.save(effective_payload)
+    logger.info("update_settings saved settings: model_mode=%s fixed_model=%s device_preference=%s compute_type=%s",
+                current_settings.model_mode, current_settings.fixed_model, current_settings.device_preference, current_settings.compute_type)
     clear_environment_probe_cache()
-    bootstrap_managed_runtime(current_settings.runtime_channel)
-    prepend_runtime_path(current_settings.runtime_channel)
+    active_runtime_channel = "base" if is_frozen() else current_settings.runtime_channel
+    bootstrap_managed_runtime(active_runtime_channel)
+    prepend_runtime_path(active_runtime_channel)
     current_settings.data_dir.mkdir(parents=True, exist_ok=True)
     current_settings.cache_dir.mkdir(parents=True, exist_ok=True)
     current_settings.tasks_dir.mkdir(parents=True, exist_ok=True)
@@ -709,7 +1381,9 @@ def update_settings(payload: SettingsUpdatePayload) -> dict[str, object]:
 
 @app.get("/api/v1/environment")
 def get_environment() -> dict[str, object]:
-    return detect_environment(settings_manager.current.runtime_channel)
+    current_settings = settings_manager.current
+    effective_runtime_channel = "base" if is_frozen() else current_settings.runtime_channel
+    return detect_environment(effective_runtime_channel)
 
 
 @app.get("/api/v1/system/logs")
@@ -735,7 +1409,106 @@ def shutdown_service() -> dict[str, object]:
 
 @app.post("/api/v1/cuda/install")
 def post_cuda_install(payload: dict[str, object]) -> dict[str, object]:
-    return install_cuda_support(str(payload.get("cudaVariant", "cu128")))
+    install_id_value = payload.get("install_id")
+    if install_id_value is None:
+        install_id_value = payload.get("installId")
+    install_id = str(install_id_value).strip() if install_id_value else ""
+
+    cuda_variant = payload.get("cuda_variant")
+    if cuda_variant is None:
+        cuda_variant = payload.get("cudaVariant", "cu128")
+    resolved_variant = str(cuda_variant)
+    logger.info(
+        "api cuda install payload=%s resolved_variant=%s install_id=%s",
+        payload,
+        resolved_variant,
+        install_id or "-",
+    )
+
+    task = cuda_install_manager.get(install_id) if install_id else cuda_install_manager.start(resolved_variant)
+    if task is None:
+        raise HTTPException(status_code=404, detail="CUDA install task not found.")
+    terminal = cuda_install_manager.wait_terminal(task.install_id)
+    return terminal.snapshot()
+
+
+@app.post("/api/v1/cuda/install-stream")
+def post_cuda_install_stream(payload: dict[str, object]) -> StreamingResponse:
+    """流式 CUDA 安装端点，支持恢复既有安装任务"""
+    install_id_value = payload.get("install_id")
+    if install_id_value is None:
+        install_id_value = payload.get("installId")
+    install_id = str(install_id_value).strip() if install_id_value else ""
+
+    after_seq_value = payload.get("after_seq")
+    if after_seq_value is None:
+        after_seq_value = payload.get("afterSeq", 0)
+    try:
+        after_seq = max(0, int(after_seq_value))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="Invalid after_seq value.") from None
+
+    cuda_variant = payload.get("cuda_variant")
+    if cuda_variant is None:
+        cuda_variant = payload.get("cudaVariant", "cu128")
+    resolved_variant = str(cuda_variant)
+
+    if install_id:
+        task = cuda_install_manager.get(install_id)
+        if task is None:
+            raise HTTPException(status_code=404, detail="CUDA install task not found.")
+    else:
+        task = cuda_install_manager.start(resolved_variant)
+
+    logger.info(
+        "api cuda install stream payload=%s resolved_variant=%s install_id=%s after_seq=%s",
+        payload,
+        resolved_variant,
+        task.install_id,
+        after_seq,
+    )
+
+    def generate() -> Iterator[str]:
+        try:
+            for event in cuda_install_manager.stream(task.install_id, after_seq=after_seq):
+                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+        except HTTPException as exc:
+            payload = {"install_id": task.install_id, "error": str(exc.detail), "status": "failed"}
+            yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+        except Exception as exc:  # pragma: no cover - defensive runtime guard
+            logger.exception("cuda install stream generator failed install_id=%s", task.install_id)
+            payload = {"install_id": task.install_id, "error": str(exc), "status": "failed"}
+            yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+        },
+    )
+
+
+@app.get("/api/v1/cuda/install/status")
+def get_cuda_install_status(install_id: str | None = None) -> dict[str, object]:
+    task = cuda_install_manager.get(install_id.strip() if install_id else None)
+    if task is None:
+        if install_id:
+            raise HTTPException(status_code=404, detail="CUDA install task not found.")
+        return {"active": False, "task": None}
+    snapshot = task.snapshot()
+    return {"active": snapshot.get("status") == "running", "task": snapshot}
+
+
+@app.post("/api/v1/cuda/install/cancel")
+def post_cuda_install_cancel(payload: dict[str, object]) -> dict[str, object]:
+    install_id_value = payload.get("install_id")
+    if install_id_value is None:
+        install_id_value = payload.get("installId")
+    install_id = str(install_id_value).strip() if install_id_value else None
+    task = cuda_install_manager.cancel(install_id)
+    return {"cancelRequested": True, "task": task.snapshot()}
 
 
 @app.post("/api/v1/videos/probe", response_model=VideoProbeResponse)

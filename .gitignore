@@ -19,3 +19,6 @@ Thumbs.db
 temp_repo_inspect/
 .env
 .data/*
+# Vite build artifacts
+apps/web/static/assets/*.js
+apps/web/static/assets/*.css

@@ -101,26 +101,32 @@ class ServiceSettings(BaseSettings):
         self,
         cuda_available: bool,
     ) -> tuple[str, str, str]:
+        device_preference = (self.device_preference or "auto").strip().lower()
+        # Backward compatibility: older settings used "gpu" instead of "cuda".
+        if device_preference == "gpu":
+            device_preference = "cuda"
+
         if self.model_mode == "auto":
             model = "large-v3-turbo" if cuda_available else "base"
         else:
             model = self.fixed_model or self.whisper_model or "tiny"
 
-        if self.device_preference == "auto":
+        if device_preference == "auto":
             device = "cuda" if cuda_available else "cpu"
-        elif self.device_preference == "cuda" and cuda_available:
+        elif device_preference == "cuda" and cuda_available:
             device = "cuda"
-        elif self.device_preference == "cuda" and not cuda_available:
+        elif device_preference == "cuda" and not cuda_available:
             device = "cpu"
         else:
             device = "cpu"
 
-        if self.compute_type == "auto":
+        compute_type_preference = (self.compute_type or "").strip().lower()
+        if compute_type_preference == "auto":
             compute_type = "float16" if device == "cuda" else "int8"
-        elif device == "cuda" and self.compute_type == "int8":
+        elif device == "cuda" and compute_type_preference == "int8":
             compute_type = "int8_float16"
         else:
-            compute_type = self.compute_type or self.whisper_compute_type or "int8"
+            compute_type = compute_type_preference or self.whisper_compute_type or "int8"
 
         return model, device, compute_type
 

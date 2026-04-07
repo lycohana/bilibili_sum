@@ -5,6 +5,7 @@ import { TitleBar } from "./components/TitleBar";
 import { UpdateDialog, type UpdateInfo } from "./components/UpdateDialog";
 import { api } from "./api";
 import type {
+  CudaInstallTaskSnapshot,
   EnvironmentInfo,
   ServiceSettings,
   SystemInfo,
@@ -51,6 +52,8 @@ type LibraryFilter = "all" | "completed" | "running" | "with-result";
 type MetricTone = "default" | "accent" | "success" | "info";
 
 const emptySnapshot: Snapshot = { serviceOnline: false, systemInfo: null, environment: null, settings: null, videos: [], error: "" };
+const CUDA_INSTALL_STORAGE_KEY = "briefvid.cuda.install.active";
+const CUDA_INSTALL_TERMINAL_STATUSES = new Set(["completed", "failed", "cancelled"]);
 
 export function App() {
   const location = useLocation();
@@ -896,6 +899,13 @@ function SettingsPage({ snapshot, desktop, onRefresh }: { snapshot: Snapshot; de
   const [saveStatus, setSaveStatus] = useState("");
   const [cudaStatus, setCudaStatus] = useState("");
   const [cudaOutput, setCudaOutput] = useState("");
+  const [cudaProgress, setCudaProgress] = useState(0);
+  const [cudaInstalling, setCudaInstalling] = useState(false);
+  const [cudaStage, setCudaStage] = useState("");
+  const [cudaInstallId, setCudaInstallId] = useState("");
+  const cudaStreamAbortRef = useRef<AbortController | null>(null);
+  const cudaLastSeqRef = useRef(0);
+  const cudaRestoreTriedRef = useRef(false);
   const [logOutput, setLogOutput] = useState("");
   const [logPath, setLogPath] = useState(snapshot.systemInfo?.service?.log_file || desktop.logPath || "");
   const [serviceStatus, setServiceStatus] = useState("");
@@ -940,19 +950,332 @@ function SettingsPage({ snapshot, desktop, onRefresh }: { snapshot: Snapshot; de
   const serviceOnline = snapshot.serviceOnline;
   const effectiveLogPath = logPath || snapshot.systemInfo?.service?.log_file || desktop.logPath || "-";
 
-  if (!form) return <section className="grid-card empty-state-card">正在加载设置...</section>;
-
   async function save(event: FormEvent) {
     event.preventDefault();
     if (!form) return;
     try {
-      await api.updateSettings(form);
+      // 确保 model_mode 和 fixed_model 被正确传递
+      const payload: Partial<ServiceSettings> = {
+        ...form,
+        model_mode: form.model_mode || "fixed",
+        fixed_model: form.fixed_model || "tiny",
+        device_preference: form.device_preference || "auto",
+        compute_type: form.compute_type || "int8",
+      };
+      console.log("Saving settings payload:", payload);
+      await api.updateSettings(payload);
       setSaveStatus("设置已保存");
       onRefresh();
     } catch (error) {
+      console.error("Failed to save settings:", error);
       setSaveStatus(error instanceof Error ? error.message : "保存设置失败");
     }
   }
+
+  function rememberCudaInstallId(installId: string) {
+    const normalized = installId.trim();
+    if (!normalized) return;
+    setCudaInstallId(normalized);
+    try {
+      window.localStorage.setItem(CUDA_INSTALL_STORAGE_KEY, normalized);
+    } catch {
+      // Ignore localStorage failures and keep the in-memory state.
+    }
+  }
+
+  function clearRememberedCudaInstallId() {
+    try {
+      window.localStorage.removeItem(CUDA_INSTALL_STORAGE_KEY);
+    } catch {
+      // Ignore localStorage failures and keep the in-memory state.
+    }
+  }
+
+  function appendCudaOutput(line: string) {
+    const text = line.trim();
+    if (!text) return;
+    setCudaOutput((prev) => {
+      const next = `${prev}\n${text}`.trim();
+      const lines = next.split(/\r?\n/);
+      return lines.length > 200 ? lines.slice(lines.length - 200).join("\n") : next;
+    });
+  }
+
+  function markCudaTaskTerminal(status: string, message: string, error?: string) {
+    setCudaInstalling(false);
+    if (status === "completed") {
+      setCudaProgress(100);
+      setCudaStatus("CUDA 安装完成");
+      setCudaStage(message || "CUDA 安装完成");
+      clearRememberedCudaInstallId();
+      void refreshLogs();
+      onRefresh();
+      return;
+    }
+    if (status === "cancelled") {
+      setCudaStatus(error || "CUDA 安装已取消");
+      setCudaStage(message || "CUDA 安装已取消");
+      clearRememberedCudaInstallId();
+      return;
+    }
+    setCudaStatus(error || message || "CUDA 安装失败");
+    setCudaStage(message || "安装失败");
+    clearRememberedCudaInstallId();
+  }
+
+  function applyCudaTaskSnapshot(task: CudaInstallTaskSnapshot) {
+    if (task.install_id) {
+      rememberCudaInstallId(task.install_id);
+    }
+    if (Number.isFinite(task.seq)) {
+      cudaLastSeqRef.current = Math.max(cudaLastSeqRef.current, Math.round(task.seq));
+    }
+    if (Number.isFinite(task.progress)) {
+      setCudaProgress(Math.max(0, Math.min(100, Math.round(task.progress))));
+    }
+    if (task.message) {
+      setCudaStage(task.message);
+    } else if (task.stage) {
+      setCudaStage(task.stage);
+    }
+    if (task.stdoutTail?.trim()) {
+      setCudaOutput(task.stdoutTail.trim());
+    }
+    if (task.status === "running") {
+      setCudaInstalling(true);
+      if (task.error?.trim()) {
+        setCudaStatus(task.error.trim());
+      } else if (task.message) {
+        setCudaStatus(task.message);
+      }
+      return;
+    }
+    markCudaTaskTerminal(task.status, task.message || task.stage, task.error || "");
+  }
+
+  function applyCudaStreamPayload(payload: Record<string, unknown>): boolean {
+    const installId = typeof payload.install_id === "string" ? payload.install_id : "";
+    if (installId) {
+      rememberCudaInstallId(installId);
+    }
+
+    if (typeof payload.seq === "number" && Number.isFinite(payload.seq)) {
+      cudaLastSeqRef.current = Math.max(cudaLastSeqRef.current, Math.round(payload.seq));
+    }
+
+    if (typeof payload.progress === "number" && Number.isFinite(payload.progress)) {
+      setCudaProgress(Math.max(0, Math.min(100, Math.round(payload.progress))));
+    }
+
+    const message = typeof payload.message === "string" ? payload.message : "";
+    if (message) {
+      setCudaStage(message);
+    }
+
+    if (typeof payload.output === "string") {
+      appendCudaOutput(payload.output);
+    }
+
+    if (typeof payload.stdoutTail === "string" && payload.stdoutTail.trim()) {
+      setCudaOutput(payload.stdoutTail.trim());
+    }
+
+    const statusValue = typeof payload.status === "string" ? payload.status : "";
+    const errorText = typeof payload.error === "string" ? payload.error.trim() : "";
+    if (errorText) {
+      setCudaStatus(errorText);
+    }
+
+    if (payload.installed === true || statusValue === "completed") {
+      markCudaTaskTerminal("completed", message || "CUDA 安装完成", errorText);
+      return true;
+    }
+    if (statusValue && CUDA_INSTALL_TERMINAL_STATUSES.has(statusValue)) {
+      markCudaTaskTerminal(statusValue, message, errorText);
+      return true;
+    }
+    if (errorText && !statusValue) {
+      markCudaTaskTerminal("failed", message || "CUDA 安装失败", errorText);
+      return true;
+    }
+    return false;
+  }
+
+  async function consumeCudaInstallStream(
+    payload: { cuda_variant?: string; install_id?: string; after_seq?: number },
+    options: { resetUi?: boolean } = {},
+  ) {
+    const controller = new AbortController();
+    const previousController = cudaStreamAbortRef.current;
+    if (previousController && previousController !== controller) {
+      previousController.abort();
+    }
+    cudaStreamAbortRef.current = controller;
+
+    if (options.resetUi) {
+      setCudaProgress(0);
+      setCudaStage("正在准备安装请求...");
+      setCudaStatus("");
+      setCudaOutput("");
+      cudaLastSeqRef.current = 0;
+      if (!payload.install_id) {
+        setCudaInstallId("");
+      }
+    }
+    setCudaInstalling(true);
+
+    let completed = false;
+    try {
+      const response = await api.installCudaStream(payload, controller.signal);
+      if (!response.ok || !response.body) {
+        const detailText = await response.text();
+        let detail = detailText;
+        try {
+          const parsed = JSON.parse(detailText) as { detail?: unknown };
+          if (typeof parsed.detail === "string" && parsed.detail.trim()) {
+            detail = parsed.detail;
+          }
+        } catch {
+          // Keep plain text response detail.
+        }
+        throw new Error(detail || `安装请求失败: ${response.status}`);
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder("utf-8");
+      let buffer = "";
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        while (true) {
+          const eventEnd = buffer.indexOf("\n\n");
+          if (eventEnd === -1) break;
+          const rawEvent = buffer.slice(0, eventEnd);
+          buffer = buffer.slice(eventEnd + 2);
+
+          const dataLines = rawEvent
+            .split(/\r?\n/)
+            .filter((line) => line.startsWith("data:"))
+            .map((line) => line.slice(5).trimStart());
+          const payloadText = dataLines.join("\n");
+          if (!payloadText) continue;
+
+          let eventPayload: Record<string, unknown>;
+          try {
+            eventPayload = JSON.parse(payloadText) as Record<string, unknown>;
+          } catch (error) {
+            continue;
+          }
+
+          if (applyCudaStreamPayload(eventPayload)) {
+            completed = true;
+            break;
+          }
+        }
+        if (completed) break;
+      }
+
+      if (!completed && !controller.signal.aborted) {
+        setCudaInstalling(false);
+        setCudaStage("安装流已结束，但未收到完成信号");
+        setCudaStatus("安装流程异常结束，请查看下方调试信息");
+      }
+    } catch (error) {
+      if (controller.signal.aborted) {
+        return;
+      }
+      const detail = error instanceof Error ? error.message : "CUDA 安装失败";
+      console.error("[cuda-install] failed", error);
+      setCudaInstalling(false);
+      setCudaStage("安装失败");
+      setCudaStatus(detail);
+    } finally {
+      if (cudaStreamAbortRef.current === controller) {
+        cudaStreamAbortRef.current = null;
+      }
+    }
+  }
+
+  async function installCudaWithStream() {
+    if (!form) return;
+    await consumeCudaInstallStream(
+      { cuda_variant: form.cuda_variant, after_seq: 0 },
+      { resetUi: true },
+    );
+  }
+
+  async function cancelCudaInstallTask() {
+    if (!cudaInstallId) {
+      setCudaStatus("当前没有可取消的 CUDA 安装任务。");
+      return;
+    }
+    setCudaStage("正在请求取消安装...");
+    setCudaStatus("正在取消 CUDA 安装...");
+    try {
+      const response = await api.cancelCudaInstall({ install_id: cudaInstallId });
+      applyCudaTaskSnapshot(response.task);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : "取消 CUDA 安装失败";
+      setCudaStatus(detail);
+    }
+  }
+
+  useEffect(() => {
+    if (cudaRestoreTriedRef.current) return;
+    cudaRestoreTriedRef.current = true;
+    let disposed = false;
+
+    async function restoreCudaInstallTask() {
+      let persistedInstallId = "";
+      try {
+        persistedInstallId = (window.localStorage.getItem(CUDA_INSTALL_STORAGE_KEY) || "").trim();
+      } catch {
+        persistedInstallId = "";
+      }
+
+      try {
+        const status = await api.getCudaInstallStatus(persistedInstallId || undefined);
+        if (disposed) return;
+        if (!status.task) {
+          clearRememberedCudaInstallId();
+          return;
+        }
+
+        applyCudaTaskSnapshot(status.task);
+        if (status.task.status === "running") {
+          await consumeCudaInstallStream({
+            install_id: status.task.install_id,
+            after_seq: Math.max(0, Math.round(status.task.seq || 0)),
+          });
+        } else {
+          clearRememberedCudaInstallId();
+        }
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : "恢复 CUDA 安装状态失败";
+        if (persistedInstallId) {
+          clearRememberedCudaInstallId();
+          setCudaStatus(detail);
+        }
+      }
+    }
+
+    void restoreCudaInstallTask();
+    return () => {
+      disposed = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      cudaStreamAbortRef.current?.abort();
+    };
+  }, []);
+
+  // 所有 Hooks 必须在条件返回之前调用
+  if (!form) return <section className="grid-card empty-state-card">正在加载设置...</section>;
 
   return (
     <section className="settings-grid">
@@ -1011,22 +1334,49 @@ function SettingsPage({ snapshot, desktop, onRefresh }: { snapshot: Snapshot; de
               <button
                 className="primary-button"
                 type="button"
-                onClick={async () => {
-                  try {
-                    const result = await api.installCuda({ cuda_variant: form.cuda_variant });
-                    setCudaStatus(result.message || "CUDA 安装命令已执行");
-                    setCudaOutput(result.output || "");
-                    onRefresh();
-                  } catch (error) {
-                    setCudaStatus(error instanceof Error ? error.message : "CUDA 安装失败");
-                  }
+                disabled={cudaInstalling}
+                onClick={() => {
+                  void installCudaWithStream();
                 }}
               >
-                安装 CUDA 支持
+                {cudaInstalling ? "安装中..." : "安装 CUDA 支持"}
               </button>
+              {cudaInstalling && cudaInstallId ? (
+                <button
+                  className="tertiary-button danger"
+                  type="button"
+                  onClick={() => {
+                    void cancelCudaInstallTask();
+                  }}
+                >
+                  取消安装
+                </button>
+              ) : null}
             </div>
           </div>
+          
+          {/* CUDA 安装进度条 */}
+          {(cudaInstalling || cudaProgress > 0) && (
+            <div className="cuda-progress">
+              <div className="progress-bar-wrapper">
+                <div className="progress-bar-simple">
+                  <div
+                    className={`progress-fill-simple ${cudaStatus.includes('失败') ? 'error' : cudaProgress >= 100 ? 'success' : ''}`}
+                    style={{ width: `${Math.min(100, cudaProgress)}%` }}
+                  />
+                </div>
+                <div className="progress-info-simple">
+                  <span className="progress-percent-simple">{Math.round(Math.min(100, cudaProgress))}%</span>
+                  <span className="progress-status-simple">
+                    {cudaStage || (cudaProgress >= 100 ? '安装完成' : cudaInstalling ? '正在安装 CUDA 支持...' : '准备安装')}
+                  </span>
+                </div>
+              </div>
+            </div>
+          )}
+          
           {cudaStatus ? <div className="action-status">{cudaStatus}</div> : null}
+          {cudaInstallId ? <div className="helper-text">安装任务 ID: {cudaInstallId}</div> : null}
           {cudaOutput ? (
             <label className="input-row">
               <span className="input-label">CUDA 安装输出</span>
@@ -1047,6 +1397,26 @@ function SettingsPage({ snapshot, desktop, onRefresh }: { snapshot: Snapshot; de
             <h3>基础运行</h3>
             <Field label="监听地址" value={form.host} onChange={(value) => setForm({ ...form, host: value })} />
             <Field label="监听端口" value={String(form.port)} type="number" onChange={(value) => setForm({ ...form, port: Number(value) })} />
+            
+            {/* 运行时通道 - 下拉框 */}
+            <label className="input-row">
+              <span className="input-label">运行时通道</span>
+              <select
+                className="select-field"
+                value={form.runtime_channel}
+                onChange={(event) => setForm({ ...form, runtime_channel: event.target.value })}
+              >
+                <option value="base">base（基础 CPU 模式）</option>
+                <option value="gpu-cu124">gpu-cu124（CUDA 12.4）</option>
+                <option value="gpu-cu126">gpu-cu126（CUDA 12.6）</option>
+                <option value="gpu-cu128">gpu-cu128（CUDA 12.8）</option>
+              </select>
+              <span className="helper-text">
+                当前：{snapshot.environment?.runtimeChannel || form.runtime_channel} |
+                状态：{snapshot.environment?.runtimeReady ? "就绪" : "未就绪"}
+              </span>
+            </label>
+            
             <Field label="数据目录" value={form.data_dir} onChange={(value) => setForm({ ...form, data_dir: value })} />
             <Field label="缓存目录" value={form.cache_dir} onChange={(value) => setForm({ ...form, cache_dir: value })} />
             <Field label="任务目录" value={form.tasks_dir} onChange={(value) => setForm({ ...form, tasks_dir: value })} />
@@ -1054,8 +1424,100 @@ function SettingsPage({ snapshot, desktop, onRefresh }: { snapshot: Snapshot; de
 
           <section className="settings-subsection">
             <h3>模型与摘要</h3>
-            <Field label="推理设备" value={form.device_preference} onChange={(value) => setForm({ ...form, device_preference: value })} />
-            <Field label="固定模型" value={form.fixed_model} onChange={(value) => setForm({ ...form, fixed_model: value })} />
+            
+            {/* 使用推荐设置按钮 */}
+            <div className="settings-actions" style={{ marginBottom: "12px" }}>
+              <button
+                className="secondary-button"
+                type="button"
+                onClick={() => {
+                  const env = snapshot.environment;
+                  if (env?.recommendedDevice) {
+                    setForm({
+                      ...form,
+                      device_preference: env.recommendedDevice === "cuda" ? "cuda" : "cpu",
+                      compute_type: env.recommendedComputeType || (env.recommendedDevice === "cuda" ? "float16" : "int8"),
+                      model_mode: "auto",
+                      fixed_model: env.recommendedModel || "base",
+                    });
+                  }
+                }}
+              >
+                🚀 使用推荐设置
+              </button>
+              {snapshot.environment?.recommendedDevice && (
+                <span className="helper-text" style={{ display: "inline-block", marginLeft: "12px" }}>
+                  推荐：{snapshot.environment.recommendedDevice} + {snapshot.environment.recommendedComputeType || "auto"} + {snapshot.environment.recommendedModel || "auto"}
+                </span>
+              )}
+            </div>
+            
+            {/* 推理设备 - 下拉框 */}
+            <label className="input-row">
+              <span className="input-label">推理设备</span>
+              <select
+                className="select-field"
+                value={form.device_preference}
+                onChange={(event) => setForm({ ...form, device_preference: event.target.value })}
+              >
+                <option value="auto">自动选择（推荐）</option>
+                <option value="cuda">CUDA</option>
+                <option value="cpu">CPU</option>
+              </select>
+            </label>
+            
+            {/* 计算类型 - 下拉框 */}
+            <label className="input-row">
+              <span className="input-label">计算精度</span>
+              <select
+                className="select-field"
+                value={form.compute_type}
+                onChange={(event) => setForm({ ...form, compute_type: event.target.value })}
+              >
+                <option value="int8">int8（最快，CPU 推荐）</option>
+                <option value="int8_float32">int8_float32（CPU 兼容）</option>
+                <option value="float16">float16（GPU 推荐）</option>
+                <option value="float32">float32（最精确）</option>
+              </select>
+              {snapshot.environment?.recommendedComputeType && (
+                <span className="helper-text">推荐：{snapshot.environment.recommendedComputeType}</span>
+              )}
+            </label>
+            
+            {/* 模型模式 - 下拉框 */}
+            <label className="input-row">
+              <span className="input-label">模型模式</span>
+              <select
+                className="select-field"
+                value={form.model_mode}
+                onChange={(event) => setForm({ ...form, model_mode: event.target.value })}
+              >
+                <option value="auto">自动选择（推荐）</option>
+                <option value="fixed">固定模型</option>
+              </select>
+            </label>
+            
+            {/* 固定模型 - 下拉框 */}
+            <label className="input-row">
+              <span className="input-label">固定模型</span>
+              <select
+                className="select-field"
+                value={form.fixed_model}
+                onChange={(event) => setForm({ ...form, fixed_model: event.target.value })}
+                disabled={form.model_mode !== "fixed"}
+              >
+                <option value="tiny">tiny（最小，速度快，精度低）</option>
+                <option value="base">base（小，速度较快）</option>
+                <option value="small">small（中等，平衡）</option>
+                <option value="medium">medium（大，精度高）</option>
+                <option value="large-v2">large-v2（最大，精度最高）</option>
+                <option value="large-v3">large-v3（最新大模型）</option>
+              </select>
+              {snapshot.environment?.recommendedModel && form.model_mode === "auto" && (
+                <span className="helper-text">推荐模型：{snapshot.environment.recommendedModel}</span>
+              )}
+            </label>
+            
             <Field label="LLM Base URL" value={form.llm_base_url} onChange={(value) => setForm({ ...form, llm_base_url: value })} />
             <Field label="LLM 模型" value={form.llm_model} onChange={(value) => setForm({ ...form, llm_model: value })} />
             <Field label="LLM API Key" value={form.llm_api_key} type="password" onChange={(value) => setForm({ ...form, llm_api_key: value })} />

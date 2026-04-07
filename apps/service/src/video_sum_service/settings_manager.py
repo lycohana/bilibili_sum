@@ -47,6 +47,9 @@ class SettingsUpdatePayload(BaseModel):
     summary_chunk_concurrency: int | None = None
     summary_chunk_retry_count: int | None = None
 
+    class Config:
+        extra = "allow"  # 允许额外字段，防止前端传递的字段被忽略
+
 
 class SettingsManager:
     def __init__(self, base_settings: ServiceSettings) -> None:
@@ -61,6 +64,7 @@ class SettingsManager:
     def load(self) -> ServiceSettings:
         if self._settings_path.exists():
             stored = json.loads(self._settings_path.read_text(encoding="utf-8"))
+            stored = self._normalize_legacy_fields(stored)
             if stored.get("summary_system_prompt") == LEGACY_SUMMARY_SYSTEM_PROMPT:
                 stored["summary_system_prompt"] = DEFAULT_SUMMARY_SYSTEM_PROMPT
             if stored.get("summary_user_prompt_template") == LEGACY_SUMMARY_USER_PROMPT_TEMPLATE:
@@ -73,6 +77,7 @@ class SettingsManager:
     def save(self, payload: SettingsUpdatePayload) -> ServiceSettings:
         current_dump = self._settings.model_dump(mode="json")
         updates = payload.model_dump(exclude_none=True)
+        updates = self._normalize_legacy_fields(updates)
         next_settings = ServiceSettings.model_validate({**current_dump, **updates})
         self._settings_path.parent.mkdir(parents=True, exist_ok=True)
         self._settings_path.write_text(
@@ -81,3 +86,10 @@ class SettingsManager:
         )
         self._settings = next_settings
         return self._settings
+
+    def _normalize_legacy_fields(self, payload: dict[str, object]) -> dict[str, object]:
+        normalized = dict(payload)
+        device_preference = str(normalized.get("device_preference") or "").strip().lower()
+        if device_preference == "gpu":
+            normalized["device_preference"] = "cuda"
+        return normalized

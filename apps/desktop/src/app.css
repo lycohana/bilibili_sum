@@ -2178,3 +2178,64 @@ textarea {
     align-items: flex-start;
   }
 }
+
+/* Helper text for settings */
+.helper-text {
+  display: block;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  margin-top: 4px;
+}
+
+.helper-text::before {
+  content: "💡 ";
+}
+
+/* CUDA progress bar */
+.cuda-progress {
+  margin: 12px 0;
+}
+
+.cuda-progress .progress-bar-wrapper {
+  width: 100%;
+}
+
+.cuda-progress .progress-bar-simple {
+  height: 8px;
+  background: var(--bg-accent);
+  border-radius: var(--radius-pill);
+  overflow: hidden;
+  margin-bottom: 8px;
+}
+
+.cuda-progress .progress-fill-simple {
+  height: 100%;
+  background: var(--brand-500);
+  border-radius: var(--radius-pill);
+  transition: width 0.3s ease;
+}
+
+.cuda-progress .progress-fill-simple.success {
+  background: var(--success);
+}
+
+.cuda-progress .progress-fill-simple.error {
+  background: var(--danger);
+}
+
+.cuda-progress .progress-info-simple {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+
+.cuda-progress .progress-percent-simple {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.cuda-progress .progress-status-simple {
+  color: var(--text-secondary);
+}

@@ -75,6 +75,7 @@ export type EnvironmentInfo = {
   ffmpegLocation?: string;
   recommendedModel?: string;
   recommendedDevice?: string;
+  recommendedComputeType?: string;
   runtimeChannel?: string;
   runtimeReady?: boolean;
   runtimePython?: string;
@@ -114,6 +115,31 @@ export type ServiceSettings = {
   summary_chunk_overlap_segments: number;
   summary_chunk_concurrency: number;
   summary_chunk_retry_count: number;
+};
+
+export type CudaInstallTaskStatus = "running" | "completed" | "failed" | "cancelled";
+
+export type CudaInstallTaskSnapshot = {
+  install_id: string;
+  cuda_variant: string;
+  status: CudaInstallTaskStatus;
+  stage: string;
+  progress: number;
+  message: string;
+  error: string;
+  created_at: number;
+  updated_at: number;
+  runtime_channel: string;
+  installed: boolean;
+  restartRequired: boolean;
+  stdoutTail: string;
+  environment: Record<string, unknown>;
+  seq: number;
+};
+
+export type CudaInstallStatusResponse = {
+  active: boolean;
+  task: CudaInstallTaskSnapshot | null;
 };
 
 export type SystemInfo = {

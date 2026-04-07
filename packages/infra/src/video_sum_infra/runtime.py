@@ -150,10 +150,22 @@ def runtime_library_dirs(runtime_channel: str) -> list[Path]:
 
 def runtime_worker_executable(runtime_channel: str) -> Path | None:
     if runtime_channel == "base" and is_frozen():
-        candidates = [
-            bundled_root() / "BriefVidTranscribeWorker.exe",
-            bundled_root() / "BriefVidTranscribeWorker",
-        ]
+        frozen_roots: list[Path] = []
+        bundled = bundled_root()
+        frozen_roots.append(bundled)
+        frozen_roots.append(bundled.parent)
+        frozen_roots.append(Path(sys.executable).resolve().parent)
+
+        seen: set[str] = set()
+        candidates: list[Path] = []
+        for root in frozen_roots:
+            key = str(root).lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            candidates.append(root / "BriefVidTranscribeWorker.exe")
+            candidates.append(root / "BriefVidTranscribeWorker")
+
         for candidate in candidates:
             if candidate.exists():
                 return candidate

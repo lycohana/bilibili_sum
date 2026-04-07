@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import sys
+import traceback
 from pathlib import Path
 from typing import Optional
 
@@ -28,6 +29,34 @@ def write_progress(progress_path: Path, payload: dict[str, object]) -> None:
     with progress_path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
         handle.flush()
+
+
+def write_failure_artifacts(progress_path: Path | None, output_path: Path | None, exc: Exception) -> None:
+    error_payload = {
+        "error": {
+            "type": exc.__class__.__name__,
+            "message": str(exc),
+            "traceback": traceback.format_exc(),
+        }
+    }
+    if progress_path is not None:
+        try:
+            write_progress(
+                progress_path,
+                {
+                    "stage": "transcribing",
+                    "progress": 55,
+                    "message": f"转写引擎启动失败：{exc}",
+                    "payload": error_payload["error"],
+                },
+            )
+        except OSError:
+            pass
+    if output_path is not None:
+        try:
+            output_path.write_text(json.dumps(error_payload, ensure_ascii=False), encoding="utf-8")
+        except OSError:
+            pass
 
 
 def _format_bytes(value: int) -> str:
@@ -228,14 +257,34 @@ def transcribe(
     duration: float | None,
 ) -> None:
     configure_runtime_library_dirs()
-    from faster_whisper import WhisperModel
-
+    
     logger.info(
         "child transcription start audio=%s model=%s device=%s compute_type=%s",
         audio_path,
         model_name,
         device,
         compute_type,
+    )
+    
+    # 导入 faster_whisper 并捕获可能的导入错误
+    try:
+        from faster_whisper import WhisperModel
+    except ImportError as e:
+        logger.error("failed to import faster_whisper: %s", e)
+        raise
+    except Exception as e:
+        logger.error("failed to import faster_whisper: %s", e, exc_info=True)
+        raise
+
+    logger.info("faster_whisper imported successfully, initializing model=%s device=%s compute_type=%s", model_name, device, compute_type)
+    write_progress(
+        progress_path,
+        {
+            "stage": "transcribing",
+            "progress": 55,
+            "message": "正在加载转写运行时依赖",
+            "payload": {"model": model_name, "phase": "importing-runtime"},
+        },
     )
     write_progress(
         progress_path,
@@ -256,8 +305,21 @@ def transcribe(
             "payload": {"model": model_name, "phase": "initializing-model"},
         },
     )
-    model = WhisperModel(prepared_model, device=device, compute_type=compute_type)
-    raw_segments, _info = model.transcribe(str(audio_path), language="zh", vad_filter=True)
+    
+    # 初始化 WhisperModel 并捕获可能的错误
+    logger.info("initializing WhisperModel path=%s device=%s compute_type=%s", prepared_model, device, compute_type)
+    try:
+        model = WhisperModel(prepared_model, device=device, compute_type=compute_type)
+    except Exception as e:
+        logger.error("failed to initialize WhisperModel: %s", e, exc_info=True)
+        raise
+    
+    logger.info("WhisperModel initialized, starting transcription")
+    try:
+        raw_segments, _info = model.transcribe(str(audio_path), language="zh", vad_filter=True)
+    except Exception as e:
+        logger.error("failed to transcribe audio: %s", e, exc_info=True)
+        raise
 
     segments: list[dict[str, object]] = []
     transcript_lines: list[str] = []
@@ -345,17 +407,39 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     configure_logging()
     args = parse_args()
+    progress_path = Path(args.progress_path)
+    output_path = Path(args.output_path)
+    
+    # 记录启动诊断信息
+    logger.info(
+        "transcription subprocess starting audio=%s model=%s device=%s compute_type=%s pid=%s",
+        args.audio_path,
+        args.model,
+        args.device,
+        args.compute_type,
+        os.getpid(),
+    )
+    logger.info("transcription subprocess paths python=%s cwd=%s", sys.executable, os.getcwd())
+    
+    # 验证音频文件是否存在
+    audio_path = Path(args.audio_path)
+    if not audio_path.exists():
+        logger.error("audio file not found path=%s", audio_path)
+        write_failure_artifacts(progress_path, output_path, FileNotFoundError(f"Audio file not found: {audio_path}"))
+        return 1
+    
     try:
         transcribe(
-            audio_path=Path(args.audio_path),
+            audio_path=audio_path,
             model_name=args.model,
             device=args.device,
             compute_type=args.compute_type,
-            progress_path=Path(args.progress_path),
-            output_path=Path(args.output_path),
+            progress_path=progress_path,
+            output_path=output_path,
             duration=args.duration,
         )
     except Exception:
+        write_failure_artifacts(progress_path, output_path, sys.exc_info()[1] or RuntimeError("Unknown transcription failure"))
         logger.exception("child transcription failed")
         return 1
     return 0

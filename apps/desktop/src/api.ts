@@ -1,4 +1,6 @@
 import type {
+  CudaInstallStatusResponse,
+  CudaInstallTaskSnapshot,
   EnvironmentInfo,
   ServiceSettings,
   SystemLogResponse,
@@ -77,7 +79,29 @@ export const api = {
     return fetchJson<{ deleted: boolean }>(`/api/v1/tasks/${taskId}`, { method: "DELETE" });
   },
   installCuda(payload: { cuda_variant: string }) {
-    return fetchJson<{ message?: string; output?: string }>("/api/v1/cuda/install", {
+    return fetchJson<{ message?: string; output?: string; installed?: boolean; stdoutTail?: string; progress?: number; status?: string }>("/api/v1/cuda/install", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+  },
+  installCudaStream(
+    payload: { cuda_variant?: string; cudaVariant?: string; install_id?: string; installId?: string; after_seq?: number; afterSeq?: number },
+    signal?: AbortSignal,
+  ) {
+    return fetch(`/api/v1/cuda/install-stream`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      signal,
+    });
+  },
+  getCudaInstallStatus(installId?: string) {
+    const query = installId ? `?install_id=${encodeURIComponent(installId)}` : "";
+    return fetchJson<CudaInstallStatusResponse>(`/api/v1/cuda/install/status${query}`);
+  },
+  cancelCudaInstall(payload: { install_id?: string; installId?: string } = {}) {
+    return fetchJson<{ cancelRequested: boolean; task: CudaInstallTaskSnapshot }>(`/api/v1/cuda/install/cancel`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
