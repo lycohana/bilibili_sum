@@ -171,28 +171,37 @@ def runtime_python_executable(runtime_channel: str) -> Path | None:
 
 
 def ffmpeg_location() -> Path | None:
+    """返回 ffmpeg 可执行文件的路径（不是目录）。"""
+    # 1. 环境变量指定的目录
     env_dir = os.environ.get("VIDEO_SUM_FFMPEG_DIR")
     if env_dir:
         candidate = Path(env_dir)
         if candidate.exists():
-            return candidate
+            ffmpeg_exe = candidate / "ffmpeg.exe"
+            if ffmpeg_exe.exists():
+                return ffmpeg_exe
 
+    # 2. 打包后的 bin 目录
     bundled_dir = bundled_bin_dir()
-    if (bundled_dir / "ffmpeg.exe").exists():
-        return bundled_dir
+    if bundled_dir.exists():
+        ffmpeg_exe = bundled_dir / "ffmpeg.exe"
+        if ffmpeg_exe.exists():
+            return ffmpeg_exe
 
+    # 3. 系统 PATH 中的 ffmpeg
     ffmpeg_path = shutil.which("ffmpeg")
     if ffmpeg_path:
-        return Path(ffmpeg_path).resolve().parent
+        return Path(ffmpeg_path).resolve()
 
     return None
 
 
 def prepend_runtime_path(runtime_channel: str) -> None:
     paths = [str(path) for path in runtime_library_dirs(runtime_channel)]
-    ffmpeg_dir = ffmpeg_location()
-    if ffmpeg_dir is not None:
-        paths.append(str(ffmpeg_dir))
+    ffmpeg_exe = ffmpeg_location()
+    if ffmpeg_exe is not None:
+        # 添加 ffmpeg 所在目录到 PATH
+        paths.append(str(ffmpeg_exe.parent))
 
     current_path = os.environ.get("PATH", "")
     for value in reversed(paths):

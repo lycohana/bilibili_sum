@@ -35,6 +35,7 @@ export function renderSettingsView(state) {
             ${renderEnvCard("Torch", env.torchInstalled ? env.torchVersion || "已安装" : "未安装", env.torchInstalled ? "success" : "warning")}
             ${renderEnvCard("yt-dlp", env.ytDlpVersion || "未安装", env.ytDlpVersion ? "success" : "warning")}
             ${renderEnvCard("faster-whisper", env.fasterWhisperVersion || "未安装", env.fasterWhisperVersion ? "success" : "warning")}
+            ${renderEnvCard("FFmpeg", env.ffmpegLocation ? `已安装 (${escapeHtml(env.ffmpegLocation)})` : "未安装", env.ffmpegLocation ? "success" : "warning")}
             ${renderEnvCard("Python", env.pythonVersion || "-", "neutral")}
             ${renderEnvCard("运行时通道", env.runtimeChannel || settings.runtime_channel || "base", "neutral")}
           </div>

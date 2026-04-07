@@ -331,9 +331,12 @@ class RealPipelineRunner(PipelineRunner):
                 }
             ],
         }
-        ffmpeg_dir = ffmpeg_location()
-        if ffmpeg_dir is not None:
-            options["ffmpeg_location"] = str(ffmpeg_dir)
+        ffmpeg_exe = ffmpeg_location()
+        if ffmpeg_exe is not None:
+            options["ffmpeg_location"] = str(ffmpeg_exe)
+            logger.info("using ffmpeg location: %s", ffmpeg_exe)
+        else:
+            logger.warning("ffmpeg not found, yt_dlp will use system PATH")
         with YoutubeDL(options) as ydl:
             ydl.download([url])
         candidates = sorted(task_dir.glob(f"{safe_title}.*"))

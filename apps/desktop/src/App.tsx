@@ -971,6 +971,22 @@ function SettingsPage({ snapshot, desktop, onRefresh }: { snapshot: Snapshot; de
             <Metric label="推荐设备" value={snapshot.environment?.recommendedDevice || "-"} tone="accent" />
             <Metric label="推荐模型" value={snapshot.environment?.recommendedModel || "-"} />
             <Metric label="GPU 状态" value={snapshot.environment?.cudaAvailable ? "已启用" : "未启用"} tone={snapshot.environment?.cudaAvailable ? "success" : "default"} />
+            <Metric label="GPU 名称" value={snapshot.environment?.gpuName || "未检测到"} />
+            <Metric label="Torch" value={snapshot.environment?.torchInstalled ? snapshot.environment?.torchVersion || "已安装" : "未安装"} />
+            <Metric label="yt-dlp" value={snapshot.environment?.ytDlpVersion || "未安装"} />
+            <Metric label="faster-whisper" value={snapshot.environment?.fasterWhisperVersion || "未安装"} />
+            <div className="metric-card">
+              <span className="metric-label">FFmpeg</span>
+              <div className="metric-value-row">
+                <strong className={`metric-value ${snapshot.environment?.ffmpegLocation ? "text-success" : ""}`}>
+                  {snapshot.environment?.ffmpegLocation ? "已安装" : "未安装"}
+                </strong>
+                {snapshot.environment?.ffmpegLocation ? (
+                  <span className="ffmpeg-info-icon" title={snapshot.environment.ffmpegLocation}>!</span>
+                ) : null}
+              </div>
+            </div>
+            <Metric label="Python" value={snapshot.environment?.pythonVersion || "-"} />
             <Metric label="运行时通道" value={snapshot.environment?.runtimeChannel || form.runtime_channel || "base"} tone="info" />
           </div>
         </section>
@@ -1153,6 +1169,7 @@ function SettingsPage({ snapshot, desktop, onRefresh }: { snapshot: Snapshot; de
             <span className="setting-value">{updateStatus || "未检查"}</span>
           </div>
         </div>
+        <br></br>
         <div className="desktop-actions">
           <button
             className="primary-button"
@@ -1193,6 +1210,7 @@ function SettingsPage({ snapshot, desktop, onRefresh }: { snapshot: Snapshot; de
             清除状态
           </button>
         </div>
+        <br></br>
         {updateStatus ? <div className="action-status">{updateStatus}</div> : null}
       </article>
     </section>

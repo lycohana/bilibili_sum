@@ -11,6 +11,12 @@ ICON_PATH = ROOT / "apps" / "desktop" / "build" / "icon.ico"
 RUNTIME_SEED_DIR = BUILD_ROOT / "runtime" / "base"
 BIN_DIR = BUILD_ROOT / "bin"
 
+# 显式收集 ffmpeg 二进制文件到 binaries，确保 yt_dlp 能找到
+binaries = []
+if BIN_DIR.exists():
+    binaries += [(str(BIN_DIR / "ffmpeg.exe"), "ffmpeg.exe")]
+    binaries += [(str(BIN_DIR / "ffprobe.exe"), "ffprobe.exe")]
+
 datas = []
 datas += [(str(WEB_STATIC_DIR), "web/static")]
 if RUNTIME_SEED_DIR.exists():
@@ -41,7 +47,7 @@ a = Analysis(
         str(ROOT / "packages" / "core" / "src"),
         str(ROOT / "packages" / "infra" / "src"),
     ],
-    binaries=[],
+    binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
     hookspath=[],

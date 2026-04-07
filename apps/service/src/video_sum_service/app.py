@@ -257,6 +257,7 @@ def detect_environment(runtime_channel: str | None = None) -> dict[str, object]:
                 "gpuName": "",
                 "ytDlpVersion": "",
                 "fasterWhisperVersion": "",
+                "ffmpegLocation": "",
                 "recommendedModel": "base",
                 "recommendedDevice": "cpu",
                 "runtimeChannel": active_channel,
@@ -286,6 +287,7 @@ def detect_environment(runtime_channel: str | None = None) -> dict[str, object]:
             "gpuName": gpu_name,
             "ytDlpVersion": importlib.metadata.version("yt-dlp"),
             "fasterWhisperVersion": importlib.metadata.version("faster-whisper"),
+            "ffmpegLocation": "",
             "recommendedModel": "large-v3-turbo" if cuda_available else "base",
             "recommendedDevice": "cuda" if cuda_available else "cpu",
         }
@@ -296,6 +298,8 @@ def detect_environment(runtime_channel: str | None = None) -> dict[str, object]:
     try:
         result = _run_command([str(python_executable), "-c", script], runtime_channel=active_channel, timeout=120)
         payload = json.loads(result.stdout.strip() or "{}")
+        # 在主进程中获取 ffmpeg 位置（因为子进程可能没有正确的 PATH）
+        payload["ffmpegLocation"] = str(ffmpeg_location() or "")
         _environment_probe_failures.pop(active_channel, None)
     except Exception as exc:
         failure_detail = ""
@@ -319,6 +323,7 @@ def detect_environment(runtime_channel: str | None = None) -> dict[str, object]:
             "gpuName": "",
             "ytDlpVersion": "",
             "fasterWhisperVersion": "",
+            "ffmpegLocation": "",
             "recommendedModel": "base",
             "recommendedDevice": "cpu",
             "runtimeError": failure_detail[-1200:],
@@ -329,6 +334,7 @@ def detect_environment(runtime_channel: str | None = None) -> dict[str, object]:
             "runtimeChannel": active_channel,
             "runtimeReady": runtime_python_executable(active_channel) is not None,
             "runtimePython": str(python_executable),
+            "ffmpegLocation": str(ffmpeg_location() or ""),
         }
     )
     if not payload.get("runtimeError"):

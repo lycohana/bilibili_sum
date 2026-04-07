@@ -72,6 +72,7 @@ export type EnvironmentInfo = {
   gpuName?: string;
   ytDlpVersion?: string;
   fasterWhisperVersion?: string;
+  ffmpegLocation?: string;
   recommendedModel?: string;
   recommendedDevice?: string;
   runtimeChannel?: string;

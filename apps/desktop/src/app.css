@@ -812,7 +812,40 @@ textarea {
   gap: 16px;
 }
 
-.summary-metric {
+/* FFmpeg 信息图标样式 */
+.ffmpeg-info-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  margin-left: 8px;
+  border-radius: 50%;
+  background: rgba(34, 168, 102, 0.12);
+  color: var(--success);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: help;
+  transition: background-color 0.15s ease, transform 0.15s ease;
+}
+
+.ffmpeg-info-icon:hover {
+  background: rgba(34, 168, 102, 0.2);
+  transform: scale(1.1);
+}
+
+.metric-value-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.text-success {
+  color: var(--success);
+}
+
+.summary-metric,
+.metric-card {
   display: grid;
   gap: 10px;
   padding: 20px;
@@ -821,7 +854,8 @@ textarea {
   background: rgba(251, 252, 255, 0.98);
 }
 
-.summary-metric span {
+.summary-metric span,
+.metric-card .metric-label {
   font-size: 0.8rem;
   font-weight: 700;
   text-transform: uppercase;
@@ -829,8 +863,9 @@ textarea {
   color: var(--text-tertiary);
 }
 
-.summary-metric strong {
-  font-size: clamp(1.75rem, 1.8vw, 2.4rem);
+.summary-metric strong,
+.metric-card .metric-value {
+  font-size: clamp(1.25rem, 1.8vw, 1.8rem);
   line-height: 1;
   letter-spacing: -0.05em;
 }
