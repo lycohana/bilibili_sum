@@ -149,6 +149,15 @@ def runtime_library_dirs(runtime_channel: str) -> list[Path]:
 
 
 def runtime_worker_executable(runtime_channel: str) -> Path | None:
+    if runtime_channel == "base" and is_frozen():
+        candidates = [
+            bundled_root() / "BriefVidTranscribeWorker.exe",
+            bundled_root() / "BriefVidTranscribeWorker",
+        ]
+        for candidate in candidates:
+            if candidate.exists():
+                return candidate
+
     runtime_dir = managed_runtime_dir(runtime_channel)
     scripts_dir = runtime_scripts_dir(runtime_dir)
     candidates = [

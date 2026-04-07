@@ -27,6 +27,7 @@ from video_sum_core.utils import ensure_directory, normalize_video_url, sanitize
 from video_sum_infra.runtime import (
     ffmpeg_location,
     runtime_library_dirs,
+    runtime_worker_executable,
     runtime_python_executable,
     sanitized_subprocess_dll_search,
 )
@@ -409,6 +410,15 @@ class RealPipelineRunner(PipelineRunner):
                 "message": f"正在加载转写模型 {self._settings.whisper_model}",
             }
         ]
+        if self._settings.whisper_device == "cuda":
+            attempts.append(
+                {
+                    "model": self._settings.whisper_model,
+                    "device": "cpu",
+                    "compute_type": "int8",
+                    "message": f"CUDA 转写异常，正在切换到 CPU 模式重试 {self._settings.whisper_model}",
+                }
+            )
         if self._settings.whisper_device == "cpu" and self._settings.whisper_compute_type != "float32":
             attempts.append(
                 {
@@ -440,7 +450,7 @@ class RealPipelineRunner(PipelineRunner):
                 attempt["compute_type"],
                 audio_path,
             )
-            emit("transcribing", 58, "开始转写音频内容")
+            emit("transcribing", 54, "正在启动转写引擎")
             try:
                 transcript, segments = self._run_transcription_subprocess(
                     audio_path=audio_path,
@@ -610,7 +620,10 @@ class RealPipelineRunner(PipelineRunner):
         from video_sum_infra.runtime import is_frozen
         
         if is_frozen():
-            command = [str(Path(sys.executable)), "--transcribe-subprocess"]
+            worker_executable = runtime_worker_executable(self._settings.runtime_channel)
+            if worker_executable is None:
+                raise VideoSumError("Packaged transcription worker is missing.")
+            command = [str(worker_executable)]
         else:
             runtime_python = runtime_python_executable(self._settings.runtime_channel) or Path(sys.executable)
             command = [str(runtime_python), "-m", "video_sum_core.transcribe_subprocess"]
@@ -635,10 +648,11 @@ class RealPipelineRunner(PipelineRunner):
 
     def _should_retry_transcription(self, error: VideoSumError) -> bool:
         message = str(error)
-        return "native library level" in message or "exit code 3221226505" in message
+        native_exit_codes = ("3221226505", "3221225477", "-1073740791", "-1073741819")
+        return "native library level" in message or any(code in message for code in native_exit_codes)
 
     def _is_native_crash_returncode(self, returncode: int) -> bool:
-        return returncode in {3221226505, -1073740791}
+        return returncode in {3221226505, 3221225477, -1073740791, -1073741819}
 
     def _replay_transcription_progress(
         self,

@@ -34,7 +34,7 @@ hiddenimports += collect_submodules("faster_whisper")
 hiddenimports += collect_submodules("yt_dlp")
 hiddenimports += collect_submodules("av")
 
-a = Analysis(
+service_analysis = Analysis(
     [str(ROOT / "apps" / "service" / "src" / "video_sum_service" / "__main__.py")],
     pathex=[
         str(ROOT / "apps" / "service" / "src"),
@@ -50,11 +50,28 @@ a = Analysis(
     excludes=[],
     noarchive=False,
 )
-pyz = PYZ(a.pure)
+worker_analysis = Analysis(
+    [str(ROOT / "apps" / "service" / "src" / "video_sum_service" / "transcribe_worker.py")],
+    pathex=[
+        str(ROOT / "apps" / "service" / "src"),
+        str(ROOT / "packages" / "core" / "src"),
+        str(ROOT / "packages" / "infra" / "src"),
+    ],
+    binaries=binaries,
+    datas=datas,
+    hiddenimports=hiddenimports,
+    hookspath=[],
+    hooksconfig={},
+    runtime_hooks=[],
+    excludes=[],
+    noarchive=False,
+)
+service_pyz = PYZ(service_analysis.pure)
+worker_pyz = PYZ(worker_analysis.pure)
 
-exe = EXE(
-    pyz,
-    a.scripts,
+service_exe = EXE(
+    service_pyz,
+    service_analysis.scripts,
     [],
     exclude_binaries=True,
     name="BriefVid",
@@ -65,11 +82,27 @@ exe = EXE(
     console=False,
     icon=str(ICON_PATH) if ICON_PATH.exists() else None,
 )
+worker_exe = EXE(
+    worker_pyz,
+    worker_analysis.scripts,
+    [],
+    exclude_binaries=True,
+    name="BriefVidTranscribeWorker",
+    debug=False,
+    bootloader_ignore_signals=False,
+    strip=False,
+    upx=False,
+    console=False,
+    icon=str(ICON_PATH) if ICON_PATH.exists() else None,
+)
 
 coll = COLLECT(
-    exe,
-    a.binaries,
-    a.datas,
+    service_exe,
+    worker_exe,
+    service_analysis.binaries,
+    service_analysis.datas,
+    worker_analysis.binaries,
+    worker_analysis.datas,
     strip=False,
     upx=False,
     name="BriefVid",

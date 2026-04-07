@@ -10,16 +10,17 @@ if (-not $python312) {
 
 Write-Host "Using Python 3.12:" $python312
 
-# Clean entire electron-builder cache to avoid symlink issues on Windows
+# Preserve electron-builder caches such as nsis/nsis-resources so packaging
+# does not depend on a fresh network download every run.
 $cacheDir = "$env:LOCALAPPDATA\electron-builder\Cache"
-if (Test-Path $cacheDir) {
-    Write-Host "Cleaning electron-builder cache directory: $cacheDir"
-    Remove-Item -Recurse -Force $cacheDir
-}
+New-Item -ItemType Directory -Force -Path $cacheDir | Out-Null
 
 # Create a dummy winCodeSign directory with a fake version file to prevent electron-builder from downloading
 # This avoids the symlink creation issue on Windows
 $winCodeSignCacheDir = "$env:LOCALAPPDATA\electron-builder\Cache\winCodeSign"
+if (Test-Path $winCodeSignCacheDir) {
+    Remove-Item -Recurse -Force $winCodeSignCacheDir
+}
 Write-Host "Creating dummy winCodeSign cache directory: $winCodeSignCacheDir"
 New-Item -ItemType Directory -Force -Path $winCodeSignCacheDir | Out-Null
 # Create a version file that electron-builder checks

@@ -85,6 +85,17 @@ jobs:
           architecture: x64
           linking-type: static
 
+      - name: Restore electron-builder caches
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~\AppData\Local\electron-builder\Cache\nsis
+            ~\AppData\Local\electron-builder\Cache\nsis-resources
+            ~\AppData\Local\electron-builder\Cache\electron
+          key: electron-builder-win-${{ runner.os }}-${{ hashFiles('apps/desktop/package-lock.json', 'apps/desktop/electron-builder.config.js') }}
+          restore-keys: |
+            electron-builder-win-${{ runner.os }}-
+
       - name: Prepare electron-builder cache
         shell: pwsh
         run: |
