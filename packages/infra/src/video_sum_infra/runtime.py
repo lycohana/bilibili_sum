@@ -89,6 +89,8 @@ def bundled_runtime_seed_dir() -> Path:
 
 
 def runtime_seed_available() -> bool:
+    if is_frozen():
+        return False
     return bundled_runtime_seed_dir().exists()
 
 
@@ -160,6 +162,9 @@ def runtime_worker_executable(runtime_channel: str) -> Path | None:
 
 
 def runtime_python_executable(runtime_channel: str) -> Path | None:
+    if runtime_channel == "base" and is_frozen():
+        return Path(sys.executable).resolve()
+
     runtime_dir = managed_runtime_dir(runtime_channel)
     for candidate in runtime_python_candidates(runtime_dir):
         if candidate.exists():
@@ -211,7 +216,11 @@ def prepend_runtime_path(runtime_channel: str) -> None:
 
 
 def bootstrap_managed_runtime(runtime_channel: str = "base") -> Path | None:
+    if is_frozen():
+        return None
+
     runtime_dir = managed_runtime_dir(runtime_channel)
+
     if runtime_python_executable(runtime_channel) is not None:
         return runtime_dir
     if runtime_channel != "base" or not is_frozen() or not runtime_seed_available():

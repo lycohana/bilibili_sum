@@ -8,21 +8,13 @@ ROOT = Path.cwd().resolve()
 BUILD_ROOT = ROOT / "build" / "pyinstaller"
 WEB_STATIC_DIR = ROOT / "apps" / "web" / "static"
 ICON_PATH = ROOT / "apps" / "desktop" / "build" / "icon.ico"
-RUNTIME_SEED_DIR = BUILD_ROOT / "runtime" / "base"
 BIN_DIR = BUILD_ROOT / "bin"
 
-# 显式收集 ffmpeg 二进制文件到 binaries，确保 yt_dlp 能找到
+# ffmpeg / ffprobe 通过 datas 中的 bin 目录统一收集，避免重复打包。
 binaries = []
-if BIN_DIR.exists():
-    if (BIN_DIR / "ffmpeg.exe").exists():
-        binaries += [(str(BIN_DIR / "ffmpeg.exe"), "ffmpeg.exe")]
-    if (BIN_DIR / "ffprobe.exe").exists():
-        binaries += [(str(BIN_DIR / "ffprobe.exe"), "ffprobe.exe")]
 
 datas = []
 datas += [(str(WEB_STATIC_DIR), "web/static")]
-if RUNTIME_SEED_DIR.exists():
-    datas += [(str(RUNTIME_SEED_DIR), "runtime/base")]
 if BIN_DIR.exists():
     datas += [(str(BIN_DIR), "bin")]
 

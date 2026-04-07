@@ -34,6 +34,24 @@ from video_sum_infra.runtime import (
 logger = logging.getLogger("video_sum_core.pipeline.real")
 
 
+class _YtDlpLogger:
+    def debug(self, message: str) -> None:
+        if message:
+            logger.debug("yt-dlp | %s", message)
+
+    def info(self, message: str) -> None:
+        if message:
+            logger.info("yt-dlp | %s", message)
+
+    def warning(self, message: str) -> None:
+        if message:
+            logger.warning("yt-dlp | %s", message)
+
+    def error(self, message: str) -> None:
+        if message:
+            logger.error("yt-dlp | %s", message)
+
+
 def _windows_hidden_subprocess_kwargs() -> dict[str, object]:
     if os.name != "nt":
         return {}
@@ -320,6 +338,7 @@ class RealPipelineRunner(PipelineRunner):
             "outtmpl": output_template,
             "quiet": True,
             "no_warnings": True,
+            "logger": _YtDlpLogger(),
             "noplaylist": True,
             "progress_hooks": [progress_hook],
             "postprocessor_hooks": [postprocessor_hook],
@@ -481,7 +500,7 @@ class RealPipelineRunner(PipelineRunner):
         runtime_paths = [str(path) for path in runtime_library_dirs(self._settings.runtime_channel)]
         ffmpeg_dir = ffmpeg_location()
         if ffmpeg_dir is not None:
-            runtime_paths.append(str(ffmpeg_dir))
+            runtime_paths.append(str(ffmpeg_dir.parent))
         env["VIDEO_SUM_DLL_PATHS"] = os.pathsep.join(runtime_paths)
         merged_path: list[str] = []
         for entry in [*runtime_paths, *(env.get("PATH", "").split(os.pathsep))]:
@@ -588,8 +607,13 @@ class RealPipelineRunner(PipelineRunner):
         progress_path: Path,
         output_path: Path,
     ) -> list[str]:
-        runtime_python = runtime_python_executable(self._settings.runtime_channel) or Path(sys.executable)
-        command = [str(runtime_python), "-m", "video_sum_core.transcribe_subprocess"]
+        from video_sum_infra.runtime import is_frozen
+        
+        if is_frozen():
+            command = [str(Path(sys.executable)), "--transcribe-subprocess"]
+        else:
+            runtime_python = runtime_python_executable(self._settings.runtime_channel) or Path(sys.executable)
+            command = [str(runtime_python), "-m", "video_sum_core.transcribe_subprocess"]
 
         command.extend(
             [

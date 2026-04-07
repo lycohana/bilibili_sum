@@ -1,5 +1,6 @@
 import asyncio
 from contextlib import asynccontextmanager
+import importlib.metadata
 import json
 import logging
 import os
@@ -135,7 +136,7 @@ def _runtime_subprocess_env(runtime_channel: str) -> dict[str, str]:
     path_entries = [str(path) for path in runtime_library_dirs(runtime_channel)]
     ffmpeg_dir = ffmpeg_location()
     if ffmpeg_dir is not None:
-        path_entries.append(str(ffmpeg_dir))
+        path_entries.append(str(ffmpeg_dir.parent))
 
     current_path = env.get("PATH", "")
     inherited_entries: list[str] = []
@@ -218,6 +219,8 @@ def _create_source_runtime(runtime_channel: str) -> Path:
 
 def ensure_runtime_channel(runtime_channel: str) -> Path | None:
     if runtime_channel == "base":
+        if is_frozen():
+            return None
         bootstrap_managed_runtime("base")
         python_executable = runtime_python_executable("base")
         if python_executable is not None:
@@ -225,6 +228,12 @@ def ensure_runtime_channel(runtime_channel: str) -> Path | None:
         if not is_frozen():
             return _create_source_runtime("base")
         raise HTTPException(status_code=500, detail="Bundled base runtime is missing.")
+
+    if is_frozen():
+        raise HTTPException(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            detail="Packaged builds currently support only the built-in base runtime.",
+        )
 
     target_dir = managed_runtime_dir(runtime_channel)
     if runtime_python_executable(runtime_channel) is not None:
@@ -243,6 +252,37 @@ def detect_environment(runtime_channel: str | None = None) -> dict[str, object]:
     cached = _environment_probe_cache.get(active_channel)
     if cached is not None:
         return dict(cached)
+
+    if active_channel == "base" and is_frozen():
+        try:
+            try:
+                import torch
+            except ImportError:
+                torch = None
+
+            cuda_available = bool(torch is not None and torch.cuda.is_available())
+            gpu_name = torch.cuda.get_device_name(0) if cuda_available else ""
+            payload = {
+                "pythonVersion": sys.version.split()[0],
+                "torchInstalled": torch is not None,
+                "torchVersion": torch.__version__ if torch is not None else "",
+                "cudaAvailable": cuda_available,
+                "gpuName": gpu_name,
+                "ytDlpVersion": importlib.metadata.version("yt-dlp"),
+                "fasterWhisperVersion": importlib.metadata.version("faster-whisper"),
+                "ffmpegLocation": str(ffmpeg_location() or ""),
+                "recommendedModel": "large-v3-turbo" if cuda_available else "base",
+                "recommendedDevice": "cuda" if cuda_available else "cpu",
+                "runtimeChannel": active_channel,
+                "runtimeReady": True,
+                "runtimePython": str(Path(sys.executable).resolve()),
+                "runtimeError": "",
+            }
+            _environment_probe_failures.pop(active_channel, None)
+            _environment_probe_cache[active_channel] = dict(payload)
+            return payload
+        except Exception as exc:
+            logger.warning("detect environment inline failed runtime_channel=%s error=%s", active_channel, exc)
 
     python_executable = runtime_python_executable(active_channel)
     if python_executable is None:
@@ -492,6 +532,12 @@ def install_cuda_support(cuda_variant: str) -> dict[str, object]:
     allowed_variants = {"cu124", "cu126", "cu128"}
     if cuda_variant not in allowed_variants:
         raise HTTPException(status_code=400, detail="Unsupported CUDA variant.")
+
+    if is_frozen():
+        raise HTTPException(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            detail="CUDA managed runtime installation is not supported in packaged builds yet.",
+        )
 
     runtime_channel = f"gpu-{cuda_variant}"
     runtime_dir = ensure_runtime_channel(runtime_channel)
