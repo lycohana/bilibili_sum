@@ -77,6 +77,14 @@ jobs:
       - name: Install desktop dependencies
         run: npm ci --prefix apps/desktop
 
+      - name: Set up FFmpeg
+        id: setup-ffmpeg
+        uses: FedericoCarboni/setup-ffmpeg@v3
+        with:
+          ffmpeg-version: release
+          architecture: x64
+          linking-type: static
+
       - name: Prepare electron-builder cache
         shell: pwsh
         run: |
@@ -95,6 +103,7 @@ jobs:
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
           CSC_PLATFORM: "windows"
+          VIDEO_SUM_FFMPEG_DIR: ${{ steps.setup-ffmpeg.outputs.ffmpeg-path }}
         run: npm run package:win
 
       - name: Collect release assets

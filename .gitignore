@@ -4,6 +4,8 @@ __pycache__/
 .ruff_cache/
 dist/
 build/
+!apps/desktop/build/
+!apps/desktop/build/**
 *.pyc
 *.pyo
 *.pyd

@@ -14,8 +14,10 @@ BIN_DIR = BUILD_ROOT / "bin"
 # 显式收集 ffmpeg 二进制文件到 binaries，确保 yt_dlp 能找到
 binaries = []
 if BIN_DIR.exists():
-    binaries += [(str(BIN_DIR / "ffmpeg.exe"), "ffmpeg.exe")]
-    binaries += [(str(BIN_DIR / "ffprobe.exe"), "ffprobe.exe")]
+    if (BIN_DIR / "ffmpeg.exe").exists():
+        binaries += [(str(BIN_DIR / "ffmpeg.exe"), "ffmpeg.exe")]
+    if (BIN_DIR / "ffprobe.exe").exists():
+        binaries += [(str(BIN_DIR / "ffprobe.exe"), "ffprobe.exe")]
 
 datas = []
 datas += [(str(WEB_STATIC_DIR), "web/static")]

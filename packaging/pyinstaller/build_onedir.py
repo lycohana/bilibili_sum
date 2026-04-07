@@ -14,6 +14,7 @@ BUILD_ROOT = ROOT / "build" / "pyinstaller"
 BUILD_VENV_DIR = BUILD_ROOT / "build-venv"
 RUNTIME_DIR = BUILD_ROOT / "runtime" / "base"
 BIN_DIR = BUILD_ROOT / "bin"
+PROJECT_FFMPEG_DIR = ROOT / "tools" / "ffmpeg" / "win-x64"
 SPEC_PATH = ROOT / "packaging" / "pyinstaller" / "briefvid.spec"
 
 
@@ -147,8 +148,11 @@ def copy_ffmpeg_binaries() -> None:
     BIN_DIR.mkdir(parents=True, exist_ok=True)
     source_dir = resolve_ffmpeg_source_dir()
     if source_dir is None:
-        print("warning: ffmpeg not found; build will continue without bundled ffmpeg")
-        return
+        raise SystemExit(
+            "Bundled ffmpeg not found. "
+            f"Expected repo-managed binaries in {PROJECT_FFMPEG_DIR} "
+            "or a usable VIDEO_SUM_FFMPEG_DIR / system ffmpeg installation."
+        )
 
     for name in ("ffmpeg.exe", "ffprobe.exe"):
         source = source_dir / name
@@ -157,6 +161,9 @@ def copy_ffmpeg_binaries() -> None:
 
 
 def resolve_ffmpeg_source_dir() -> Path | None:
+    if ffmpeg_dir_is_usable(PROJECT_FFMPEG_DIR):
+        return PROJECT_FFMPEG_DIR
+
     env_dir = os.environ.get("VIDEO_SUM_FFMPEG_DIR")
     if env_dir:
         candidate = Path(env_dir).resolve()

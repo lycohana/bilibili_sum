@@ -34,11 +34,21 @@ New-Item -ItemType File -Force -Path "$darwinLibDir\libssl.dylib" | Out-Null
 Push-Location $desktopDir
 try {
     # Generate icon before building
+    $iconScript = Join-Path $repoRoot "apps\desktop\build\generate_icon.py"
+    if (-not (Test-Path $iconScript)) {
+        throw "Icon generator script was not found: $iconScript"
+    }
     Write-Host "Generating application icon..."
-    & $python312 (Join-Path $repoRoot "apps\desktop\build\generate_icon.py")
+    & $python312 $iconScript
 
     npm run build:renderer
     & $python312 (Join-Path $repoRoot "packaging\pyinstaller\build_onedir.py")
+
+    $backendExe = Join-Path $repoRoot "dist\BriefVid\BriefVid.exe"
+    if (-not (Test-Path $backendExe)) {
+        throw "Packaged backend was not produced: $backendExe"
+    }
+
     npm run build:electron
     
     # Disable code signing on Windows to avoid symlink issues with darwin libraries

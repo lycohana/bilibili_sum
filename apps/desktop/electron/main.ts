@@ -371,12 +371,30 @@ function resolveDevPython(): { command: string; args: string[]; cwd: string; for
 }
 
 function resolvePackagedBackend(): { command: string; args: string[]; cwd: string } {
-  const backendRoot = path.join(process.resourcesPath, "backend", "BriefVid");
-  return {
-    command: path.join(backendRoot, "BriefVid.exe"),
-    args: [],
-    cwd: backendRoot,
-  };
+  const candidateRoots = [
+    path.join(process.resourcesPath, "backend", "BriefVid"),
+    path.join(path.dirname(process.execPath), "resources", "backend", "BriefVid"),
+    path.join(path.dirname(app.getAppPath()), "backend", "BriefVid"),
+  ];
+
+  for (const backendRoot of candidateRoots) {
+    const command = path.join(backendRoot, "BriefVid.exe");
+    if (fs.existsSync(command) && fs.existsSync(backendRoot)) {
+      return {
+        command,
+        args: [],
+        cwd: backendRoot,
+      };
+    }
+  }
+
+  throw new Error(
+    [
+      "未找到内置后端文件 BriefVid.exe。",
+      "请确认安装目录下存在 resources\\backend\\BriefVid\\BriefVid.exe。",
+      `当前 resourcesPath: ${process.resourcesPath}`,
+    ].join(" "),
+  );
 }
 
 async function startBackend(): Promise<BackendStatus> {
@@ -385,7 +403,23 @@ async function startBackend(): Promise<BackendStatus> {
     return { ...backendStatus, ready };
   }
 
-  const target = isDev ? resolveDevPython() : resolvePackagedBackend();
+  let target: { command: string; args: string[]; cwd: string; forceHidden?: boolean };
+  try {
+    target = isDev ? resolveDevPython() : resolvePackagedBackend();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "后端启动目标解析失败。";
+    console.error("[Backend] Failed to resolve backend target:", error);
+    updateBackendStatus({
+      running: false,
+      ready: false,
+      pid: null,
+      lastError: message,
+    });
+    if (!isDev) {
+      loadSplash(message);
+    }
+    return backendStatus;
+  }
 
   console.log("[Backend] Starting backend with:", {
     command: target.command,
@@ -417,7 +451,37 @@ async function startBackend(): Promise<BackendStatus> {
     console.log("[Backend] Windows: setting creationFlags = CREATE_NO_WINDOW (0x08000000)");
   }
 
-  backendProcess = spawn(target.command, target.args, spawnOptions);
+  try {
+    backendProcess = spawn(target.command, target.args, spawnOptions);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "后端进程创建失败。";
+    console.error("[Backend] Failed to spawn backend:", error);
+    updateBackendStatus({
+      running: false,
+      ready: false,
+      pid: null,
+      lastError: message,
+    });
+    if (!isDev) {
+      loadSplash(message);
+    }
+    return backendStatus;
+  }
+
+  backendProcess.once("error", (error) => {
+    backendProcess = null;
+    const message = error instanceof Error ? error.message : "后端进程启动失败。";
+    console.error("[Backend] Child process error:", error);
+    updateBackendStatus({
+      running: false,
+      ready: false,
+      pid: null,
+      lastError: message,
+    });
+    if (!forceQuit && !isDev) {
+      loadSplash(message);
+    }
+  });
 
   backendProcess.once("exit", (_code, signal) => {
     backendProcess = null;
