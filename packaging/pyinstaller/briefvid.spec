@@ -1,5 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
 from pathlib import Path
+import os
 
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules, copy_metadata
 
@@ -11,6 +12,77 @@ ICON_PATH = ROOT / "apps" / "desktop" / "build" / "icon.ico"
 RUNTIME_SEED_DIR = BUILD_ROOT / "runtime" / "base"
 BIN_DIR = BUILD_ROOT / "bin"
 
+# 运行时环境中不需要的包（用于过滤 runtime/base 目录）
+RUNTIME_EXCLUDE_PACKAGES = [
+    'sympy',
+    'mpmath',
+    'pip',
+    'setuptools',
+    'wheel',
+    'distutils',
+    'ensurepip',
+    'rich',
+    'typer',
+    'pygments',
+    'markdown_it_py',
+]
+
+def collect_runtime_files(source_dir: Path, dest_dir: str, exclude_packages: list[str]) -> list[tuple[str, str]]:
+    """收集运行时目录中的文件，排除指定的包。"""
+    if not source_dir.exists():
+        return []
+    
+    site_packages = source_dir / "Lib" / "site-packages"
+    if not site_packages.exists():
+        # 如果没有 site-packages，复制整个目录
+        return [(str(source_dir), dest_dir)]
+    
+    # 收集需要排除的包目录
+    exclude_dirs: set[Path] = set()
+    for pkg_name in exclude_packages:
+        pkg_dir = site_packages / pkg_name
+        if pkg_dir.exists():
+            exclude_dirs.add(pkg_dir)
+        # 也排除 dist-info
+        for dist_info in site_packages.glob(f"{pkg_name}-*.dist-info"):
+            if dist_info.is_dir():
+                exclude_dirs.add(dist_info)
+    
+    if not exclude_dirs:
+        # 没有需要排除的，复制整个目录
+        return [(str(source_dir), dest_dir)]
+    
+    # 递归收集文件，排除指定的包
+    result: list[tuple[str, str]] = []
+    
+    def is_excluded(path: Path) -> bool:
+        """检查路径是否在被排除的目录中。"""
+        path_str = str(path).lower()
+        for exclude_dir in exclude_dirs:
+            if path_str.startswith(str(exclude_dir).lower()):
+                return True
+        return False
+    
+    for root, dirs, files in os.walk(source_dir):
+        root_path = Path(root)
+        
+        # 检查当前目录是否在被排除的目录中
+        if is_excluded(root_path):
+            dirs.clear()  # 不遍历子目录
+            continue
+        
+        # 过滤掉被排除的子目录
+        dirs[:] = [d for d in dirs if not is_excluded(root_path / d)]
+        
+        # 添加文件
+        for file in files:
+            file_path = root_path / file
+            if not is_excluded(file_path):
+                file_rel = file_path.relative_to(source_dir)
+                result.append((str(file_path), str(Path(dest_dir) / file_rel)))
+    
+    return result
+
 # 显式收集 ffmpeg 二进制文件到 binaries，确保 yt_dlp 能找到
 binaries = []
 if BIN_DIR.exists():
@@ -21,8 +93,8 @@ if BIN_DIR.exists():
 
 datas = []
 datas += [(str(WEB_STATIC_DIR), "web/static")]
-if RUNTIME_SEED_DIR.exists():
-    datas += [(str(RUNTIME_SEED_DIR), "runtime/base")]
+# 使用过滤函数收集 runtime 文件，排除不需要的包
+datas += collect_runtime_files(RUNTIME_SEED_DIR, "runtime/base", RUNTIME_EXCLUDE_PACKAGES)
 if BIN_DIR.exists():
     datas += [(str(BIN_DIR), "bin")]
 

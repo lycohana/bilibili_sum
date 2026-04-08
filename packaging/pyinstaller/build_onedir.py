@@ -232,9 +232,14 @@ def cleanup_runtime_site_packages(python_exe: Path) -> None:
     # 不需要的包列表（名称：是否在 pip freeze 中检查）
     unnecessary_packages = {
         "sympy": True,       # 符号计算库，74MB，与视频摘要无关
+        "mpmath": True,      # sympy 的依赖
         "pip": True,         # 运行时不需要安装包
         "setuptools": True,  # 构建工具，运行时不需要
         "wheel": True,       # 构建工具，运行时不需要
+        "rich": True,        # 终端美化，运行时不需要
+        "typer": True,       # CLI 框架，运行时不需要
+        "pygments": True,    # 语法高亮，rich/typer 的依赖
+        "markdown_it_py": True,  # rich 的依赖
     }
 
     removed_count = 0
@@ -382,6 +387,60 @@ def install_build_dependencies() -> None:
             str(ROOT / "apps" / "service"),
         ]
     )
+    # 清理 build 环境中不需要的包，减少 PyInstaller 分析时的干扰
+    cleanup_build_site_packages(python_exe)
+
+
+def cleanup_build_site_packages(python_exe: Path) -> None:
+    """删除 build 环境中不必要的包，减少 PyInstaller 分析时的干扰。
+    
+    注意：这不会减小最终安装包体积（因为 PyInstaller 只收集依赖的模块），
+    但可以减少警告和避免意外收集。
+    """
+    site_packages = BUILD_VENV_DIR / "Lib" / "site-packages"
+    if not site_packages.exists():
+        return
+
+    # 不需要的包列表
+    unnecessary_packages = {
+        "sympy": True,       # 符号计算库，与视频摘要无关
+        "mpmath": True,      # sympy 的依赖
+        "rich": True,        # 终端美化，运行时不需要
+        "typer": True,       # CLI 框架，运行时不需要
+        "pygments": True,    # 语法高亮，rich/typer 的依赖
+        "markdown_it_py": True,  # rich 的依赖
+    }
+
+    removed_count = 0
+
+    for package_name in unnecessary_packages.keys():
+        package_dir = site_packages / package_name
+        
+        # 查找 dist-info 目录
+        package_dir_dist = None
+        for dist_info in site_packages.glob(f"{package_name}-*.dist-info"):
+            if dist_info.is_dir():
+                package_dir_dist = dist_info
+                break
+
+        if package_dir.exists():
+            try:
+                import shutil
+                shutil.rmtree(package_dir)
+                removed_count += 1
+                print(f"Removed from build env: {package_dir}")
+            except OSError as e:
+                print(f"Warning: Could not remove {package_dir}: {e}")
+
+        if package_dir_dist and package_dir_dist.exists():
+            try:
+                import shutil
+                shutil.rmtree(package_dir_dist)
+                print(f"Removed from build env: {package_dir_dist}")
+            except OSError as e:
+                print(f"Warning: Could not remove {package_dir_dist}: {e}")
+
+    print(f"Build env cleanup complete: removed {removed_count} packages")
 
 
 def main() -> int:
