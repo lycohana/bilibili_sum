@@ -92,10 +92,30 @@ def runtime_seed_available() -> bool:
     return bundled_runtime_seed_dir().exists()
 
 
+def read_runtime_metadata(target_dir: Path) -> dict[str, object]:
+    metadata_path = target_dir / "video_sum_runtime.json"
+    if not metadata_path.exists():
+        return {}
+    try:
+        payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def bundled_runtime_seed_metadata() -> dict[str, object]:
+    return read_runtime_metadata(bundled_runtime_seed_dir())
+
+
 def runtime_python_candidates(runtime_dir: Path) -> list[Path]:
+    """返回 Python 解释器候选路径列表。
+    
+    优先查找根目录的 python.exe（可重定位的解释器），
+    其次才是 Scripts 目录的 venv 启动器（可能硬编码了原始路径）。
+    """
     return [
-        runtime_dir / "Scripts" / "python.exe",
-        runtime_dir / "python.exe",
+        runtime_dir / "python.exe",           # 优先：根目录的可重定位解释器
+        runtime_dir / "Scripts" / "python.exe",  # 次选：venv 启动器（可能硬编码路径）
     ]
 
 
@@ -113,6 +133,9 @@ def runtime_library_dirs(runtime_channel: str) -> list[Path]:
     python_executable = runtime_python_executable(runtime_channel)
     if python_executable is not None:
         candidates.append(python_executable.parent)
+    portable_dlls_dir = runtime_dir / "DLLs"
+    if portable_dlls_dir.exists():
+        candidates.append(portable_dlls_dir)
     candidates.append(runtime_scripts_dir(runtime_dir))
 
     torch_lib_dir = runtime_dir / "Lib" / "site-packages" / "torch" / "lib"
@@ -160,13 +183,18 @@ def runtime_worker_executable(runtime_channel: str) -> Path | None:
 
 
 def runtime_python_executable(runtime_channel: str) -> Path | None:
+    """获取托管运行时 Python 解释器路径。
+    
+    优先查找根目录的 python.exe（可重定位的解释器），
+    其次才是 Scripts 目录的 venv 启动器。
+    
+    注意：不再回退到 sys.executable，因为在生产环境中这可能导致
+    使用开发环境的 Python 路径。
+    """
     runtime_dir = managed_runtime_dir(runtime_channel)
     for candidate in runtime_python_candidates(runtime_dir):
         if candidate.exists():
             return candidate
-
-    if runtime_channel == "base" and not is_frozen():
-        return Path(sys.executable).resolve()
     return None
 
 
@@ -212,13 +240,28 @@ def prepend_runtime_path(runtime_channel: str) -> None:
 
 def bootstrap_managed_runtime(runtime_channel: str = "base") -> Path | None:
     runtime_dir = managed_runtime_dir(runtime_channel)
-    if runtime_python_executable(runtime_channel) is not None:
-        return runtime_dir
     if runtime_channel != "base" or not is_frozen() or not runtime_seed_available():
+        if runtime_python_executable(runtime_channel) is not None:
+            return runtime_dir
         return None
 
     seed_dir = bundled_runtime_seed_dir()
+    seed_metadata = bundled_runtime_seed_metadata()
+    runtime_metadata = read_runtime_metadata(runtime_dir)
+    runtime_ready = runtime_python_executable(runtime_channel) is not None
+    seed_version = str(seed_metadata.get("appVersion") or "")
+    runtime_version = str(runtime_metadata.get("appVersion") or "")
+    requires_refresh = (
+        not runtime_ready
+        or runtime_version != seed_version
+        or runtime_metadata.get("runtimeLayout") != seed_metadata.get("runtimeLayout")
+    )
+    if not requires_refresh:
+        return runtime_dir
+
     runtime_dir.parent.mkdir(parents=True, exist_ok=True)
+    if runtime_dir.exists():
+        shutil.rmtree(runtime_dir)
     shutil.copytree(seed_dir, runtime_dir, dirs_exist_ok=True)
     return runtime_dir
 

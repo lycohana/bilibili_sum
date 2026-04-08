@@ -402,7 +402,8 @@ async function handleRefreshEnvironment() {
   state.cudaActionStatus = "正在检测本机环境...";
   render({ fullView: true });
   try {
-    state.environment = await api.getEnvironment();
+    const runtimeChannel = document.getElementById("runtime_channel")?.value || state.settings?.runtime_channel || "base";
+    state.environment = await api.getEnvironment({ runtimeChannel, refresh: true });
     state.cudaActionStatus = "环境检测完成";
   } catch (error) {
     state.cudaActionStatus = error.message || "环境检测失败";
@@ -430,9 +431,8 @@ async function handleInstallCuda() {
   render({ fullView: true });
   try {
     const response = await api.installCuda({
-      cudaVariant: document.getElementById("cuda_variant")?.value || "cu128",
+      cuda_variant: document.getElementById("cuda_variant")?.value || "cu128",
     });
-    state.environment = response.environment;
     state.cudaInstallOutput = response.stdoutTail || "";
     if (state.settings) {
       state.settings = {
@@ -441,6 +441,10 @@ async function handleInstallCuda() {
         runtime_channel: response.runtimeChannel || state.settings.runtime_channel,
       };
     }
+    state.environment = await api.getEnvironment({
+      runtimeChannel: response.runtimeChannel || state.settings?.runtime_channel || "base",
+      refresh: true,
+    });
     state.cudaActionStatus = response.restartRequired
       ? "CUDA 安装完成，请重启应用后切换到新的 GPU 运行时"
       : "CUDA 安装完成";

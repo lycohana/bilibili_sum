@@ -30,6 +30,7 @@ from video_sum_infra.runtime import (
     log_dir,
     managed_runtime_dir,
     prepend_runtime_path,
+    read_runtime_metadata,
     repo_root,
     runtime_library_dirs,
     runtime_python_candidates,
@@ -183,7 +184,27 @@ def _run_command(command: list[str], runtime_channel: str, timeout: int = 3600) 
         )
 
 
+def _ensure_runtime_pip(python_executable: Path, runtime_channel: str) -> None:
+    check_command = [str(python_executable), "-m", "pip", "--version"]
+    try:
+        _run_command(check_command, runtime_channel=runtime_channel, timeout=120)
+        return
+    except subprocess.CalledProcessError as exc:
+        detail = (exc.stderr or exc.stdout or str(exc)).strip()
+        if "No module named pip" not in detail:
+            raise
+
+    bootstrap_command = [str(python_executable), "-m", "ensurepip", "--upgrade"]
+    _run_command(bootstrap_command, runtime_channel=runtime_channel, timeout=300)
+
+
 def _install_workspace_packages(python_executable: Path, runtime_channel: str) -> None:
+    if is_frozen():
+        # Frozen builds already bundle video_sum_* packages inside the portable seed runtime.
+        # Re-installing from source paths only works in a source checkout and breaks in production.
+        return
+
+    _ensure_runtime_pip(python_executable, runtime_channel)
     root = repo_root()
     command = [
         str(python_executable),
@@ -227,12 +248,22 @@ def ensure_runtime_channel(runtime_channel: str) -> Path | None:
         raise HTTPException(status_code=500, detail="Bundled base runtime is missing.")
 
     target_dir = managed_runtime_dir(runtime_channel)
-    if runtime_python_executable(runtime_channel) is not None:
-        return target_dir
-
     base_dir = ensure_runtime_channel("base")
     if base_dir is None or not base_dir.exists():
         raise HTTPException(status_code=500, detail="Base runtime is unavailable.")
+
+    base_metadata = read_runtime_metadata(base_dir)
+    target_metadata = read_runtime_metadata(target_dir)
+    target_ready = runtime_python_executable(runtime_channel) is not None
+    target_matches_base = (
+        target_metadata.get("appVersion") == base_metadata.get("appVersion")
+        and target_metadata.get("runtimeLayout") == base_metadata.get("runtimeLayout")
+    )
+    if target_ready and target_matches_base:
+        return target_dir
+
+    if target_dir.exists():
+        shutil.rmtree(target_dir)
 
     shutil.copytree(base_dir, target_dir, dirs_exist_ok=True)
     return target_dir
@@ -523,6 +554,7 @@ def install_cuda_support(cuda_variant: str) -> dict[str, object]:
         f"https://download.pytorch.org/whl/{cuda_variant}",
     ]
     try:
+        _ensure_runtime_pip(python_executable, runtime_channel)
         result = _run_command(command, runtime_channel=runtime_channel)
     except subprocess.CalledProcessError as exc:
         clear_environment_probe_cache(runtime_channel)
@@ -607,9 +639,12 @@ def health() -> dict[str, str]:
 
 
 @app.get("/api/v1/system/info")
-def system_info() -> dict[str, object]:
+def system_info(runtime_channel: str | None = None, refresh: bool = False) -> dict[str, object]:
     current_settings = settings_manager.current
-    environment = detect_environment(current_settings.runtime_channel)
+    active_channel = runtime_channel or current_settings.runtime_channel
+    if refresh:
+        clear_environment_probe_cache(active_channel)
+    environment = detect_environment(active_channel)
     runtime_settings = current_settings.with_resolved_runtime(
         cuda_available=bool(environment.get("cudaAvailable"))
     )
@@ -626,7 +661,7 @@ def system_info() -> dict[str, object]:
             "log_file": str(service_log_path()),
         },
         "runtime": {
-            "runtime_channel": current_settings.runtime_channel,
+            "runtime_channel": active_channel,
             "whisper_model": runtime_settings.whisper_model,
             "whisper_device": runtime_settings.whisper_device,
             "whisper_compute_type": runtime_settings.whisper_compute_type,
@@ -662,8 +697,11 @@ def update_settings(payload: SettingsUpdatePayload) -> dict[str, object]:
 
 
 @app.get("/api/v1/environment")
-def get_environment() -> dict[str, object]:
-    return detect_environment(settings_manager.current.runtime_channel)
+def get_environment(runtime_channel: str | None = None, refresh: bool = False) -> dict[str, object]:
+    active_channel = runtime_channel or settings_manager.current.runtime_channel
+    if refresh:
+        clear_environment_probe_cache(active_channel)
+    return detect_environment(active_channel)
 
 
 @app.get("/api/v1/system/logs")
@@ -689,7 +727,8 @@ def shutdown_service() -> dict[str, object]:
 
 @app.post("/api/v1/cuda/install")
 def post_cuda_install(payload: dict[str, object]) -> dict[str, object]:
-    return install_cuda_support(str(payload.get("cudaVariant", "cu128")))
+    requested_variant = payload.get("cuda_variant", payload.get("cudaVariant", "cu128"))
+    return install_cuda_support(str(requested_variant))
 
 
 @app.post("/api/v1/videos/probe", response_model=VideoProbeResponse)

@@ -38,6 +38,8 @@ export function renderSettingsView(state) {
             ${renderEnvCard("FFmpeg", env.ffmpegLocation ? `已安装 (${escapeHtml(env.ffmpegLocation)})` : "未安装", env.ffmpegLocation ? "success" : "warning")}
             ${renderEnvCard("Python", env.pythonVersion || "-", "neutral")}
             ${renderEnvCard("运行时通道", env.runtimeChannel || settings.runtime_channel || "base", "neutral")}
+            ${renderEnvCard("运行时状态", env.runtimeReady === false ? "未就绪" : "已就绪", env.runtimeReady === false ? "warning" : "success")}
+            ${renderEnvCard("运行时解释器", env.runtimePython || "未检测到", env.runtimePython ? "success" : "neutral")}
           </div>
         </section>
 

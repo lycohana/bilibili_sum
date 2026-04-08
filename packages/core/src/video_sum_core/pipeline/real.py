@@ -5,7 +5,6 @@ import logging
 import math
 import os
 import subprocess
-import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
@@ -588,7 +587,11 @@ class RealPipelineRunner(PipelineRunner):
         progress_path: Path,
         output_path: Path,
     ) -> list[str]:
-        runtime_python = runtime_python_executable(self._settings.runtime_channel) or Path(sys.executable)
+        runtime_python = runtime_python_executable(self._settings.runtime_channel)
+        if runtime_python is None:
+            raise VideoSumError(
+                f"Managed runtime python is unavailable for channel '{self._settings.runtime_channel}'."
+            )
         command = [str(runtime_python), "-m", "video_sum_core.transcribe_subprocess"]
 
         command.extend(

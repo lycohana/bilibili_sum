@@ -23,11 +23,25 @@ export const api = {
   getHealth() {
     return fetchJson<{ status: string }>("/health");
   },
-  getSystemInfo() {
-    return fetchJson<SystemInfo>("/api/v1/system/info");
+  getSystemInfo(options?: { runtimeChannel?: string; refresh?: boolean }) {
+    const url = new URL("/api/v1/system/info", window.location.origin);
+    if (options?.runtimeChannel) {
+      url.searchParams.set("runtime_channel", options.runtimeChannel);
+    }
+    if (options?.refresh) {
+      url.searchParams.set("refresh", "1");
+    }
+    return fetchJson<SystemInfo>(url.toString());
   },
-  getEnvironment() {
-    return fetchJson<EnvironmentInfo>("/api/v1/environment");
+  getEnvironment(options?: { runtimeChannel?: string; refresh?: boolean }) {
+    const url = new URL("/api/v1/environment", window.location.origin);
+    if (options?.runtimeChannel) {
+      url.searchParams.set("runtime_channel", options.runtimeChannel);
+    }
+    if (options?.refresh) {
+      url.searchParams.set("refresh", "1");
+    }
+    return fetchJson<EnvironmentInfo>(url.toString());
   },
   getSettings() {
     return fetchJson<ServiceSettings>("/api/v1/settings");
@@ -77,7 +91,14 @@ export const api = {
     return fetchJson<{ deleted: boolean }>(`/api/v1/tasks/${taskId}`, { method: "DELETE" });
   },
   installCuda(payload: { cuda_variant: string }) {
-    return fetchJson<{ message?: string; output?: string }>("/api/v1/cuda/install", {
+    return fetchJson<{
+      installed: boolean;
+      cudaVariant: string;
+      runtimeChannel?: string;
+      restartRequired?: boolean;
+      stdoutTail?: string;
+      environment?: EnvironmentInfo;
+    }>("/api/v1/cuda/install", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),

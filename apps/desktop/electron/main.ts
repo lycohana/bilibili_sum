@@ -340,33 +340,45 @@ function resolveDevPython(): { command: string; args: string[]; cwd: string; for
   }
 
   if (process.platform === "win32") {
-    // 2. 检查 GPU runtime 的 pythonw.exe（优先使用 GPU 版本）
+    // 2. 检查 GPU runtime 根目录的 pythonw.exe（portable runtime）
     const localAppData = getLocalAppDataDir();
-    const gpuRuntimePythonw = path.join(localAppData, "briefvid", "runtime", "gpu-cu128", "Scripts", "pythonw.exe");
+    const gpuRuntimePythonw = path.join(localAppData, "briefvid", "runtime", "gpu-cu128", "pythonw.exe");
     if (fs.existsSync(gpuRuntimePythonw)) {
       return { command: gpuRuntimePythonw, args: ["-m", "video_sum_service"], cwd: repoRoot };
     }
 
-    // 3. 检查 .venv 的 pythonw.exe
+    // 3. 兼容旧 runtime：回退到 Scripts 目录的 pythonw.exe
+    const legacyGpuRuntimePythonw = path.join(localAppData, "briefvid", "runtime", "gpu-cu128", "Scripts", "pythonw.exe");
+    if (fs.existsSync(legacyGpuRuntimePythonw)) {
+      return { command: legacyGpuRuntimePythonw, args: ["-m", "video_sum_service"], cwd: repoRoot };
+    }
+
+    // 4. 检查 .venv 的 pythonw.exe
     const venvPythonw = path.resolve(repoRoot, ".venv/Scripts/pythonw.exe");
     if (fs.existsSync(venvPythonw)) {
       return { command: venvPythonw, args: ["-m", "video_sum_service"], cwd: repoRoot };
     }
 
-    // 4. 回退到 GPU runtime 的 python.exe
-    const gpuRuntimePython = path.join(localAppData, "briefvid", "runtime", "gpu-cu128", "Scripts", "python.exe");
+    // 5. 回退到 GPU runtime 根目录的 python.exe（portable runtime）
+    const gpuRuntimePython = path.join(localAppData, "briefvid", "runtime", "gpu-cu128", "python.exe");
     if (fs.existsSync(gpuRuntimePython)) {
       return { command: gpuRuntimePython, args: ["-m", "video_sum_service"], cwd: repoRoot, forceHidden: true };
     }
 
-    // 5. 回退到 .venv 的 python.exe
+    // 6. 兼容旧 runtime：回退到 Scripts 目录的 python.exe
+    const legacyGpuRuntimePython = path.join(localAppData, "briefvid", "runtime", "gpu-cu128", "Scripts", "python.exe");
+    if (fs.existsSync(legacyGpuRuntimePython)) {
+      return { command: legacyGpuRuntimePython, args: ["-m", "video_sum_service"], cwd: repoRoot, forceHidden: true };
+    }
+
+    // 7. 回退到 .venv 的 python.exe
     const venvPython = path.resolve(repoRoot, ".venv/Scripts/python.exe");
     if (fs.existsSync(venvPython)) {
       return { command: venvPython, args: ["-m", "video_sum_service"], cwd: repoRoot, forceHidden: true };
     }
   }
 
-  // 6. 最后回退到系统 python
+  // 8. 最后回退到系统 python
   return { command: "python", args: ["-m", "video_sum_service"], cwd: repoRoot, forceHidden: true };
 }
 

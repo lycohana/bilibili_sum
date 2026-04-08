@@ -11,11 +11,25 @@ export const api = {
   getHealth() {
     return fetchJson("/health");
   },
-  getSystemInfo() {
-    return fetchJson("/api/v1/system/info");
+  getSystemInfo(options = {}) {
+    const url = new URL("/api/v1/system/info", window.location.origin);
+    if (options.runtimeChannel) {
+      url.searchParams.set("runtime_channel", options.runtimeChannel);
+    }
+    if (options.refresh) {
+      url.searchParams.set("refresh", "1");
+    }
+    return fetchJson(url);
   },
-  getEnvironment() {
-    return fetchJson("/api/v1/environment");
+  getEnvironment(options = {}) {
+    const url = new URL("/api/v1/environment", window.location.origin);
+    if (options.runtimeChannel) {
+      url.searchParams.set("runtime_channel", options.runtimeChannel);
+    }
+    if (options.refresh) {
+      url.searchParams.set("refresh", "1");
+    }
+    return fetchJson(url);
   },
   getSystemLogs(lines = 200) {
     return fetchJson(`/api/v1/system/logs?lines=${lines}`);

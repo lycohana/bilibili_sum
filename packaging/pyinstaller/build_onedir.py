@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 import shutil
@@ -16,6 +17,7 @@ RUNTIME_DIR = BUILD_ROOT / "runtime" / "base"
 BIN_DIR = BUILD_ROOT / "bin"
 PROJECT_FFMPEG_DIR = ROOT / "tools" / "ffmpeg" / "win-x64"
 SPEC_PATH = ROOT / "packaging" / "pyinstaller" / "briefvid.spec"
+VERSION_FILE = ROOT / "VERSION"
 
 
 def run(command: list[str], cwd: Path | None = None) -> None:
@@ -93,6 +95,132 @@ def create_runtime_seed() -> None:
     )
     # 清理运行时环境中不必要的包，减小打包体积
     cleanup_runtime_site_packages(python_exe)
+    # 清理 direct_url.json 元数据，避免生产环境路径无效
+    cleanup_direct_url_metadata(RUNTIME_DIR / "Lib" / "site-packages")
+    make_portable_python_runtime(RUNTIME_DIR)
+    write_runtime_seed_metadata(RUNTIME_DIR)
+
+
+def base_python_root() -> Path:
+    """返回构建所依赖的基础 Python 安装目录，而不是 venv 启动器目录。"""
+    candidates = [
+        Path(sys.base_prefix),
+        Path(getattr(sys, "_base_executable", "")).resolve().parent if getattr(sys, "_base_executable", "") else None,
+        Path(sys.executable).resolve().parent,
+    ]
+    for candidate in candidates:
+        if candidate is not None and (candidate / "python.exe").exists():
+            return candidate
+    raise FileNotFoundError("Unable to locate the base Python installation for portable runtime packaging.")
+
+
+def make_portable_python_runtime(runtime_dir: Path) -> None:
+    """把 venv seed 补齐成可重定位的 Windows CPython runtime。
+
+    Windows 上的 venv 启动器依赖 pyvenv.cfg 中记录的基础解释器位置，
+    直接复制到其他机器后容易指回构建机路径。这里改为把基础 CPython
+    可执行文件、运行时 DLL 和标准库一起复制到 runtime 根目录，并用
+    ``python312._pth`` 显式指定 stdlib 与 site-packages，避免再依赖
+    ``Scripts\\python.exe`` 或 ``pyvenv.cfg``。
+    """
+    python_root = base_python_root()
+    portable_stdlib_dir = runtime_dir / "stdlib"
+    portable_dlls_dir = runtime_dir / "DLLs"
+
+    binaries = [
+        "python.exe",
+        "pythonw.exe",
+        "python3.dll",
+        f"python{sys.version_info.major}{sys.version_info.minor}.dll",
+        "vcruntime140.dll",
+        "vcruntime140_1.dll",
+    ]
+    for name in binaries:
+        source = python_root / name
+        if source.exists():
+            shutil.copy2(source, runtime_dir / name)
+
+    source_lib = python_root / "Lib"
+    if not source_lib.exists():
+        raise FileNotFoundError(f"Base Python stdlib not found: {source_lib}")
+    shutil.copytree(source_lib, portable_stdlib_dir, dirs_exist_ok=True)
+
+    source_dlls = python_root / "DLLs"
+    if source_dlls.exists():
+        shutil.copytree(source_dlls, portable_dlls_dir, dirs_exist_ok=True)
+
+    pyvenv_cfg = runtime_dir / "pyvenv.cfg"
+    if pyvenv_cfg.exists():
+        pyvenv_cfg.unlink()
+
+    pth_name = f"python{sys.version_info.major}{sys.version_info.minor}._pth"
+    (runtime_dir / pth_name).write_text(
+        "stdlib\n"
+        "DLLs\n"
+        "Lib\\site-packages\n"
+        "import site\n",
+        encoding="utf-8",
+    )
+    print(f"Prepared portable Python runtime from {python_root} -> {runtime_dir}")
+    verify_portable_python_runtime(runtime_dir)
+
+
+def verify_portable_python_runtime(runtime_dir: Path) -> None:
+    python_exe = runtime_dir / "python.exe"
+    if not python_exe.exists():
+        raise FileNotFoundError(f"Portable runtime python.exe missing: {python_exe}")
+
+    probe = [
+        str(python_exe),
+        "-c",
+        (
+            "import av, ctranslate2, ctypes, encodings, faster_whisper, json, numpy, sqlite3, ssl, sys, video_sum_core; "
+            "print(json.dumps({'exe': sys.executable, 'prefix': sys.prefix, 'base_prefix': sys.base_prefix}))"
+        ),
+    ]
+    subprocess.run(probe, cwd=runtime_dir, check=True)
+
+
+def write_runtime_seed_metadata(runtime_dir: Path) -> None:
+    version = VERSION_FILE.read_text(encoding="utf-8").strip() if VERSION_FILE.exists() else "0.0.0"
+    payload = {
+        "runtimeChannel": "base",
+        "runtimeLayout": "portable-cpython",
+        "appVersion": version,
+        "pythonVersion": f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
+    }
+    target = runtime_dir / "video_sum_runtime.json"
+    target.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def cleanup_direct_url_metadata(site_packages: Path) -> None:
+    """删除 direct_url.json 元数据，避免生产环境路径无效。
+
+    当使用 `pip install <local_path>` 安装本地包时，pip 会在
+    direct_url.json 中记录原始路径。在生产环境中，这些路径
+    不存在，导致 pip 操作失败。
+
+    这只移除来源信息记录，不影响包的功能。
+    """
+    if not site_packages.exists():
+        return
+
+    cleaned_count = 0
+    for dist_info in site_packages.glob("*.dist-info"):
+        direct_url = dist_info / "direct_url.json"
+        if direct_url.exists():
+            try:
+                # 只清理本地路径的 direct_url，保留 VCS/URL 来源
+                content = json.loads(direct_url.read_text(encoding="utf-8"))
+                url = content.get("url", "")
+                if url.startswith("file://"):
+                    direct_url.unlink()
+                    cleaned_count += 1
+                    print(f"Cleaned direct_url: {dist_info.name}")
+            except (json.JSONDecodeError, OSError) as e:
+                print(f"Warning: Could not process {direct_url}: {e}")
+
+    print(f"Direct URL cleanup complete: removed {cleaned_count} file(s)")
 
 
 def cleanup_runtime_site_packages(python_exe: Path) -> None:

@@ -1581,6 +1581,87 @@ textarea {
   margin-top: 20px;
 }
 
+.cuda-install-shell {
+  display: grid;
+  gap: 16px;
+}
+
+.cuda-insight-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.cuda-progress-card {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+  border-radius: 18px;
+  border: 1px solid rgba(86, 126, 255, 0.16);
+  background: rgba(244, 247, 255, 0.92);
+}
+
+.cuda-stage-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.cuda-stage-item {
+  display: grid;
+  gap: 6px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  background: rgba(255, 255, 255, 0.86);
+}
+
+.cuda-stage-item span {
+  color: var(--text-secondary);
+  font-size: 0.84rem;
+}
+
+.cuda-stage-item strong {
+  color: var(--text-primary);
+  font-size: 0.92rem;
+}
+
+.cuda-stage-item.done {
+  border-color: rgba(34, 168, 102, 0.18);
+  background: rgba(241, 252, 247, 0.92);
+}
+
+.cuda-stage-item.active {
+  border-color: rgba(86, 126, 255, 0.2);
+  background: rgba(240, 245, 255, 0.96);
+}
+
+.cuda-helper-text {
+  color: var(--text-secondary);
+  font-size: 0.88rem;
+  line-height: 1.6;
+}
+
+.cuda-next-steps {
+  display: grid;
+  gap: 6px;
+  padding: 16px 18px;
+  border-radius: 18px;
+  border: 1px solid rgba(34, 168, 102, 0.16);
+  background: rgba(241, 252, 247, 0.92);
+}
+
+.cuda-next-steps strong {
+  color: var(--success);
+  font-size: 0.94rem;
+}
+
+.cuda-next-steps span {
+  color: var(--text-secondary);
+  font-size: 0.88rem;
+  line-height: 1.55;
+}
+
 .settings-subsection h3,
 .cuda-control-copy h3 {
   margin: 0 0 14px;
@@ -2110,6 +2191,11 @@ textarea {
 }
 
 @media (max-width: 640px) {
+  .cuda-insight-grid,
+  .cuda-stage-list {
+    grid-template-columns: 1fr;
+  }
+
   .grid-card,
   .video-detail-hero,
   .detail-section-card,

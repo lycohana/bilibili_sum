@@ -893,9 +893,15 @@ function VideoDetailPage({ onRefresh }: { onRefresh(): void }) {
 
 function SettingsPage({ snapshot, desktop, onRefresh }: { snapshot: Snapshot; desktop: DesktopState; onRefresh(): void }) {
   const [form, setForm] = useState<ServiceSettings | null>(snapshot.settings);
+  const [environment, setEnvironment] = useState<EnvironmentInfo | null>(snapshot.environment);
   const [saveStatus, setSaveStatus] = useState("");
   const [cudaStatus, setCudaStatus] = useState("");
   const [cudaOutput, setCudaOutput] = useState("");
+  const [cudaInstalling, setCudaInstalling] = useState(false);
+  const [cudaProgress, setCudaProgress] = useState(0);
+  const [cudaStage, setCudaStage] = useState("");
+  const [cudaStartedAt, setCudaStartedAt] = useState<number | null>(null);
+  const [cudaDetail, setCudaDetail] = useState("");
   const [logOutput, setLogOutput] = useState("");
   const [logPath, setLogPath] = useState(snapshot.systemInfo?.service?.log_file || desktop.logPath || "");
   const [serviceStatus, setServiceStatus] = useState("");
@@ -905,6 +911,10 @@ function SettingsPage({ snapshot, desktop, onRefresh }: { snapshot: Snapshot; de
   useEffect(() => {
     setForm(snapshot.settings);
   }, [snapshot.settings]);
+
+  useEffect(() => {
+    setEnvironment(snapshot.environment);
+  }, [snapshot.environment]);
 
   useEffect(() => {
     setLogPath(snapshot.systemInfo?.service?.log_file || desktop.logPath || "");
@@ -939,6 +949,35 @@ function SettingsPage({ snapshot, desktop, onRefresh }: { snapshot: Snapshot; de
   const backendReady = Boolean(desktop.backend?.ready);
   const serviceOnline = snapshot.serviceOnline;
   const effectiveLogPath = logPath || snapshot.systemInfo?.service?.log_file || desktop.logPath || "-";
+  const targetRuntimeChannel = `gpu-${form?.cuda_variant || "cu128"}`;
+  const cudaPhasePlan = [
+    { threshold: 10, label: "准备 GPU 运行时目录" },
+    { threshold: 26, label: "引导 pip 和基础安装能力" },
+    { threshold: 48, label: "同步 BriefVid 工作区依赖" },
+    { threshold: 78, label: "安装 PyTorch CUDA 依赖" },
+    { threshold: 92, label: "刷新环境探测与运行时信息" },
+    { threshold: 100, label: "完成安装并切换推荐配置" },
+  ];
+
+  useEffect(() => {
+    if (!cudaInstalling) {
+      return;
+    }
+
+    const timer = window.setInterval(() => {
+      const elapsedMs = cudaStartedAt ? Date.now() - cudaStartedAt : 0;
+      const elapsedSeconds = Math.max(0, Math.floor(elapsedMs / 1000));
+      const expectedProgress = Math.min(94, 8 + Math.floor(elapsedSeconds * 1.6));
+      setCudaProgress((current) => {
+        const next = Math.max(current, expectedProgress);
+        const activePhase = cudaPhasePlan.find((phase) => next <= phase.threshold) || cudaPhasePlan[cudaPhasePlan.length - 1];
+        setCudaStage(`${activePhase.label} · 已等待 ${elapsedSeconds} 秒`);
+        return next;
+      });
+    }, 1200);
+
+    return () => window.clearInterval(timer);
+  }, [cudaInstalling, cudaStartedAt]);
 
   if (!form) return <section className="grid-card empty-state-card">正在加载设置...</section>;
 
@@ -948,11 +987,22 @@ function SettingsPage({ snapshot, desktop, onRefresh }: { snapshot: Snapshot; de
     try {
       await api.updateSettings(form);
       setSaveStatus("设置已保存");
+      setEnvironment(await api.getEnvironment({ runtimeChannel: form.runtime_channel, refresh: true }));
       onRefresh();
     } catch (error) {
       setSaveStatus(error instanceof Error ? error.message : "保存设置失败");
     }
   }
+
+  const cudaPhaseItems = cudaPhasePlan.map((phase, index) => {
+    const previousThreshold = index === 0 ? 0 : cudaPhasePlan[index - 1].threshold;
+    const isComplete = cudaProgress >= phase.threshold;
+    const isActive = !isComplete && cudaProgress > previousThreshold;
+    return {
+      ...phase,
+      state: isComplete ? "done" : isActive ? "active" : "pending",
+    };
+  });
 
   return (
     <section className="settings-grid">
@@ -968,26 +1018,28 @@ function SettingsPage({ snapshot, desktop, onRefresh }: { snapshot: Snapshot; de
             <p>当前硬件、依赖版本和运行时建议一览。</p>
           </div>
           <div className="env-summary-grid">
-            <Metric label="推荐设备" value={snapshot.environment?.recommendedDevice || "-"} tone="accent" />
-            <Metric label="推荐模型" value={snapshot.environment?.recommendedModel || "-"} />
-            <Metric label="GPU 状态" value={snapshot.environment?.cudaAvailable ? "已启用" : "未启用"} tone={snapshot.environment?.cudaAvailable ? "success" : "default"} />
-            <Metric label="GPU 名称" value={snapshot.environment?.gpuName || "未检测到"} />
-            <Metric label="Torch" value={snapshot.environment?.torchInstalled ? snapshot.environment?.torchVersion || "已安装" : "未安装"} />
-            <Metric label="yt-dlp" value={snapshot.environment?.ytDlpVersion || "未安装"} />
-            <Metric label="faster-whisper" value={snapshot.environment?.fasterWhisperVersion || "未安装"} />
+            <Metric label="推荐设备" value={environment?.recommendedDevice || "-"} tone="accent" />
+            <Metric label="推荐模型" value={environment?.recommendedModel || "-"} />
+            <Metric label="GPU 状态" value={environment?.cudaAvailable ? "已启用" : "未启用"} tone={environment?.cudaAvailable ? "success" : "default"} />
+            <Metric label="GPU 名称" value={environment?.gpuName || "未检测到"} />
+            <Metric label="Torch" value={environment?.torchInstalled ? environment?.torchVersion || "已安装" : "未安装"} />
+            <Metric label="yt-dlp" value={environment?.ytDlpVersion || "未安装"} />
+            <Metric label="faster-whisper" value={environment?.fasterWhisperVersion || "未安装"} />
             <div className="metric-card">
               <span className="metric-label">FFmpeg</span>
               <div className="metric-value-row">
-                <strong className={`metric-value ${snapshot.environment?.ffmpegLocation ? "text-success" : ""}`}>
-                  {snapshot.environment?.ffmpegLocation ? "已安装" : "未安装"}
+                <strong className={`metric-value ${environment?.ffmpegLocation ? "text-success" : ""}`}>
+                  {environment?.ffmpegLocation ? "已安装" : "未安装"}
                 </strong>
-                {snapshot.environment?.ffmpegLocation ? (
-                  <span className="ffmpeg-info-icon" title={snapshot.environment.ffmpegLocation}>!</span>
+                {environment?.ffmpegLocation ? (
+                  <span className="ffmpeg-info-icon" title={environment.ffmpegLocation}>!</span>
                 ) : null}
               </div>
             </div>
-            <Metric label="Python" value={snapshot.environment?.pythonVersion || "-"} />
-            <Metric label="运行时通道" value={snapshot.environment?.runtimeChannel || form.runtime_channel || "base"} tone="info" />
+            <Metric label="Python" value={environment?.pythonVersion || "-"} />
+            <Metric label="运行时通道" value={environment?.runtimeChannel || form.runtime_channel || "base"} tone="info" />
+            <Metric label="运行时状态" value={environment?.runtimeReady === false ? "未就绪" : "已就绪"} tone={environment?.runtimeReady === false ? "default" : "success"} />
+            <Metric label="运行时解释器" value={environment?.runtimePython || "-"} />
           </div>
         </section>
 
@@ -997,42 +1049,157 @@ function SettingsPage({ snapshot, desktop, onRefresh }: { snapshot: Snapshot; de
             <h3>CUDA 目标版本</h3>
             <p>选择目标运行时后，可重新检测环境或安装对应 CUDA 支持。</p>
           </div>
+          <div className="cuda-install-shell">
+            <div className="cuda-insight-grid">
+              <div className="setting-row">
+                <span className="setting-label">目标运行时</span>
+                <span className="setting-value">{targetRuntimeChannel}</span>
+              </div>
+              <div className="setting-row">
+                <span className="setting-label">当前运行时</span>
+                <span className="setting-value">{environment?.runtimeChannel || form.runtime_channel || "base"}</span>
+              </div>
+              <div className="setting-row">
+                <span className="setting-label">运行时状态</span>
+                <span className="setting-value">{environment?.runtimeReady === false ? "未就绪" : "已就绪"}</span>
+              </div>
+              <div className="setting-row">
+                <span className="setting-label">目标解释器路径</span>
+                <span className="setting-value">{`${targetRuntimeChannel}\\python.exe`}</span>
+              </div>
+            </div>
           <div className="cuda-actions">
             <label className="input-row cuda-picker">
               <span className="input-label">CUDA 目标版本</span>
-              <select className="select-field" value={form.cuda_variant} onChange={(event) => setForm({ ...form, cuda_variant: event.target.value })}>
+              <select
+                className="select-field"
+                value={form.cuda_variant}
+                disabled={cudaInstalling}
+                onChange={(event) => setForm({ ...form, cuda_variant: event.target.value })}
+              >
                 <option value="cu128">CUDA 12.8</option>
                 <option value="cu126">CUDA 12.6</option>
                 <option value="cu124">CUDA 12.4</option>
               </select>
             </label>
             <div className="settings-actions cuda-button-row">
-              <button className="secondary-button" type="button" onClick={() => onRefresh()}>重新检测</button>
               <button
-                className="primary-button"
+                className="secondary-button"
                 type="button"
+                disabled={cudaInstalling}
                 onClick={async () => {
                   try {
-                    const result = await api.installCuda({ cuda_variant: form.cuda_variant });
-                    setCudaStatus(result.message || "CUDA 安装命令已执行");
-                    setCudaOutput(result.output || "");
+                    setCudaStatus("正在重新检测环境...");
+                    const nextEnvironment = await api.getEnvironment({ runtimeChannel: form.runtime_channel, refresh: true });
+                    setEnvironment(nextEnvironment);
+                    setCudaStatus("环境检测完成");
                     onRefresh();
                   } catch (error) {
-                    setCudaStatus(error instanceof Error ? error.message : "CUDA 安装失败");
+                    setCudaStatus(error instanceof Error ? error.message : "环境检测失败");
                   }
                 }}
               >
-                安装 CUDA 支持
+                重新检测
+              </button>
+              <button
+                className="primary-button"
+                type="button"
+                disabled={cudaInstalling}
+                onClick={async () => {
+                  try {
+                    setCudaInstalling(true);
+                    setCudaStartedAt(Date.now());
+                    setCudaProgress(8);
+                    setCudaStage("准备 GPU 运行时目录");
+                    setCudaStatus("CUDA 安装已开始，正在准备运行时...");
+                    setCudaOutput("");
+                    setCudaDetail(
+                      `将为 ${targetRuntimeChannel} 安装 PyTorch CUDA 依赖，并把运行时切换到该通道。`
+                    );
+                    const result = await api.installCuda({ cuda_variant: form.cuda_variant });
+                    const nextRuntimeChannel = result.runtimeChannel || form.runtime_channel;
+                    setCudaInstalling(false);
+                    setCudaProgress(100);
+                    setCudaStage(result.restartRequired ? "CUDA 安装完成，等待重启切换运行时" : "CUDA 安装完成");
+                    setCudaStatus(
+                      result.restartRequired
+                        ? "CUDA 安装完成，请重启应用后切换到新的 GPU 运行时"
+                        : "CUDA 安装命令已执行"
+                    );
+                    setCudaOutput(result.stdoutTail || "");
+                    setCudaDetail(
+                      `安装目标：${result.cudaVariant || form.cuda_variant}，运行时通道：${nextRuntimeChannel}。`
+                    );
+                    setForm({ ...form, runtime_channel: nextRuntimeChannel, cuda_variant: result.cudaVariant || form.cuda_variant });
+                    setEnvironment(await api.getEnvironment({ runtimeChannel: nextRuntimeChannel, refresh: true }));
+                    onRefresh();
+                  } catch (error) {
+                    setCudaInstalling(false);
+                    setCudaStage("CUDA 安装失败");
+                    setCudaProgress((current) => (current > 0 ? current : 12));
+                    setCudaStatus(error instanceof Error ? error.message : "CUDA 安装失败");
+                    setCudaDetail(
+                      "安装在运行时依赖准备或 PyTorch CUDA 依赖下载阶段失败。请查看下方输出和服务日志。"
+                    );
+                  }
+                }}
+              >
+                {cudaInstalling ? "安装中..." : "安装 CUDA 支持"}
               </button>
             </div>
           </div>
+          {(cudaInstalling || cudaProgress > 0 || cudaStatus) ? (
+            <div className="cuda-progress-card">
+              <div className="progress-bar-wrapper">
+                <div className="progress-bar-simple">
+                  <div
+                    className={`progress-fill-simple ${cudaStatus.includes("失败") ? "error" : cudaProgress >= 100 ? "success" : ""}`}
+                    style={{ width: `${Math.min(cudaProgress, 100)}%` }}
+                  />
+                </div>
+                <div className="progress-info-simple">
+                  <span className="progress-percent-simple">{Math.round(Math.min(cudaProgress, 100))}%</span>
+                  <span className="progress-status-simple">{cudaStage || "等待开始"}</span>
+                </div>
+              </div>
+              <div className="cuda-stage-list">
+                {cudaPhaseItems.map((phase) => (
+                  <div key={phase.label} className={`cuda-stage-item ${phase.state}`}>
+                    <span>{phase.label}</span>
+                    <strong>
+                      {phase.state === "done" ? "已完成" : phase.state === "active" ? "进行中" : "待执行"}
+                    </strong>
+                  </div>
+                ))}
+              </div>
+              <p className="cuda-helper-text">
+                当前后端仍是同步安装接口，所以阶段进度是基于安装流程的可视化估计；最终结果以下方安装输出和重新检测结果为准。
+              </p>
+            </div>
+          ) : null}
           {cudaStatus ? <div className="action-status">{cudaStatus}</div> : null}
+          {cudaDetail ? <div className="cuda-helper-text">{cudaDetail}</div> : null}
           {cudaOutput ? (
             <label className="input-row">
               <span className="input-label">CUDA 安装输出</span>
-              <textarea className="textarea-field log-viewer" rows={8} readOnly value={cudaOutput}></textarea>
+              <textarea className="textarea-field log-viewer" rows={12} readOnly value={cudaOutput}></textarea>
             </label>
           ) : null}
+          {environment?.runtimeError ? (
+            <label className="input-row">
+              <span className="input-label">运行时错误详情</span>
+              <textarea className="textarea-field log-viewer" rows={8} readOnly value={environment.runtimeError}></textarea>
+            </label>
+          ) : null}
+          {(cudaStatus.includes("完成") || cudaProgress >= 100) ? (
+            <div className="cuda-next-steps">
+              <strong>下一步建议</strong>
+              <span>1. 点击“重新检测”确认当前 GPU runtime 已就绪。</span>
+              <span>2. 确认“运行时通道”已经切到目标 GPU 通道。</span>
+              <span>3. 若提示需要重启，请重启桌面应用后再开始转写任务。</span>
+            </div>
+          ) : null}
+          </div>
         </section>
       </article>
 

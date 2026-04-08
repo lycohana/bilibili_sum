@@ -1,6 +1,9 @@
 from pathlib import Path
 
+import pytest
+
 from video_sum_core.models.tasks import InputType, TaskInput, TaskStatus
+from video_sum_core.errors import VideoSumError
 from video_sum_core.pipeline.real import PipelineSettings, RealPipelineRunner
 from video_sum_core.pipeline.base import PipelineContext
 from video_sum_infra.config import ServiceSettings
@@ -52,7 +55,7 @@ def test_service_settings_default_to_managed_user_data_dir() -> None:
     assert settings.runtime_channel == "base"
 
 
-def test_transcription_command_falls_back_to_python_module(monkeypatch) -> None:
+def test_transcription_command_uses_managed_runtime_python(monkeypatch) -> None:
     runner = RealPipelineRunner(PipelineSettings(tasks_dir=Path("."), runtime_channel="base"))
 
     monkeypatch.setattr("video_sum_core.pipeline.real.runtime_python_executable", lambda channel: Path("C:/runtime/python.exe"))
@@ -69,6 +72,22 @@ def test_transcription_command_falls_back_to_python_module(monkeypatch) -> None:
     assert Path(command[0]) == Path("C:/runtime/python.exe")
     assert command[1:3] == ["-m", "video_sum_core.transcribe_subprocess"]
     assert "--audio-path" in command
+
+
+def test_transcription_command_requires_managed_runtime_python(monkeypatch) -> None:
+    runner = RealPipelineRunner(PipelineSettings(tasks_dir=Path("."), runtime_channel="base"))
+
+    monkeypatch.setattr("video_sum_core.pipeline.real.runtime_python_executable", lambda channel: None)
+
+    with pytest.raises(VideoSumError, match="Managed runtime python is unavailable"):
+        runner._build_transcription_command(
+            audio_path=Path("audio.mp3"),
+            model_name="tiny",
+            device="cpu",
+            compute_type="int8",
+            progress_path=Path("progress.jsonl"),
+            output_path=Path("result.json"),
+        )
 
 
 def test_real_pipeline_normalizes_empty_llm_summary() -> None:
