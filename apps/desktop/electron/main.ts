@@ -32,7 +32,7 @@ type BackendStatus = {
   lastError: string;
 };
 
-type UpdateStatus = "idle" | "checking" | "available" | "not-available" | "downloading" | "downloaded" | "error";
+type UpdateStatus = "idle" | "checking" | "available" | "not-available" | "downloading" | "downloaded" | "installing" | "error";
 
 type UpdateInfo = {
   status: UpdateStatus;
@@ -76,6 +76,10 @@ let updateStatus: UpdateInfo = {
   errorMessage: null,
 };
 let pendingUpdateInfo: ElectronUpdateInfo | null = null;
+let checkForUpdatesPromise: Promise<UpdateInfo> | null = null;
+let downloadUpdatePromise: Promise<UpdateInfo> | null = null;
+let downloadedUpdateVersion: string | null = null;
+let installRequestedAfterDownload = false;
 
 function getLocalAppDataDir() {
   return process.env.LOCALAPPDATA || path.join(process.env.USERPROFILE || app.getPath("home"), "AppData", "Local");
@@ -727,6 +731,17 @@ function updateUpdateStatus(patch: Partial<UpdateInfo>) {
   sendUpdateStatus();
 }
 
+function getUpdateSnapshot(info?: Partial<ElectronUpdateInfo> | null): UpdateInfo {
+  return {
+    status: updateStatus.status,
+    version: info?.version ?? updateStatus.version,
+    releaseDate: info?.releaseDate ?? updateStatus.releaseDate,
+    releaseNotes: (info?.releaseNotes as string | null | undefined) ?? updateStatus.releaseNotes,
+    downloadProgress: updateStatus.downloadProgress,
+    errorMessage: updateStatus.errorMessage,
+  };
+}
+
 function getUpdaterUnavailableMessage() {
   return `当前安装包未包含自动更新配置：${updaterConfigPath}`;
 }
@@ -753,27 +768,35 @@ function initializeUpdater() {
   try {
     // 配置 autoUpdater
     autoUpdater.autoDownload = false;
-    autoUpdater.autoInstallOnAppQuit = true;
-    autoUpdater.allowDowngrade = true;
+    autoUpdater.autoInstallOnAppQuit = false;
+    autoUpdater.allowDowngrade = false;
     autoUpdater.allowPrerelease = false;
 
     // 监听更新事件
     autoUpdater.on("checking-for-update", () => {
-      updateUpdateStatus({ status: "checking" });
+      if (updateStatus.status === "downloaded" || updateStatus.status === "installing") {
+        return;
+      }
+      updateUpdateStatus({ status: "checking", errorMessage: null });
     });
 
     autoUpdater.on("update-available", (info: ElectronUpdateInfo) => {
       pendingUpdateInfo = info;
+      const alreadyDownloaded = downloadedUpdateVersion === info.version
+        || (updateStatus.status === "downloaded" && updateStatus.version === info.version)
+        || (updateStatus.status === "installing" && updateStatus.version === info.version);
       updateUpdateStatus({
-        status: "available",
-        version: info.version,
-        releaseDate: info.releaseDate,
-        releaseNotes: info.releaseNotes as string | null,
+        ...getUpdateSnapshot(info),
+        status: alreadyDownloaded ? updateStatus.status : "available",
+        downloadProgress: alreadyDownloaded ? 100 : 0,
         errorMessage: null,
       });
     });
 
     autoUpdater.on("update-not-available", () => {
+      if (updateStatus.status === "downloaded" || updateStatus.status === "installing") {
+        return;
+      }
       updateUpdateStatus({ status: "not-available" });
     });
 
@@ -786,16 +809,19 @@ function initializeUpdater() {
 
     autoUpdater.on("update-downloaded", (info: ElectronUpdateInfo) => {
       pendingUpdateInfo = info;
+      downloadedUpdateVersion = info.version;
       updateUpdateStatus({
+        ...getUpdateSnapshot(info),
         status: "downloaded",
-        version: info.version,
-        releaseDate: info.releaseDate,
-        releaseNotes: info.releaseNotes as string | null,
         downloadProgress: 100,
       });
+      if (installRequestedAfterDownload) {
+        setTimeout(() => installAndRestart(), 250);
+      }
     });
 
     autoUpdater.on("error", (error: Error) => {
+      installRequestedAfterDownload = false;
       updateUpdateStatus({
         status: "error",
         errorMessage: error.message,
@@ -817,65 +843,94 @@ function initializeUpdater() {
 }
 
 function checkForUpdates(): Promise<UpdateInfo> {
-  return new Promise((resolve) => {
-    if (isDev) {
-      // 开发环境下模拟检查更新
-      updateUpdateStatus({ status: "not-available", errorMessage: null });
-      resolve(updateStatus);
-      return;
-    }
+  if (isDev) {
+    updateUpdateStatus({ status: "not-available", errorMessage: null });
+    return Promise.resolve(updateStatus);
+  }
 
-    if (!canUseAutoUpdater()) {
-      updateUpdateStatus({
-        status: "not-available",
-        errorMessage: getUpdaterUnavailableMessage(),
-      });
-      resolve(updateStatus);
-      return;
-    }
+  if (!canUseAutoUpdater()) {
+    updateUpdateStatus({
+      status: "not-available",
+      errorMessage: getUpdaterUnavailableMessage(),
+    });
+    return Promise.resolve(updateStatus);
+  }
 
-    const check = async () => {
-      try {
-        await autoUpdater.checkForUpdates();
-        resolve(updateStatus);
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : "检查更新失败";
-        updateUpdateStatus({ status: "error", errorMessage });
-        resolve(updateStatus);
-      }
-    };
-    check();
-  });
+  if (updateStatus.status === "downloading" || updateStatus.status === "downloaded" || updateStatus.status === "installing") {
+    return Promise.resolve(updateStatus);
+  }
+
+  if (checkForUpdatesPromise) {
+    return checkForUpdatesPromise;
+  }
+
+  checkForUpdatesPromise = (async () => {
+    try {
+      await autoUpdater.checkForUpdates();
+      return updateStatus;
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : "检查更新失败";
+      updateUpdateStatus({ status: "error", errorMessage });
+      return updateStatus;
+    } finally {
+      checkForUpdatesPromise = null;
+    }
+  })();
+
+  return checkForUpdatesPromise;
 }
 
 function downloadUpdate(): Promise<UpdateInfo> {
-  return new Promise((resolve, reject) => {
-    if (isDev) {
-      updateUpdateStatus({ status: "downloaded", version: "dev-build" });
-      resolve(updateStatus);
-      return;
-    }
+  if (isDev) {
+    updateUpdateStatus({ status: "downloaded", version: "dev-build" });
+    return Promise.resolve(updateStatus);
+  }
 
-    if (!canUseAutoUpdater()) {
-      const error = new Error(getUpdaterUnavailableMessage());
-      updateUpdateStatus({ status: "not-available", errorMessage: error.message });
-      reject(error);
-      return;
-    }
+  if (!canUseAutoUpdater()) {
+    const error = new Error(getUpdaterUnavailableMessage());
+    updateUpdateStatus({ status: "not-available", errorMessage: error.message });
+    return Promise.reject(error);
+  }
 
-    if (updateStatus.status !== "available") {
-      reject(new Error("没有可用的更新"));
-      return;
-    }
+  if (updateStatus.status === "installing") {
+    return Promise.resolve(updateStatus);
+  }
 
-    autoUpdater.downloadUpdate().catch((error: Error) => {
+  if (updateStatus.status === "downloaded") {
+    installRequestedAfterDownload = true;
+    installAndRestart();
+    return Promise.resolve(updateStatus);
+  }
+
+  if (updateStatus.status === "downloading" && downloadUpdatePromise) {
+    installRequestedAfterDownload = true;
+    return downloadUpdatePromise;
+  }
+
+  if (updateStatus.status !== "available") {
+    return Promise.reject(new Error("没有可用的更新"));
+  }
+
+  installRequestedAfterDownload = true;
+
+  downloadUpdatePromise = (async () => {
+    try {
+      await autoUpdater.downloadUpdate();
+      return updateStatus;
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : "下载更新失败";
+      installRequestedAfterDownload = false;
       updateUpdateStatus({
         status: "error",
-        errorMessage: error.message || "下载更新失败",
+        errorMessage,
       });
-      reject(error);
-    });
-  });
+      throw error;
+    } finally {
+      downloadUpdatePromise = null;
+    }
+  })();
+
+  return downloadUpdatePromise;
 }
 
 function installAndRestart(): void {
@@ -886,7 +941,11 @@ function installAndRestart(): void {
     console.warn("Cannot install: update not downloaded");
     return;
   }
-  autoUpdater.quitAndInstall();
+  installRequestedAfterDownload = false;
+  updateUpdateStatus({ status: "installing", errorMessage: null });
+  setTimeout(() => {
+    autoUpdater.quitAndInstall();
+  }, 200);
 }
 
 function registerIpcHandlers() {

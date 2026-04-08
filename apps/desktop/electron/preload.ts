@@ -41,7 +41,7 @@ export type DesktopBackendStatus = {
   lastError: string;
 };
 
-export type UpdateStatus = "idle" | "checking" | "available" | "not-available" | "downloading" | "downloaded" | "error";
+export type UpdateStatus = "idle" | "checking" | "available" | "not-available" | "downloading" | "downloaded" | "installing" | "error";
 
 export type UpdateInfo = {
   status: UpdateStatus;

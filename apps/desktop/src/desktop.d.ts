@@ -8,7 +8,7 @@ type DesktopBackendStatus = {
   lastError: string;
 };
 
-type UpdateStatus = "idle" | "checking" | "available" | "not-available" | "downloading" | "downloaded" | "error";
+type UpdateStatus = "idle" | "checking" | "available" | "not-available" | "downloading" | "downloaded" | "installing" | "error";
 
 type UpdateInfo = {
   status: UpdateStatus;

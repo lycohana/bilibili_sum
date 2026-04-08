@@ -39,7 +39,7 @@ type DesktopState = {
 };
 
 type UpdateState = {
-  status: "idle" | "checking" | "available" | "not-available" | "downloading" | "downloaded" | "error";
+  status: "idle" | "checking" | "available" | "not-available" | "downloading" | "downloaded" | "installing" | "error";
   version: string;
   releaseDate: string;
   releaseNotes: string | null;
@@ -76,19 +76,33 @@ export function App() {
   });
 
   useEffect(() => {
-    let cleanup: (() => void) | undefined;
+    let backendCleanup: (() => void) | undefined;
+    let updateCleanup: (() => void) | undefined;
+    let disposed = false;
     async function bootstrap() {
       if (!window.desktop) return;
-      const [version, backend, logPath] = await Promise.all([
+      const [version, backend, logPath, currentUpdateStatus] = await Promise.all([
         window.desktop.app.getVersion(),
         window.desktop.backend.status(),
         window.desktop.logs.getServiceLogPath(),
+        window.desktop.update?.getStatus?.() ?? Promise.resolve(null),
       ]);
+      if (disposed) return;
       setDesktop({ version, backend, logPath });
-      cleanup = window.desktop.backend.onStatus((status) => setDesktop((current) => ({ ...current, backend: status })));
+      if (currentUpdateStatus) {
+        setUpdateState({
+          status: currentUpdateStatus.status,
+          version: currentUpdateStatus.version,
+          releaseDate: currentUpdateStatus.releaseDate,
+          releaseNotes: currentUpdateStatus.releaseNotes,
+          downloadProgress: currentUpdateStatus.downloadProgress,
+          errorMessage: currentUpdateStatus.errorMessage,
+        });
+      }
+      backendCleanup = window.desktop.backend.onStatus((status) => setDesktop((current) => ({ ...current, backend: status })));
       
       // 监听更新状态
-      const updateCleanup = window.desktop.update?.onStatus((status) => {
+      updateCleanup = window.desktop.update?.onStatus((status) => {
         setUpdateState({
           status: status.status,
           version: status.version,
@@ -103,14 +117,13 @@ export function App() {
           setUpdateDialogOpen(true);
         }
       });
-      
-      return () => {
-        cleanup?.();
-        updateCleanup?.();
-      };
     }
     void bootstrap();
-    return () => {};
+    return () => {
+      disposed = true;
+      backendCleanup?.();
+      updateCleanup?.();
+    };
   }, []);
 
   useEffect(() => {
