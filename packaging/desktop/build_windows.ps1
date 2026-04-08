@@ -39,8 +39,12 @@ try {
         throw "Icon generator script was not found: $iconScript"
     }
     Write-Host "Ensuring Pillow is available for icon generation..."
+    $previousNativeErrorPreference = $PSNativeCommandUseErrorActionPreference
+    $PSNativeCommandUseErrorActionPreference = $false
     & $python312 -c "from PIL import Image" 2>$null
-    if ($LASTEXITCODE -ne 0) {
+    $pillowAvailable = ($LASTEXITCODE -eq 0)
+    $PSNativeCommandUseErrorActionPreference = $previousNativeErrorPreference
+    if (-not $pillowAvailable) {
         Write-Host "Pillow is missing; installing Pillow into the selected Python 3.12 environment..."
         & $python312 -m pip install --disable-pip-version-check Pillow
         if ($LASTEXITCODE -ne 0) {
