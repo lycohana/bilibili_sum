@@ -75,6 +75,8 @@ jobs:
         run: python scripts/bump_version.py --check
 
       - name: Install desktop dependencies
+        env:
+          ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
         run: npm ci --prefix apps/desktop
 
       - name: Set up FFmpeg

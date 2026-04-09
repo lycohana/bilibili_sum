@@ -186,16 +186,12 @@ body::before {
   left: 0;
   right: 0;
   height: 300px;
-  background:
-    radial-gradient(600px 200px at 10% -50px, rgba(251, 114, 153, 0.08), transparent 60%),
-    radial-gradient(500px 150px at 90% -30px, rgba(86, 126, 255, 0.06), transparent 50%);
+  background: transparent;
   pointer-events: none;
 }
 
 [data-theme="dark"] body::before {
-  background:
-    radial-gradient(600px 200px at 10% -50px, rgba(251, 114, 153, 0.06), transparent 60%),
-    radial-gradient(500px 150px at 90% -30px, rgba(86, 126, 255, 0.04), transparent 50%);
+  background: transparent;
 }
 
 img {
@@ -344,7 +340,7 @@ textarea {
   width: 36px;
   height: 36px;
   border-radius: 10px;
-  background: linear-gradient(135deg, var(--brand-500), var(--brand-600));
+  background: var(--brand-500);
   display: grid;
   place-items: center;
   padding: 6px;
@@ -767,12 +763,13 @@ textarea {
 
 .primary-button {
   color: var(--text-on-brand);
-  background: linear-gradient(135deg, var(--brand-500), var(--brand-600));
+  background: var(--brand-500);
   box-shadow: 0 2px 8px rgba(251, 114, 153, 0.25);
 }
 
 .primary-button:hover {
   transform: translateY(-1px);
+  background: var(--brand-600);
   box-shadow: 0 4px 12px rgba(251, 114, 153, 0.3);
 }
 
@@ -907,7 +904,7 @@ textarea {
   inset: 0;
   border-radius: inherit;
   pointer-events: none;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.3), transparent 30%);
+  background: transparent;
 }
 
 /* Video Grid */
@@ -1217,16 +1214,16 @@ textarea {
 .progress-fill-simple {
   height: 100%;
   border-radius: inherit;
-  background: linear-gradient(90deg, var(--brand-400), var(--brand-500));
+  background: var(--brand-500);
   transition: width var(--transition-slow);
 }
 
 .progress-fill-simple.success {
-  background: linear-gradient(90deg, #2fb575, #22a866);
+  background: var(--success);
 }
 
 .progress-fill-simple.error {
-  background: linear-gradient(90deg, #ef6b77, #e14b5a);
+  background: var(--danger);
 }
 
 .progress-info-simple {
