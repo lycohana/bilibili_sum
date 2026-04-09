@@ -278,13 +278,16 @@ export function App() {
   }, [snapshot.videos]);
 
   const runtimeDeviceLabel = useMemo(() => {
-    const requestedDevice = normalizeDevicePreference(snapshot.settings?.device_preference);
+    const effectiveDevice = normalizeDevicePreference(snapshot.settings?.whisper_device);
 
-    if (snapshot.environment?.cudaAvailable || requestedDevice === "cuda") {
+    if (effectiveDevice === "cuda") {
+      return "GPU";
+    }
+    if (!snapshot.settings && snapshot.environment?.cudaAvailable) {
       return "GPU";
     }
     return "CPU";
-  }, [snapshot.environment, snapshot.settings]);
+  }, [snapshot.environment?.cudaAvailable, snapshot.settings]);
 
   async function handleProbe(event: FormEvent) {
     event.preventDefault();
