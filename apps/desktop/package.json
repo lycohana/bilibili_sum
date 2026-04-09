@@ -14,7 +14,8 @@
     "build:renderer": "vite build --config vite.config.ts",
     "build:electron": "tsc -p tsconfig.electron.json",
     "build": "npm run build:renderer && npm run build:electron",
-    "package:win": "powershell -ExecutionPolicy Bypass -File ../../packaging/desktop/build_windows.ps1"
+    "package:win": "powershell -ExecutionPolicy Bypass -File ../../packaging/desktop/build_windows.ps1",
+    "package:win-notfront": "powershell -ExecutionPolicy Bypass -File ../../packaging/desktop/build_windows.ps1 -SkipPrebuild"
   },
   "dependencies": {
     "electron-updater": "^6.3.0",
@@ -65,7 +66,7 @@
         }
       ],
       "icon": "../../apps/desktop/build/icon.ico",
-      "signAndEditExecutable": false,
+      "signAndEditExecutable": true,
       "signDlls": false
     },
     "nsis": {

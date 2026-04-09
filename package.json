@@ -7,6 +7,7 @@
     "build": "npm --prefix apps/desktop run build",
     "build:desktop": "npm --prefix apps/desktop run build",
     "package:win": "npm --prefix apps/desktop run package:win",
+    "package:win-notfront": "npm --prefix apps/desktop run package:win-notfront",
     "build:win": "npm --prefix apps/desktop run package:win"
   }
 }

@@ -1,7 +1,54 @@
+[CmdletBinding()]
+param(
+    [switch]$SkipPrebuild
+)
+
 $ErrorActionPreference = "Stop"
 
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..\..")
 $desktopDir = Join-Path $repoRoot "apps\desktop"
+$rceditPatchScript = Join-Path $repoRoot "scripts\patch_electron_builder_rcedit.js"
+$winCodeSignVersion = "2.6.0"
+$winCodeSignArchiveName = "winCodeSign-$winCodeSignVersion.7z"
+$winCodeSignUrl = "https://github.com/electron-userland/electron-builder-binaries/releases/download/winCodeSign-$winCodeSignVersion/$winCodeSignArchiveName"
+$winCodeSignCacheDir = "$env:LOCALAPPDATA\electron-builder\Cache\winCodeSign"
+$localRceditDir = Join-Path $winCodeSignCacheDir "briefvid-rcedit"
+
+function Ensure-LocalRcedit {
+    $rceditX64 = Join-Path $localRceditDir "rcedit-x64.exe"
+    $rceditIa32 = Join-Path $localRceditDir "rcedit-ia32.exe"
+    if ((Test-Path $rceditX64) -and (Test-Path $rceditIa32)) {
+        return $rceditX64
+    }
+
+    New-Item -ItemType Directory -Force -Path $localRceditDir | Out-Null
+
+    $archivePath = Join-Path $winCodeSignCacheDir $winCodeSignArchiveName
+    if (-not (Test-Path $archivePath)) {
+        Write-Host "Downloading winCodeSign archive for local rcedit extraction..."
+        & curl.exe -L --fail --retry 3 --retry-delay 2 --output $archivePath $winCodeSignUrl
+        if ($LASTEXITCODE -ne 0) {
+            throw "Failed to download $winCodeSignUrl"
+        }
+    }
+
+    $sevenZip = Join-Path $desktopDir "node_modules\7zip-bin\win\x64\7za.exe"
+    if (-not (Test-Path $sevenZip)) {
+        throw "7za.exe was not found: $sevenZip"
+    }
+
+    Write-Host "Extracting local rcedit binaries from winCodeSign archive..."
+    & $sevenZip e -y $archivePath "-o$localRceditDir" "rcedit-x64.exe" "rcedit-ia32.exe" | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to extract local rcedit binaries from $archivePath"
+    }
+
+    if (-not (Test-Path $rceditX64)) {
+        throw "Extracted rcedit-x64.exe was not found: $rceditX64"
+    }
+
+    return $rceditX64
+}
 
 $python312 = (uv python find 3.12).Trim()
 if (-not $python312) {
@@ -19,7 +66,6 @@ if (Test-Path $cacheDir) {
 
 # Create a dummy winCodeSign directory with a fake version file to prevent electron-builder from downloading
 # This avoids the symlink creation issue on Windows
-$winCodeSignCacheDir = "$env:LOCALAPPDATA\electron-builder\Cache\winCodeSign"
 Write-Host "Creating dummy winCodeSign cache directory: $winCodeSignCacheDir"
 New-Item -ItemType Directory -Force -Path $winCodeSignCacheDir | Out-Null
 # Create a version file that electron-builder checks
@@ -66,16 +112,35 @@ try {
         throw "Application icon generation failed."
     }
 
-    npm run build:renderer
-    & $python312 (Join-Path $repoRoot "packaging\pyinstaller\build_onedir.py")
+    if (-not $SkipPrebuild) {
+        npm run build:renderer
+        & $python312 (Join-Path $repoRoot "packaging\pyinstaller\build_onedir.py")
 
-    $backendExe = Join-Path $repoRoot "dist\BriefVid\BriefVid.exe"
-    if (-not (Test-Path $backendExe)) {
-        throw "Packaged backend was not produced: $backendExe"
+        $backendExe = Join-Path $repoRoot "dist\BriefVid\BriefVid.exe"
+        if (-not (Test-Path $backendExe)) {
+            throw "Packaged backend was not produced: $backendExe"
+        }
+    }
+    else {
+        Write-Host "SkipPrebuild enabled: reusing existing renderer and backend artifacts."
     }
 
     npm run build:electron
     
+    if (-not (Test-Path $rceditPatchScript)) {
+        throw "electron-builder patch script was not found: $rceditPatchScript"
+    }
+
+    Write-Host "Patching electron-builder to use local rcedit when available..."
+    node $rceditPatchScript
+    if ($LASTEXITCODE -ne 0) {
+        throw "electron-builder rcedit patch failed."
+    }
+
+    $localRcedit = Ensure-LocalRcedit
+    Write-Host "Using local rcedit:" $localRcedit
+    $env:BRIEFVID_RCEDIT_PATH = $localRcedit
+
     # Disable code signing on Windows to avoid symlink issues with darwin libraries
     Write-Host "Building with code signing disabled..."
     
@@ -83,6 +148,9 @@ try {
     $env:CSC_PLATFORM = "windows"
     
     npx electron-builder --config electron-builder.config.js --win nsis --x64 --publish=never
+    if ($LASTEXITCODE -ne 0) {
+        throw "electron-builder packaging failed."
+    }
 }
 finally {
     Pop-Location
