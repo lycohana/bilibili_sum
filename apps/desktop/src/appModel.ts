@@ -103,6 +103,78 @@ export function getUpdateDialogSignal(update: Pick<UpdateState, "status" | "vers
   return `${update.status}:${update.version || "unknown"}`;
 }
 
+export function isUpdateUnsupported(update: Pick<UpdateState, "status" | "errorMessage">): boolean {
+  return update.status === "not-available" && Boolean(update.errorMessage);
+}
+
+export function getUpdateStatusLabel(update: Pick<UpdateState, "status" | "errorMessage">): string {
+  if (isUpdateUnsupported(update)) {
+    return "不可用";
+  }
+  switch (update.status) {
+    case "checking":
+      return "检查中";
+    case "available":
+      return "发现新版本";
+    case "not-available":
+      return "已是最新";
+    case "downloading":
+      return "下载中";
+    case "downloaded":
+      return "待安装";
+    case "installing":
+      return "安装中";
+    case "error":
+      return "检查失败";
+    default:
+      return "未检查";
+  }
+}
+
+export function getUpdateStatusTone(update: Pick<UpdateState, "status" | "errorMessage">): "success" | "failed" | "running" | "pending" {
+  if (isUpdateUnsupported(update)) {
+    return "failed";
+  }
+  switch (update.status) {
+    case "available":
+    case "downloaded":
+      return "success";
+    case "checking":
+    case "downloading":
+    case "installing":
+      return "running";
+    case "error":
+      return "failed";
+    default:
+      return "pending";
+  }
+}
+
+export function getUpdateSummary(update: UpdateState, currentVersion: string): string {
+  const installedVersion = currentVersion || "-";
+  if (isUpdateUnsupported(update)) {
+    return update.errorMessage || "当前环境不支持桌面自动更新。";
+  }
+  switch (update.status) {
+    case "checking":
+      return `正在检查更新，当前版本 v${installedVersion}。`;
+    case "available":
+      return `发现新版本 v${update.version || "-"}，当前版本为 v${installedVersion}。`;
+    case "not-available":
+      return `当前版本 v${installedVersion} 已是最新版本。`;
+    case "downloading":
+      return `正在下载并准备安装 v${update.version || "-"}，当前进度 ${Math.round(update.downloadProgress)}%。`;
+    case "downloaded":
+      return `新版本 v${update.version || "-"} 已下载完成，可以立即重启安装。`;
+    case "installing":
+      return `正在安装 v${update.version || "-"}，应用会在安装过程中重启。`;
+    case "error":
+      return update.errorMessage || "检查更新失败，请稍后重试。";
+    default:
+      return `当前版本 v${installedVersion}，尚未执行更新检查。`;
+  }
+}
+
 export function formatShortDate(value?: string | null) {
   if (!value) return "-";
   const date = new Date(value);

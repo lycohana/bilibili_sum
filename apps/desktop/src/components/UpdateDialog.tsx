@@ -71,7 +71,7 @@ export function UpdateDialog({
   };
 
   const renderErrorAlert = () => {
-    if (!updateInfo?.errorMessage || updateInfo.status !== "error") {
+    if (!updateInfo?.errorMessage || (updateInfo.status !== "error" && updateInfo.status !== "not-available")) {
       return null;
     }
 
@@ -82,7 +82,7 @@ export function UpdateDialog({
           <path d="M12 8V12M12 16H12.01" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
         </svg>
         <div className="error-alert-content">
-          <h4>检查更新失败</h4>
+          <h4>{updateInfo.status === "not-available" ? "自动更新不可用" : "检查更新失败"}</h4>
           <p>{updateInfo.errorMessage}</p>
         </div>
       </div>
@@ -98,9 +98,9 @@ export function UpdateDialog({
       case "available":
         return `发现新版本：${updateInfo.version}`;
       case "not-available":
-        return "已是最新版本";
+        return updateInfo.errorMessage ? `自动更新不可用：${updateInfo.errorMessage}` : "已是最新版本";
       case "downloading":
-        return `正在下载更新... ${Math.round(updateInfo.downloadProgress)}%`;
+        return `正在下载更新并准备安装... ${Math.round(updateInfo.downloadProgress)}%`;
       case "downloaded":
         return `更新已下载完成：${updateInfo.version}`;
       case "installing":
@@ -302,7 +302,7 @@ export function UpdateDialog({
                 稍后提醒
               </button>
               <button className="primary-button" onClick={handleDownload} disabled={isDownloading}>
-                {isDownloading ? "下载中..." : "下载并安装"}
+                {isDownloading ? "下载中..." : "下载并重启安装"}
               </button>
             </>
           ) : null}

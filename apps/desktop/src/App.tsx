@@ -1,7 +1,7 @@
 import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { Link, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 
-import { deriveRuntimeDeviceLabel, emptySnapshot, getUpdateDialogSignal, toUpdateState, type DesktopState, type LibraryFilter, type Snapshot, type UpdateState } from "./appModel";
+import { deriveRuntimeDeviceLabel, emptySnapshot, getUpdateDialogSignal, isUpdateUnsupported, toUpdateState, type DesktopState, type LibraryFilter, type Snapshot, type UpdateState } from "./appModel";
 import { api } from "./api";
 import { HomeIcon, LibraryIcon, SettingsIcon } from "./components/AppIcons";
 import { SidebarStatusItem } from "./components/AppPrimitives";
@@ -150,6 +150,31 @@ export function App() {
     setUpdateDialogOpen(false);
   }
 
+  async function handleCheckForUpdates() {
+    if (!window.desktop?.update) {
+      throw new Error("当前环境不支持桌面自动更新。");
+    }
+    const result = await window.desktop.update.check();
+    setUpdateState(toUpdateState(result));
+    return result;
+  }
+
+  async function handleDownloadUpdate() {
+    if (!window.desktop?.update) {
+      throw new Error("当前环境不支持桌面自动更新。");
+    }
+    const result = await window.desktop.update.download();
+    setUpdateState(toUpdateState(result));
+    return result;
+  }
+
+  async function handleInstallUpdate() {
+    if (!window.desktop?.update) {
+      throw new Error("当前环境不支持桌面自动更新。");
+    }
+    await window.desktop.update.install();
+  }
+
   const latestVideo = useMemo(() => {
     return [...snapshot.videos].sort(
       (left, right) => new Date(right.updated_at).getTime() - new Date(left.updated_at).getTime(),
@@ -228,6 +253,7 @@ export function App() {
 
   const isSettingsRoute = location.pathname.startsWith("/settings");
   const isLibraryRoute = location.pathname.startsWith("/library");
+  const updateSupported = Boolean(window.desktop?.update) && !isUpdateUnsupported(updateState);
 
   return (
     <div className="app-shell">
@@ -345,9 +371,13 @@ export function App() {
                   <SettingsPage
                     desktop={desktop}
                     onOpenUpdateDialog={openUpdateDialog}
+                    onCheckUpdate={handleCheckForUpdates}
+                    onDownloadUpdate={handleDownloadUpdate}
+                    onInstallUpdate={handleInstallUpdate}
                     onRefresh={() => setRefreshSeed((value) => value + 1)}
                     snapshot={snapshot}
                     updateInfo={updateState}
+                    updateSupported={updateSupported}
                   />
                 )}
               />
@@ -361,22 +391,9 @@ export function App() {
         updateInfo={updateState as UpdateInfo}
         currentVersion={desktop.version}
         onClose={closeUpdateDialog}
-        onCheck={async () => {
-          if (window.desktop?.update) {
-            const result = await window.desktop.update.check();
-            setUpdateState(toUpdateState(result));
-          }
-        }}
-        onDownload={async () => {
-          if (window.desktop?.update) {
-            await window.desktop.update.download();
-          }
-        }}
-        onInstall={async () => {
-          if (window.desktop?.update) {
-            await window.desktop.update.install();
-          }
-        }}
+        onCheck={handleCheckForUpdates}
+        onDownload={handleDownloadUpdate}
+        onInstall={handleInstallUpdate}
       />
     </div>
   );

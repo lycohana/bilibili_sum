@@ -746,6 +746,10 @@ function getUpdaterUnavailableMessage() {
   return `当前安装包未包含自动更新配置：${updaterConfigPath}`;
 }
 
+function getAutoUpdaterDisabledMessage() {
+  return "开发环境不支持桌面自动更新，请使用打包后的安装包进行验证。";
+}
+
 function canUseAutoUpdater() {
   return !isDev && fs.existsSync(updaterConfigPath);
 }
@@ -753,7 +757,7 @@ function canUseAutoUpdater() {
 function initializeUpdater() {
   // 开发环境下完全禁用 autoUpdater，避免读取 app-update.yml 文件
   if (isDev) {
-    updateUpdateStatus({ status: "not-available", errorMessage: null });
+    updateUpdateStatus({ status: "not-available", errorMessage: getAutoUpdaterDisabledMessage() });
     return;
   }
 
@@ -844,7 +848,7 @@ function initializeUpdater() {
 
 function checkForUpdates(): Promise<UpdateInfo> {
   if (isDev) {
-    updateUpdateStatus({ status: "not-available", errorMessage: null });
+    updateUpdateStatus({ status: "not-available", errorMessage: getAutoUpdaterDisabledMessage() });
     return Promise.resolve(updateStatus);
   }
 
@@ -882,8 +886,9 @@ function checkForUpdates(): Promise<UpdateInfo> {
 
 function downloadUpdate(): Promise<UpdateInfo> {
   if (isDev) {
-    updateUpdateStatus({ status: "downloaded", version: "dev-build" });
-    return Promise.resolve(updateStatus);
+    const error = new Error(getAutoUpdaterDisabledMessage());
+    updateUpdateStatus({ status: "not-available", errorMessage: error.message });
+    return Promise.reject(error);
   }
 
   if (!canUseAutoUpdater()) {

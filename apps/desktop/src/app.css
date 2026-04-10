@@ -1805,6 +1805,107 @@ textarea {
   border-bottom: 1px solid var(--settings-border);
 }
 
+.settings-update-module {
+  display: grid;
+  gap: 18px;
+}
+
+.settings-update-overview {
+  display: grid;
+  gap: 14px;
+  padding: 22px;
+  border-radius: 24px;
+  border: 1px solid var(--settings-border);
+  background: var(--settings-muted-bg);
+}
+
+.settings-update-copy {
+  display: grid;
+  gap: 8px;
+}
+
+.settings-update-copy h3 {
+  margin: 0;
+  font-size: 1.2rem;
+  color: var(--settings-text-strong);
+}
+
+.settings-update-copy p {
+  margin: 0;
+  line-height: 1.7;
+  color: var(--settings-text-soft);
+}
+
+.settings-update-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.settings-update-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 16px;
+}
+
+.settings-update-panel {
+  display: grid;
+  gap: 8px;
+  padding: 18px 20px;
+  border-radius: 20px;
+  border: 1px solid var(--settings-border);
+  background: var(--settings-elevated-bg);
+}
+
+.settings-update-panel.is-highlight {
+  border-color: var(--settings-accent-border);
+  background: var(--settings-accent-bg);
+}
+
+.settings-update-label {
+  font-size: 0.76rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--settings-kicker);
+}
+
+.settings-update-panel strong {
+  font-size: 1.12rem;
+  color: var(--settings-text-strong);
+}
+
+.settings-update-panel p {
+  margin: 0;
+  line-height: 1.65;
+  color: var(--settings-text-soft);
+}
+
+.settings-update-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.settings-update-next-step {
+  display: grid;
+  gap: 6px;
+  padding: 16px 18px;
+  border-radius: 18px;
+  border: 1px solid var(--settings-accent-border);
+  background: var(--settings-accent-bg);
+}
+
+.settings-update-next-step strong {
+  font-size: 0.95rem;
+  color: var(--settings-text-strong);
+}
+
+.settings-update-next-step span {
+  line-height: 1.65;
+  color: var(--settings-text-soft);
+}
+
 .overview-info-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
@@ -3230,6 +3331,11 @@ textarea {
 
   .page-header h2 {
     font-size: 1.75rem;
+  }
+
+  .settings-update-actions .primary-button,
+  .settings-update-actions .secondary-button {
+    width: 100%;
   }
 }
 

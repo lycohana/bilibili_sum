@@ -1,6 +1,17 @@
 import { type FormEvent, useEffect, useState } from "react";
 
-import { DesktopState, Snapshot, UpdateState, devicePreferenceLabel, formatShortDate, normalizeDevicePreference } from "../appModel";
+import {
+  DesktopState,
+  Snapshot,
+  UpdateState,
+  devicePreferenceLabel,
+  formatShortDate,
+  getUpdateStatusLabel,
+  getUpdateStatusTone,
+  getUpdateSummary,
+  isUpdateUnsupported,
+  normalizeDevicePreference,
+} from "../appModel";
 import { api } from "../api";
 import type { EnvironmentInfo, ServiceSettings } from "../types";
 import { settingsCategories, type SettingsCategory } from "./settingsConfig";
@@ -10,6 +21,10 @@ type SettingsPageProps = {
   desktop: DesktopState;
   onRefresh(): void;
   updateInfo: UpdateState;
+  updateSupported: boolean;
+  onCheckUpdate(): Promise<unknown>;
+  onDownloadUpdate(): Promise<unknown>;
+  onInstallUpdate(): Promise<void>;
   onOpenUpdateDialog(): void;
 };
 
@@ -18,6 +33,10 @@ export function SettingsPage({
   desktop,
   onRefresh,
   updateInfo,
+  updateSupported,
+  onCheckUpdate,
+  onDownloadUpdate,
+  onInstallUpdate,
   onOpenUpdateDialog,
 }: SettingsPageProps) {
   const [form, setForm] = useState<ServiceSettings | null>(snapshot.settings);
@@ -33,8 +52,6 @@ export function SettingsPage({
   const [logOutput, setLogOutput] = useState("");
   const [logPath, setLogPath] = useState(snapshot.systemInfo?.service?.log_file || desktop.logPath || "");
   const [serviceStatus, setServiceStatus] = useState("");
-  const [updateStatus, setUpdateStatus] = useState("");
-  const [checkingUpdate, setCheckingUpdate] = useState(false);
   const [activeCategory, setActiveCategory] = useState<SettingsCategory>("overview");
 
   useEffect(() => {
@@ -83,6 +100,13 @@ export function SettingsPage({
   const workspaceCategories = settingsCategories.filter((category) => category.group === "workspace");
   const systemCategories = settingsCategories.filter((category) => category.group === "system");
   const llmReady = Boolean(form?.llm_enabled && form?.llm_api_key_configured);
+  const updateUnsupported = isUpdateUnsupported(updateInfo);
+  const updateStatusLabel = getUpdateStatusLabel(updateInfo);
+  const updateStatusTone = getUpdateStatusTone(updateInfo);
+  const updateSummary = updateSupported
+    ? getUpdateSummary(updateInfo, desktop.version)
+    : "当前环境不支持桌面自动更新。";
+  const updateActionBusy = updateInfo.status === "checking" || updateInfo.status === "downloading" || updateInfo.status === "installing";
   const cudaPhasePlan = [
     { threshold: 10, label: "准备 GPU 运行时目录" },
     { threshold: 26, label: "引导 pip 和基础安装能力" },
@@ -874,41 +898,119 @@ export function SettingsPage({
               <h2>桌面应用更新</h2>
               <p>检查新版本并管理安装流程。</p>
             </header>
-            <div className="control-status-row">
-              <span className="helper-chip">当前版本 v{desktop.version || "-"}</span>
-              <span className={`helper-chip ${updateInfo.status === "available" || updateInfo.status === "downloaded" ? "status-success" : "status-pending"}`}>
-                更新状态：{updateInfo.status}
-              </span>
-              {updateInfo.version ? <span className="helper-chip">最新版本 {updateInfo.version}</span> : null}
-              {updateInfo.releaseDate ? <span className="helper-chip">发布时间 {formatShortDate(updateInfo.releaseDate)}</span> : null}
+            <div className="settings-update-module">
+              <div className="settings-update-overview">
+                <div className="settings-update-copy">
+                  <span className="settings-story-kicker">Update</span>
+                  <h3>手动检查桌面端更新</h3>
+                  <p>{updateSummary}</p>
+                </div>
+                <div className="settings-update-badges">
+                  <span className="helper-chip">当前版本 v{desktop.version || "-"}</span>
+                  <span className={`helper-chip status-${updateStatusTone}`}>状态：{updateStatusLabel}</span>
+                  {updateInfo.version ? <span className="helper-chip">最新版本 v{updateInfo.version}</span> : null}
+                  {updateInfo.releaseDate ? <span className="helper-chip">发布时间 {formatShortDate(updateInfo.releaseDate)}</span> : null}
+                </div>
+              </div>
+
+              <div className="settings-update-grid">
+                <div className="settings-update-panel">
+                  <span className="settings-update-label">当前安装版本</span>
+                  <strong>v{desktop.version || "-"}</strong>
+                  <p>设置页内可直接检查更新，并沿用桌面端现有更新状态流。</p>
+                </div>
+
+                <div className={`settings-update-panel ${updateInfo.status === "available" || updateInfo.status === "downloaded" ? "is-highlight" : ""}`}>
+                  <span className="settings-update-label">检查结果</span>
+                  <strong>
+                    {updateUnsupported
+                      ? "当前环境不可更新"
+                      : updateInfo.status === "available" || updateInfo.status === "downloaded"
+                      ? `发现 v${updateInfo.version || "-"}`
+                      : updateInfo.status === "not-available"
+                        ? "已是最新版本"
+                        : updateInfo.status === "error"
+                          ? "检查失败"
+                          : updateInfo.status === "checking"
+                            ? "正在检查"
+                            : updateInfo.status === "downloading"
+                              ? `下载中 ${Math.round(updateInfo.downloadProgress)}%`
+                              : updateInfo.status === "installing"
+                                ? "正在安装"
+                                : "等待检查"}
+                  </strong>
+                  <p>
+                    {updateInfo.status === "available" || updateInfo.status === "downloaded"
+                      ? `当前 v${desktop.version || "-"}，最新 v${updateInfo.version || "-"}`
+                      : updateInfo.status === "error"
+                        ? (updateInfo.errorMessage || "更新检查失败，请重试。")
+                        : updateSummary}
+                  </p>
+                </div>
+              </div>
+
+              <div className="settings-update-actions">
+                <button
+                  className="primary-button"
+                  type="button"
+                  disabled={!updateSupported || updateActionBusy}
+                  onClick={async () => {
+                    try {
+                      if (!updateSupported) {
+                        return;
+                      }
+                      if (updateInfo.status === "available") {
+                        await onDownloadUpdate();
+                        return;
+                      }
+                      if (updateInfo.status === "downloaded") {
+                        await onInstallUpdate();
+                        return;
+                      }
+                      await onCheckUpdate();
+                    } catch {
+                      // 更新状态由上层和桌面端事件统一维护，这里不重复落一套本地错误状态。
+                    }
+                  }}
+                >
+                  {!updateSupported
+                    ? "当前环境不支持自动更新"
+                    : updateInfo.status === "checking"
+                      ? "检查中..."
+                      : updateInfo.status === "downloading"
+                        ? `下载中... ${Math.round(updateInfo.downloadProgress)}%`
+                      : updateInfo.status === "installing"
+                          ? "安装中..."
+                          : updateInfo.status === "available"
+                            ? "下载并重启安装"
+                            : updateInfo.status === "downloaded"
+                              ? "立即重启安装"
+                              : updateInfo.status === "error"
+                                ? "重试检查"
+                                : "检查更新"}
+                </button>
+
+                <button
+                  className="secondary-button"
+                  type="button"
+                  disabled={!updateSupported}
+                  onClick={onOpenUpdateDialog}
+                >
+                  查看更新详情
+                </button>
+              </div>
+
+              {updateInfo.status === "available" || updateInfo.status === "downloaded" ? (
+                <div className="settings-update-next-step">
+                  <strong>下一步</strong>
+                  <span>
+                    {updateInfo.status === "available"
+                      ? "已检测到新版本，继续后会下载更新，并在下载完成后自动重启安装。"
+                      : "更新已下载完成，可以立即重启应用完成安装。"}
+                  </span>
+                </div>
+              ) : null}
             </div>
-            <div className="desktop-actions">
-              <button
-                className="secondary-button"
-                type="button"
-                disabled={checkingUpdate}
-                onClick={async () => {
-                  if (!window.desktop?.update) {
-                    setUpdateStatus("当前环境不支持桌面自动更新。");
-                    return;
-                  }
-                  try {
-                    setCheckingUpdate(true);
-                    setUpdateStatus("正在检查更新...");
-                    const result = await window.desktop.update.check();
-                    setUpdateStatus(result.status === "available" ? "发现新版本，可在更新面板继续处理。" : "当前已经是最新版本。");
-                  } catch (error) {
-                    setUpdateStatus(error instanceof Error ? error.message : "检查更新失败");
-                  } finally {
-                    setCheckingUpdate(false);
-                  }
-                }}
-              >
-                {checkingUpdate ? "检查中..." : "检查更新"}
-              </button>
-              <button className="primary-button" type="button" onClick={onOpenUpdateDialog}>打开更新面板</button>
-            </div>
-            {updateStatus ? <div className="action-status">{updateStatus}</div> : null}
           </section>
         </div>
       </main>
