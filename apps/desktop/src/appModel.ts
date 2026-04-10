@@ -153,25 +153,25 @@ export function getUpdateStatusTone(update: Pick<UpdateState, "status" | "errorM
 export function getUpdateSummary(update: UpdateState, currentVersion: string): string {
   const installedVersion = currentVersion || "-";
   if (isUpdateUnsupported(update)) {
-    return update.errorMessage || "当前环境不支持桌面自动更新。";
+    return update.errorMessage || "当前环境不支持自动更新。";
   }
   switch (update.status) {
     case "checking":
       return `正在检查更新，当前版本 v${installedVersion}。`;
     case "available":
-      return `发现新版本 v${update.version || "-"}，当前版本为 v${installedVersion}。`;
+      return `发现新版本 v${update.version || "-"}，当前版本 v${installedVersion}。`;
     case "not-available":
       return `当前版本 v${installedVersion} 已是最新版本。`;
     case "downloading":
-      return `正在下载并准备安装 v${update.version || "-"}，当前进度 ${Math.round(update.downloadProgress)}%。`;
+      return `正在下载 v${update.version || "-"}，进度 ${Math.round(update.downloadProgress)}%。`;
     case "downloaded":
-      return `新版本 v${update.version || "-"} 已下载完成，可以立即重启安装。`;
+      return `v${update.version || "-"} 已下载完成，可立即安装。`;
     case "installing":
-      return `正在安装 v${update.version || "-"}，应用会在安装过程中重启。`;
+      return `正在安装 v${update.version || "-"}。`;
     case "error":
       return update.errorMessage || "检查更新失败，请稍后重试。";
     default:
-      return `当前版本 v${installedVersion}，尚未执行更新检查。`;
+      return `当前版本 v${installedVersion}，尚未检查更新。`;
   }
 }
 

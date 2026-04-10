@@ -1,12 +1,8 @@
-/* ========== Design System - Minimax-inspired with Pink Theme ========== */
-/* 配色：粉色主题 + 白/黑双主题支持 */
-
 :root {
   color-scheme: light;
   --title-bar-height: 40px;
   --sidebar-width: 248px;
 
-  /* Brand Colors - Pink Theme */
   --brand-50: #fff4f7;
   --brand-100: #ffe8ee;
   --brand-200: #ffd2de;
@@ -17,7 +13,6 @@
   --brand-700: #d94674;
   --brand-800: #c4355e;
 
-  /* Light Theme - White/Clean Background */
   --bg-base: #fafbfc;
   --bg-canvas: #ffffff;
   --bg-soft: #f5f6f8;
@@ -26,7 +21,6 @@
   --bg-card-strong: #ffffff;
   --bg-elevated: #ffffff;
 
-  /* Functional Backgrounds */
   --bg-accent: rgba(251, 114, 153, 0.06);
   --bg-accent-strong: rgba(251, 114, 153, 0.1);
   --bg-info: rgba(86, 126, 255, 0.06);
@@ -34,7 +28,6 @@
   --bg-warning: rgba(245, 158, 11, 0.06);
   --bg-danger: rgba(239, 68, 68, 0.06);
 
-  /* Text Colors - Light Theme */
   --text-primary: #1a1a1a;
   --text-secondary: #525252;
   --text-tertiary: #737373;
@@ -42,13 +35,11 @@
   --text-inverse: #ffffff;
   --text-on-brand: #ffffff;
 
-  /* Border Colors */
   --border-subtle: rgba(0, 0, 0, 0.06);
   --border-default: rgba(0, 0, 0, 0.1);
   --border-strong: rgba(0, 0, 0, 0.15);
   --border-focus: rgba(251, 114, 153, 0.4);
 
-  /* Semantic Colors */
   --success: #22a866;
   --success-bg: rgba(34, 168, 102, 0.08);
   --warning: #d58918;
@@ -58,14 +49,12 @@
   --info: #567eff;
   --info-bg: rgba(86, 126, 255, 0.08);
 
-  /* Elevation - Subtle Shadows */
   --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.04);
   --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.06);
   --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.08);
   --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.1);
   --shadow-xl: 0 16px 48px rgba(0, 0, 0, 0.12);
 
-  /* Settings Surfaces */
   --settings-bg: #f6f7fa;
   --settings-sidebar-bg: rgba(255, 255, 255, 0.92);
   --settings-panel-bg: rgba(255, 255, 255, 0.92);
@@ -82,7 +71,6 @@
   --settings-accent-bg: rgba(251, 114, 153, 0.08);
   --settings-accent-border: rgba(251, 114, 153, 0.18);
 
-  /* Border Radius */
   --radius-sm: 8px;
   --radius-md: 12px;
   --radius-lg: 16px;
@@ -91,17 +79,14 @@
   --radius-3xl: 32px;
   --radius-pill: 999px;
 
-  /* Typography */
   --font-sans: "Inter", "Plus Jakarta Sans", "Manrope", "PingFang SC", "Noto Sans SC", "Microsoft YaHei", sans-serif;
   --font-mono: "JetBrains Mono", "SF Mono", "Consolas", monospace;
 
-  /* Transitions */
   --transition-fast: 120ms ease;
   --transition-base: 180ms ease;
   --transition-slow: 240ms ease;
 }
 
-/* Dark Theme Support */
 [data-theme="dark"] {
   color-scheme: dark;
 
@@ -152,8 +137,6 @@
   --settings-accent-bg: rgba(251, 114, 153, 0.12);
   --settings-accent-border: rgba(251, 114, 153, 0.24);
 }
-
-/* ========== Base Styles ========== */
 
 *,
 *::before,
@@ -221,16 +204,12 @@ textarea {
   min-height: 100vh;
 }
 
-/* ========== App Shell ========== */
-
 .app-shell {
   display: flex;
   min-height: 100vh;
   height: 100vh;
   overflow: hidden;
 }
-
-/* ========== Title Bar ========== */
 
 .title-bar {
   position: fixed;
@@ -310,8 +289,6 @@ textarea {
   color: #ffffff;
 }
 
-/* ========== Sidebar ========== */
-
 .sidebar {
   position: fixed;
   top: var(--title-bar-height);
@@ -358,7 +335,6 @@ textarea {
   color: var(--text-primary);
 }
 
-/* Navigation */
 .nav-group-label {
   padding: 8px 12px;
   font-size: 11px;
@@ -442,7 +418,6 @@ textarea {
   text-overflow: ellipsis;
 }
 
-/* Live Panel */
 .live-panel {
   margin-top: auto;
   padding: 16px;
@@ -520,8 +495,6 @@ textarea {
   box-shadow: 0 0 8px rgba(34, 168, 102, 0.4);
 }
 
-/* ========== Content Area ========== */
-
 .content {
   flex: 1;
   min-width: 0;
@@ -546,8 +519,6 @@ textarea {
   padding-left: 24px;
   padding-right: 24px;
 }
-
-/* ========== Page Header ========== */
 
 .page-header {
   position: sticky;
@@ -592,8 +563,6 @@ textarea {
   max-width: 600px;
 }
 
-/* ========== Layout Components ========== */
-
 .library-page,
 .video-detail-page,
 .settings-grid {
@@ -608,7 +577,6 @@ textarea {
   gap: 20px;
 }
 
-/* Section Container - Less card-like, more subtle separation */
 .section {
   padding: 24px 0;
 }
@@ -619,8 +587,6 @@ textarea {
   font-weight: 700;
   color: var(--text-primary);
 }
-
-/* ========== Form Elements ========== */
 
 .input-row {
   display: grid;
@@ -742,8 +708,6 @@ textarea {
   line-height: 1.6;
 }
 
-/* ========== Buttons ========== */
-
 .primary-button,
 .secondary-button,
 .tertiary-button {
@@ -813,8 +777,6 @@ textarea {
   background: rgba(239, 68, 68, 0.12);
 }
 
-/* ========== Status & Badges ========== */
-
 .helper-chip,
 .mini-chip,
 .video-platform-badge,
@@ -860,8 +822,6 @@ textarea {
   background: var(--bg-subtle);
 }
 
-/* ========== Cards - Minimal, Less Card-like ========== */
-
 .card {
   border-radius: var(--radius-xl);
   background: var(--bg-canvas);
@@ -888,7 +848,6 @@ textarea {
   color: var(--text-primary);
 }
 
-/* Grid Card - Lighter, more subtle */
 .grid-card {
   position: relative;
   border-radius: var(--radius-xl);
@@ -907,7 +866,6 @@ textarea {
   background: transparent;
 }
 
-/* Video Grid */
 .video-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
@@ -1115,8 +1073,6 @@ textarea {
   overflow: hidden;
 }
 
-/* ========== Filter Pills ========== */
-
 .filter-pill-row {
   display: flex;
   flex-wrap: wrap;
@@ -1197,8 +1153,6 @@ textarea {
   line-height: 1.6;
 }
 
-/* ========== Progress Bar ========== */
-
 .progress-bar-wrapper {
   display: grid;
   gap: 12px;
@@ -1244,8 +1198,6 @@ textarea {
   font-size: 0.85rem;
   color: var(--text-secondary);
 }
-
-/* ========== Timeline ========== */
 
 .timeline {
   display: grid;
@@ -1301,8 +1253,6 @@ textarea {
   color: var(--text-secondary);
   line-height: 1.5;
 }
-
-/* ========== Settings Page - New Layout ========== */
 
 .settings-page-wrapper {
   display: grid;
@@ -1739,7 +1689,6 @@ textarea {
   color: var(--settings-text-strong);
 }
 
-/* Overview Section */
 .overview-status-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
@@ -1941,7 +1890,6 @@ textarea {
   gap: 12px;
 }
 
-/* Settings Form Elements */
 .settings-form-group {
   display: grid;
   gap: 18px;
@@ -2007,13 +1955,11 @@ textarea {
   color: var(--settings-text-soft);
 }
 
-/* Settings Env Grid */
 .settings-env-grid {
   grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
   gap: 12px;
 }
 
-/* Settings CUDA Section */
 .settings-cuda-section {
   padding: 24px;
   background: var(--settings-muted-bg);
@@ -2047,8 +1993,6 @@ textarea {
   flex: 1;
   min-width: 180px;
 }
-
-/* ========== Old Settings Styles (Keep for compatibility) ========== */
 
 .settings-grid {
   grid-template-columns: 1fr;
@@ -2153,8 +2097,6 @@ textarea {
     grid-template-columns: 1fr;
   }
 }
-
-/* ========== Video Detail Page ========== */
 
 .video-detail-page {
   display: grid;
@@ -2432,8 +2374,6 @@ textarea {
   color: var(--text-tertiary);
 }
 
-/* ========== Result Count Badge ========== */
-
 .result-count {
   display: inline-flex;
   align-items: center;
@@ -2444,8 +2384,6 @@ textarea {
   font-size: 0.75rem;
   font-weight: 600;
 }
-
-/* ========== Environment Panel ========== */
 
 .env-panel {
   margin-bottom: 20px;
@@ -2508,8 +2446,6 @@ textarea {
   color: var(--info);
 }
 
-/* ========== CUDA Panel ========== */
-
 .cuda-control-panel {
   margin-top: 20px;
 }
@@ -2557,8 +2493,6 @@ textarea {
   background: var(--bg-accent);
 }
 
-/* ========== Logs & Control ========== */
-
 .log-viewer {
   max-height: 400px;
   font-family: var(--font-mono);
@@ -2578,8 +2512,6 @@ textarea {
   gap: 8px;
   margin-bottom: 16px;
 }
-
-/* ========== Empty States ========== */
 
 .empty-state-card {
   text-align: center;
@@ -2621,8 +2553,6 @@ textarea {
   animation: spin 1s linear infinite;
 }
 
-/* ========== Status Messages ========== */
-
 .submit-status,
 .action-status {
   padding: 12px 16px;
@@ -2632,8 +2562,6 @@ textarea {
   color: var(--brand-700);
   font-size: 0.9rem;
 }
-
-/* ========== Probe Preview ========== */
 
 .probe-preview {
   display: grid;
@@ -2669,8 +2597,6 @@ textarea {
   color: var(--text-tertiary);
 }
 
-/* ========== Task Form ========== */
-
 .task-form {
   display: grid;
   gap: 16px;
@@ -2682,8 +2608,6 @@ textarea {
   gap: 12px;
   align-items: end;
 }
-
-/* ========== Summary / Overview Cards ========== */
 
 .summary-metric {
   display: grid;
@@ -2775,8 +2699,6 @@ textarea {
   border-color: rgba(251, 114, 153, 0.14);
 }
 
-/* ========== Bullet List ========== */
-
 .bullet-list {
   display: grid;
   gap: 10px;
@@ -2788,8 +2710,6 @@ textarea {
   color: var(--text-secondary);
   line-height: 1.6;
 }
-
-/* ========== Transcript ========== */
 
 .transcript {
   margin: 0;
@@ -2805,8 +2725,6 @@ textarea {
   white-space: pre-wrap;
   line-height: 1.7;
 }
-
-/* ========== Task History ========== */
 
 .task-history-list {
   display: grid;
@@ -2883,8 +2801,6 @@ textarea {
   color: var(--text-primary);
   font-weight: 600;
 }
-
-/* ========== Progress Events ========== */
 
 .progress-stage-card {
   border-radius: var(--radius-lg);
@@ -2980,8 +2896,6 @@ textarea {
   color: var(--text-tertiary);
   font-size: 0.8rem;
 }
-
-/* ========== Update Dialog ========== */
 
 .update-dialog-overlay {
   position: fixed;
@@ -3190,8 +3104,6 @@ textarea {
   color: var(--text-secondary);
 }
 
-/* ========== Animations ========== */
-
 @keyframes fade-up {
   from {
     opacity: 0;
@@ -3229,8 +3141,6 @@ textarea {
   }
 }
 
-/* ========== Focus States ========== */
-
 :focus-visible {
   outline: 2px solid var(--brand-500);
   outline-offset: 2px;
@@ -3239,8 +3149,6 @@ textarea {
 ::selection {
   background: var(--bg-accent-strong);
 }
-
-/* ========== Scrollbar ========== */
 
 ::-webkit-scrollbar {
   width: 8px;
@@ -3264,8 +3172,6 @@ textarea {
 ::-webkit-scrollbar-corner {
   background: transparent;
 }
-
-/* ========== Responsive ========== */
 
 @media (max-width: 1200px) {
   .library-topbar,

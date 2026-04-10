@@ -84,9 +84,7 @@ export function SettingsPage({
           setServiceStatus("服务接口不可用，已切换为本地日志读取。");
           return;
         }
-      } catch {
-        // Ignore local fallback errors and surface the original request error below.
-      }
+      } catch {}
       setLogOutput(error instanceof Error ? error.message : "读取日志失败");
     }
   }
@@ -175,7 +173,7 @@ export function SettingsPage({
             <div className="settings-nav-brand-copy">
               <span className="settings-nav-brand-kicker">设置</span>
               <strong>管理应用与运行配置</strong>
-              <p>统一调整目录、模型、服务与环境状态，让常用设置保持清晰可读。</p>
+              <p>调整目录、模型、服务与环境配置。</p>
             </div>
             <div className="settings-nav-brand-metrics">
               <div className="settings-nav-metric">
@@ -275,16 +273,14 @@ export function SettingsPage({
             <section className="settings-category-section">
               <header className="settings-category-header">
                 <h2>设置总览</h2>
-                <p>集中查看当前配置、运行状态和常用操作。</p>
+                <p>查看当前配置、运行状态和常用操作。</p>
               </header>
 
               <div className="settings-story-card">
                 <div className="settings-story-copy">
                   <span className="settings-story-kicker">概览</span>
                   <h3>当前配置与运行状态</h3>
-                  <p>
-                    这里优先展示运行时、模型、摘要模式和服务状态。需要排障时，可以直接切到环境检测或日志与控制。
-                  </p>
+                  <p>这里展示运行时、模型、摘要模式和服务状态。排障时请切换到环境检测或日志。</p>
                 </div>
                 <div className="settings-story-stats">
                   <div className="settings-story-stat">
@@ -429,13 +425,13 @@ export function SettingsPage({
             <section className="settings-category-section">
               <header className="settings-category-header">
                 <h2>基础设置</h2>
-                <p>服务监听地址和端口配置</p>
+                <p>服务监听地址和端口配置。</p>
               </header>
               <div className="settings-form-group">
                 <label className="settings-input-group">
                   <span className="settings-input-label">监听地址</span>
                   <input className="settings-input-field" value={form.host} onChange={(e) => setForm({ ...form, host: e.target.value })} />
-                  <span className="settings-input-caption">服务绑定的 IP 地址，通常为 127.0.0.1</span>
+                  <span className="settings-input-caption">服务绑定的 IP 地址，默认为 127.0.0.1</span>
                 </label>
                 <label className="settings-input-group">
                   <span className="settings-input-label">监听端口</span>
@@ -450,23 +446,23 @@ export function SettingsPage({
             <section className="settings-category-section">
               <header className="settings-category-header">
                 <h2>目录设置</h2>
-                <p>数据存储和缓存目录配置</p>
+                <p>数据存储和缓存目录配置。</p>
               </header>
               <div className="settings-form-group">
                 <label className="settings-input-group">
                   <span className="settings-input-label">数据目录</span>
                   <input className="settings-input-field" value={String(form.data_dir)} onChange={(e) => setForm({ ...form, data_dir: e.target.value })} />
-                  <span className="settings-input-caption">存储视频摘要和元数据的目录</span>
+                  <span className="settings-input-caption">存储视频摘要和元数据</span>
                 </label>
                 <label className="settings-input-group">
                   <span className="settings-input-label">缓存目录</span>
                   <input className="settings-input-field" value={String(form.cache_dir)} onChange={(e) => setForm({ ...form, cache_dir: e.target.value })} />
-                  <span className="settings-input-caption">临时缓存文件存储位置</span>
+                  <span className="settings-input-caption">临时缓存文件</span>
                 </label>
                 <label className="settings-input-group">
                   <span className="settings-input-label">任务目录</span>
                   <input className="settings-input-field" value={String(form.tasks_dir)} onChange={(e) => setForm({ ...form, tasks_dir: e.target.value })} />
-                  <span className="settings-input-caption">任务历史记录存储目录</span>
+                  <span className="settings-input-caption">任务历史记录</span>
                 </label>
               </div>
             </section>
@@ -476,7 +472,7 @@ export function SettingsPage({
             <section className="settings-category-section">
               <header className="settings-category-header">
                 <h2>模型设置</h2>
-                <p>Whisper 模型和推理设备配置</p>
+                <p>Whisper 模型和推理设备配置。</p>
               </header>
               <div className="settings-form-group">
                 <label className="settings-input-group">
@@ -486,7 +482,7 @@ export function SettingsPage({
                     <option value="cuda">GPU (CUDA)</option>
                     <option value="cpu">CPU</option>
                   </select>
-                  <span className="settings-input-caption">选择模型推理使用的设备，GPU 需要 CUDA 支持</span>
+                  <span className="settings-input-caption">选择推理设备，GPU 需要 CUDA 支持</span>
                 </label>
                 <label className="settings-input-group">
                   <span className="settings-input-label">模型模式</span>
@@ -499,7 +495,7 @@ export function SettingsPage({
                 <label className="settings-input-group">
                   <span className="settings-input-label">固定模型</span>
                   <input className="settings-input-field" value={form.fixed_model} onChange={(e) => setForm({ ...form, fixed_model: e.target.value })} placeholder="tiny / base / small / medium / large-v3" />
-                  <span className="settings-input-caption">Whisper 模型名称，较小模型速度快但精度低</span>
+                  <span className="settings-input-caption">Whisper 模型名称，小模型速度快但精度低</span>
                 </label>
               </div>
             </section>
@@ -509,7 +505,7 @@ export function SettingsPage({
             <section className="settings-category-section">
               <header className="settings-category-header">
                 <h2>LLM 设置</h2>
-                <p>大语言模型摘要配置</p>
+                <p>大语言模型摘要配置。</p>
               </header>
               <div className="settings-form-group">
                 <label className="settings-input-group">
@@ -556,7 +552,7 @@ export function SettingsPage({
             <section className="settings-category-section">
               <header className="settings-category-header">
                 <h2>摘要参数</h2>
-                <p>摘要生成算法参数配置</p>
+                <p>摘要生成算法参数配置。</p>
               </header>
               <div className="settings-form-group">
                 <label className="settings-input-group">
@@ -602,7 +598,7 @@ export function SettingsPage({
             <section className="settings-category-section">
               <header className="settings-category-header">
                 <h2>高级设置</h2>
-                <p>CUDA 变体和运行时配置</p>
+                <p>CUDA 变体和运行时配置。</p>
               </header>
               <div className="settings-form-group">
                 <label className="settings-input-group">
@@ -645,7 +641,7 @@ export function SettingsPage({
             <section className="settings-category-section">
               <header className="settings-category-header">
                 <h2>运行环境</h2>
-                <p>环境检测信息和 CUDA 配置</p>
+                <p>环境检测信息和 CUDA 配置。</p>
               </header>
               <div className="env-summary-grid settings-env-grid">
                 <div className="metric-card">
@@ -762,7 +758,7 @@ export function SettingsPage({
                         setCudaStage("CUDA 安装失败");
                         setCudaProgress((current) => (current > 0 ? current : 12));
                         setCudaStatus(error instanceof Error ? error.message : "CUDA 安装失败");
-                        setCudaDetail("安装在运行时依赖准备或 PyTorch CUDA 依赖下载阶段失败。请查看下方输出和服务日志。");
+                        setCudaDetail("安装依赖失败。请查看下方输出和服务日志。");
                       }
                     }}
                   >
@@ -795,7 +791,7 @@ export function SettingsPage({
                     ))}
                   </div>
                   <p className="cuda-helper-text">
-                    当前后端仍是同步安装接口，所以阶段进度是基于安装流程的可视化估计；最终结果以下方安装输出和重新检测结果为准。
+                    阶段进度为估计值；最终结果以安装输出和重新检测结果为准。
                   </p>
                 </div>
               ) : null}
@@ -815,10 +811,10 @@ export function SettingsPage({
               ) : null}
               {(cudaStatus.includes("完成") || cudaProgress >= 100) ? (
                 <div className="cuda-next-steps">
-                  <strong>下一步建议</strong>
-                  <span>1. 点击"重新检测"确认当前 GPU runtime 已就绪。</span>
-                  <span>2. 确认"运行时通道"已经切到目标 GPU 通道。</span>
-                  <span>3. 若提示需要重启，请重启桌面应用后再开始转写任务。</span>
+                  <strong>下一步</strong>
+                  <span>1. 点击"重新检测"确认 GPU runtime 已就绪。</span>
+                  <span>2. 确认"运行时通道"已切换到目标 GPU 通道。</span>
+                  <span>3. 若提示需要重启，请重启应用后再开始转写任务。</span>
                 </div>
               ) : null}
             </section>
@@ -828,7 +824,7 @@ export function SettingsPage({
             <section className="settings-category-section">
               <header className="settings-category-header">
                 <h2>日志与控制</h2>
-                <p>查看后端日志并控制服务</p>
+                <p>查看后端日志并控制服务。</p>
               </header>
               <div className="control-status-row">
                 <span className={`helper-chip ${serviceOnline ? "status-success" : "status-failed"}`}>{serviceOnline ? "服务在线" : "服务离线"}</span>
@@ -893,125 +889,125 @@ export function SettingsPage({
             </section>
           )}
 
-          <section className="settings-category-section">
-            <header className="settings-category-header">
-              <h2>桌面应用更新</h2>
-              <p>检查新版本并管理安装流程。</p>
-            </header>
-            <div className="settings-update-module">
-              <div className="settings-update-overview">
-                <div className="settings-update-copy">
-                  <span className="settings-story-kicker">Update</span>
-                  <h3>手动检查桌面端更新</h3>
-                  <p>{updateSummary}</p>
-                </div>
-                <div className="settings-update-badges">
-                  <span className="helper-chip">当前版本 v{desktop.version || "-"}</span>
-                  <span className={`helper-chip status-${updateStatusTone}`}>状态：{updateStatusLabel}</span>
-                  {updateInfo.version ? <span className="helper-chip">最新版本 v{updateInfo.version}</span> : null}
-                  {updateInfo.releaseDate ? <span className="helper-chip">发布时间 {formatShortDate(updateInfo.releaseDate)}</span> : null}
-                </div>
-              </div>
-
-              <div className="settings-update-grid">
-                <div className="settings-update-panel">
-                  <span className="settings-update-label">当前安装版本</span>
-                  <strong>v{desktop.version || "-"}</strong>
-                  <p>设置页内可直接检查更新，并沿用桌面端现有更新状态流。</p>
+          {activeCategory === "updates" && (
+            <section className="settings-category-section">
+              <header className="settings-category-header">
+                <h2>桌面应用更新</h2>
+                <p>检查新版本并管理安装。</p>
+              </header>
+              <div className="settings-update-module">
+                <div className="settings-update-overview">
+                  <div className="settings-update-copy">
+                    <span className="settings-story-kicker">Update</span>
+                    <h3>手动检查桌面端更新</h3>
+                    <p>{updateSummary}</p>
+                  </div>
+                  <div className="settings-update-badges">
+                    <span className="helper-chip">当前版本 v{desktop.version || "-"}</span>
+                    <span className={`helper-chip status-${updateStatusTone}`}>状态：{updateStatusLabel}</span>
+                    {updateInfo.version ? <span className="helper-chip">最新版本 v{updateInfo.version}</span> : null}
+                    {updateInfo.releaseDate ? <span className="helper-chip">发布时间 {formatShortDate(updateInfo.releaseDate)}</span> : null}
+                  </div>
                 </div>
 
-                <div className={`settings-update-panel ${updateInfo.status === "available" || updateInfo.status === "downloaded" ? "is-highlight" : ""}`}>
-                  <span className="settings-update-label">检查结果</span>
-                  <strong>
-                    {updateUnsupported
-                      ? "当前环境不可更新"
-                      : updateInfo.status === "available" || updateInfo.status === "downloaded"
-                      ? `发现 v${updateInfo.version || "-"}`
-                      : updateInfo.status === "not-available"
-                        ? "已是最新版本"
+                <div className="settings-update-grid">
+                  <div className="settings-update-panel">
+                    <span className="settings-update-label">当前安装版本</span>
+                    <strong>v{desktop.version || "-"}</strong>
+                    <p>检查、下载和安装更新。</p>
+                  </div>
+
+                  <div className={`settings-update-panel ${updateInfo.status === "available" || updateInfo.status === "downloaded" ? "is-highlight" : ""}`}>
+                    <span className="settings-update-label">检查结果</span>
+                    <strong>
+                      {updateUnsupported
+                        ? "当前环境不可更新"
+                        : updateInfo.status === "available" || updateInfo.status === "downloaded"
+                        ? `发现 v${updateInfo.version || "-"}`
+                        : updateInfo.status === "not-available"
+                          ? "已是最新版本"
+                          : updateInfo.status === "error"
+                            ? "检查失败"
+                            : updateInfo.status === "checking"
+                              ? "正在检查"
+                              : updateInfo.status === "downloading"
+                                ? `下载中 ${Math.round(updateInfo.downloadProgress)}%`
+                                : updateInfo.status === "installing"
+                                  ? "正在安装"
+                                  : "等待检查"}
+                    </strong>
+                    <p>
+                      {updateInfo.status === "available" || updateInfo.status === "downloaded"
+                        ? `当前 v${desktop.version || "-"}，最新 v${updateInfo.version || "-"}`
                         : updateInfo.status === "error"
-                          ? "检查失败"
-                          : updateInfo.status === "checking"
-                            ? "正在检查"
-                            : updateInfo.status === "downloading"
-                              ? `下载中 ${Math.round(updateInfo.downloadProgress)}%`
-                              : updateInfo.status === "installing"
-                                ? "正在安装"
-                                : "等待检查"}
-                  </strong>
-                  <p>
-                    {updateInfo.status === "available" || updateInfo.status === "downloaded"
-                      ? `当前 v${desktop.version || "-"}，最新 v${updateInfo.version || "-"}`
-                      : updateInfo.status === "error"
-                        ? (updateInfo.errorMessage || "更新检查失败，请重试。")
-                        : updateSummary}
-                  </p>
+                          ? (updateInfo.errorMessage || "更新检查失败，请重试。")
+                          : updateSummary}
+                    </p>
+                  </div>
                 </div>
-              </div>
 
-              <div className="settings-update-actions">
-                <button
-                  className="primary-button"
-                  type="button"
-                  disabled={!updateSupported || updateActionBusy}
-                  onClick={async () => {
-                    try {
-                      if (!updateSupported) {
-                        return;
-                      }
-                      if (updateInfo.status === "available") {
-                        await onDownloadUpdate();
-                        return;
-                      }
-                      if (updateInfo.status === "downloaded") {
-                        await onInstallUpdate();
-                        return;
-                      }
-                      await onCheckUpdate();
-                    } catch {
-                      // 更新状态由上层和桌面端事件统一维护，这里不重复落一套本地错误状态。
-                    }
-                  }}
-                >
-                  {!updateSupported
-                    ? "当前环境不支持自动更新"
-                    : updateInfo.status === "checking"
-                      ? "检查中..."
-                      : updateInfo.status === "downloading"
-                        ? `下载中... ${Math.round(updateInfo.downloadProgress)}%`
-                      : updateInfo.status === "installing"
-                          ? "安装中..."
-                          : updateInfo.status === "available"
-                            ? "下载并重启安装"
-                            : updateInfo.status === "downloaded"
-                              ? "立即重启安装"
-                              : updateInfo.status === "error"
-                                ? "重试检查"
-                                : "检查更新"}
-                </button>
+                <div className="settings-update-actions">
+                  <button
+                    className="primary-button"
+                    type="button"
+                    disabled={!updateSupported || updateActionBusy}
+                    onClick={async () => {
+                      try {
+                        if (!updateSupported) {
+                          return;
+                        }
+                        if (updateInfo.status === "available") {
+                          await onDownloadUpdate();
+                          return;
+                        }
+                        if (updateInfo.status === "downloaded") {
+                          await onInstallUpdate();
+                          return;
+                        }
+                        await onCheckUpdate();
+                      } catch {}
+                    }}
+                  >
+                    {!updateSupported
+                      ? "当前环境不支持自动更新"
+                      : updateInfo.status === "checking"
+                        ? "检查中..."
+                        : updateInfo.status === "downloading"
+                          ? `下载中... ${Math.round(updateInfo.downloadProgress)}%`
+                        : updateInfo.status === "installing"
+                            ? "安装中..."
+                            : updateInfo.status === "available"
+                              ? "下载并重启安装"
+                              : updateInfo.status === "downloaded"
+                                ? "立即重启安装"
+                                : updateInfo.status === "error"
+                                  ? "重试检查"
+                                  : "检查更新"}
+                  </button>
 
-                <button
-                  className="secondary-button"
-                  type="button"
-                  disabled={!updateSupported}
-                  onClick={onOpenUpdateDialog}
-                >
-                  查看更新详情
-                </button>
-              </div>
-
-              {updateInfo.status === "available" || updateInfo.status === "downloaded" ? (
-                <div className="settings-update-next-step">
-                  <strong>下一步</strong>
-                  <span>
-                    {updateInfo.status === "available"
-                      ? "已检测到新版本，继续后会下载更新，并在下载完成后自动重启安装。"
-                      : "更新已下载完成，可以立即重启应用完成安装。"}
-                  </span>
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    disabled={!updateSupported}
+                    onClick={onOpenUpdateDialog}
+                  >
+                    查看更新详情
+                  </button>
                 </div>
-              ) : null}
-            </div>
-          </section>
+
+                {updateInfo.status === "available" || updateInfo.status === "downloaded" ? (
+                  <div className="settings-update-next-step">
+                    <strong>下一步</strong>
+                    <span>
+                      {updateInfo.status === "available"
+                        ? "已检测到新版本，继续后会下载更新并自动重启安装。"
+                        : "更新已下载完成，可以立即重启应用完成安装。"}
+                    </span>
+                  </div>
+                ) : null}
+              </div>
+            </section>
+          )}
         </div>
       </main>
     </div>

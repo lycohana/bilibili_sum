@@ -55,19 +55,14 @@ export function UpdateDialog({
     setIsChecking(true);
     try {
       await onCheck();
-    } catch (error) {
-      // 错误已在 main.ts 中处理并更新状态，这里不需要额外处理
-      // 状态会自动变为 "error" 并显示错误信息
-    }
+    } catch {}
   };
 
   const handleDownload = async () => {
     setIsDownloading(true);
     try {
       await onDownload();
-    } catch (error) {
-      // 错误已在 main.ts 中处理并更新状态
-    }
+    } catch {}
   };
 
   const renderErrorAlert = () => {
@@ -191,11 +186,9 @@ export function UpdateDialog({
       return <p className="release-notes-empty">暂无更新日志</p>;
     }
 
-    // 尝试解析 Markdown 格式的更新日志
     const notes = updateInfo.releaseNotes;
     const lines = notes.split("\n");
     const formattedLines = lines.map((line: string, index: number) => {
-      // 处理标题
       if (line.startsWith("### ")) {
         return <h4 key={index}>{line.slice(4)}</h4>;
       }
@@ -205,15 +198,12 @@ export function UpdateDialog({
       if (line.startsWith("# ")) {
         return <h2 key={index}>{line.slice(2)}</h2>;
       }
-      // 处理列表项
       if (line.startsWith("- ") || line.startsWith("* ")) {
         return <li key={index}>{line.slice(2)}</li>;
       }
-      // 处理空行
       if (line.trim() === "") {
         return <br key={index} />;
       }
-      // 普通文本
       return <p key={index}>{line}</p>;
     });
 
