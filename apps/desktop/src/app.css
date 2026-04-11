@@ -1057,6 +1057,27 @@ textarea {
   gap: 8px;
 }
 
+.video-card-badges {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.video-page-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 8px;
+  border-radius: var(--radius-pill);
+  color: var(--brand-700);
+  background: var(--bg-accent);
+  border: 1px solid var(--accent-border);
+  font-size: 0.7rem;
+  font-weight: 700;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
 .video-card h3 {
   margin: 0;
   font-size: 0.95rem;
