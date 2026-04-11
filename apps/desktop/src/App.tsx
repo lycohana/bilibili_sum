@@ -303,16 +303,6 @@ export function App() {
 
       <main className="content">
         <div className={`content-frame ${isSettingsRoute ? "content-frame-settings" : ""}`}>
-          {!isLibraryRoute ? (
-            <header className="page-header">
-              <div className="page-header-content">
-                <p className="eyebrow">{pageMeta.eyebrow}</p>
-                <h2>{pageMeta.title}</h2>
-                <p className="page-description">{pageMeta.description}</p>
-              </div>
-            </header>
-          ) : null}
-
           {snapshot.error && !snapshot.serviceOnline ? (
             <section className="grid-card empty-state-card">
               <div className="spinner"></div>

@@ -9,8 +9,12 @@ export type TimelineItem = {
 export type TaskResult = {
   overview: string;
   transcript_text: string;
+  segment_summaries: string[];
   key_points: string[];
   timeline: TimelineItem[];
+  artifacts: Record<string, string>;
+  llm_prompt_tokens?: number | null;
+  llm_completion_tokens?: number | null;
   llm_total_tokens?: number | null;
 };
 
