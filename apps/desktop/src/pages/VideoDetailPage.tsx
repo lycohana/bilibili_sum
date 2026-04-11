@@ -63,6 +63,10 @@ function compareTasksByRecent(left: TaskSummary, right: TaskSummary) {
   return new Date(right.created_at).getTime() - new Date(left.created_at).getTime();
 }
 
+function hasGeneratedResult(task: TaskSummary) {
+  return task.status === "completed";
+}
+
 function buildTaskSnapshot(task?: Pick<TaskSummary, "created_at" | "updated_at" | "llm_total_tokens" | "task_duration_seconds"> | null): SnapshotMetric[] {
   if (!task) {
     return [];
@@ -325,6 +329,14 @@ export function VideoDetailPage({ onRefresh }: { onRefresh(): void }) {
 
   const orderedTasks = useMemo(() => [...tasks].sort(compareTasksByRecent), [tasks]);
   const availablePages = video?.pages ?? [];
+  const pageGeneratedMap = useMemo(() => {
+    const nextMap = new Map<number, boolean>();
+    for (const task of orderedTasks) {
+      const pageNumber = task.page_number ?? 1;
+      nextMap.set(pageNumber, Boolean(nextMap.get(pageNumber)) || hasGeneratedResult(task));
+    }
+    return nextMap;
+  }, [orderedTasks]);
   const effectivePageNumber = selectedPageNumber ?? availablePages[0]?.page ?? null;
   const currentPage = availablePages.find((page) => page.page === effectivePageNumber) ?? null;
   const pageTasks = useMemo(() => {
@@ -614,7 +626,7 @@ export function VideoDetailPage({ onRefresh }: { onRefresh(): void }) {
                 >
                   {availablePages.map((page) => (
                     <option key={page.page} value={page.page}>
-                      {page.title}
+                      {page.title}{pageGeneratedMap.get(page.page) ? " ✓" : ""}
                     </option>
                   ))}
                 </select>
