@@ -1,96 +1,97 @@
 # BriefVid
 
 [![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/downloads/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Code style: Ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://github.com/astral-sh/ruff)
+[![License: MIT](https://img.shields.io/badge/license-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Platform: Windows](https://img.shields.io/badge/platform-Windows-lightgrey.svg)](#)
 
-**本地优先的视频总结工具** —— 输入视频链接，自动获取结构化摘要、转写文本和任务记录。
+本地优先的视频知识工作台。输入 B 站视频链接，自动完成探测、下载、转写、结构化摘要，并把结果整理成可回看、可复用的知识卡片与任务历史。
 
-![Features](https://img.shields.io/badge/features-B站支持|转写|摘要|WebUI-green)
-![Platform](https://img.shields.io/badge/platform-Windows-lightgrey)
+![BriefVid 首页](docs/pic/mainpage.png)
+![BriefVid 视频详情页](docs/pic/videopage.png)
 
----
+## 产品定位
 
-## 📖 目录
+BriefVid 不是单纯的“字幕转写工具”，也不是只返回一段泛泛摘要的 LLM Demo。
 
-- [简介](#简介)
-- [功能特性](#功能特性)
-- [技术栈](#技术栈)
-- [快速开始](#快速开始)
-  - [环境要求](#环境要求)
-  - [安装依赖](#安装依赖)
-  - [配置环境变量](#配置环境变量)
-  - [启动方式](#启动方式)
-- [API 概览](#api 概览)
-- [命令行工具](#命令行工具)
-- [Windows 打包分发](#windows 打包分发)
-- [GPU/CUDA 支持](#gpucuda 支持)
-- [数据存储](#数据存储)
-- [项目结构](#项目结构)
-- [开发指南](#开发指南)
-- [限制与已知问题](#限制与已知问题)
-- [路线图](#路线图)
-- [贡献](#贡献)
-- [许可证](#许可证)
+它更像一个围绕视频内容整理建立的个人知识工作台：
 
----
+- 一次导入视频，沉淀为本地视频库
+- 一次处理任务，沉淀为可追溯的转写、摘要和章节结构
+- 同一个视频，可以反复刷新信息、重新转写、只重跑摘要
+- 所有结果默认落本地，便于归档、复查和后续二次处理
 
-## 简介
+## 核心能力
 
-BriefVid 是一个本地优先的视频总结工具，面向 B 站视频链接，提供下载、转写、结构化摘要、任务记录和本地 Web UI。
+- 视频探测与入库：解析 B 站链接，缓存封面、标题、时长等元数据
+- 后台任务处理：下载音频、执行转写、生成结构化摘要，并保存完整任务历史
+- 知识卡片视图：将概览、要点、章节拆成适合阅读和复用的内容单元
+- 摘要结果视图：保留更完整的概览、时间轴和全文转写
+- 任务版本管理：支持查看历史版本、删除任务、刷新源站信息
+- 双重重跑机制：
+  - `重新生成摘要`：复用现有转写与分段，只重新调用 LLM
+  - `重新转写生成摘要`：重新抓取音频、重新转写，再生成新摘要
+- 实时进度反馈：通过 REST + SSE 同步任务状态与阶段事件
+- 本地优先部署：桌面端可直接拉起本地服务，Windows 分发不依赖用户预装 Python
 
-这个仓库已经可以作为一个可运行的开源项目使用，而不只是原型代码。
+## 适合谁
 
----
+- 想把长视频整理成结构化知识的人
+- 需要快速回顾视频重点、章节推进和原始转写的人
+- 想把视频内容纳入个人资料库、本地知识库或后续工作流的人
 
-## 功能特性
+## 产品结构
 
-- 🎯 **视频链接解析** - 输入 B 站视频链接并自动探测视频信息
-- 🖼️ **封面缓存** - 自动缓存封面并维护本地视频库
-- ⚙️ **后台任务处理** - 后台执行下载、转写、摘要任务
-- 📡 **实时进度流** - 支持 REST API 和 SSE 任务进度流
-- 📄 **结果导出** - 结果落盘为 `transcript.txt` 和 `summary.json`
-- 🔧 **设置管理** - 设置页支持查看后端日志、关闭服务、安装 CUDA 支持
-- 📦 **独立分发** - Windows 分发包不依赖用户本机 Python
+### 1. 视频库
 
----
+统一管理已探测和已处理的视频资源，保留封面、状态、最新任务结果和更新时间。
+
+### 2. 视频详情页
+
+围绕单个视频构建完整工作台：
+
+- 左侧查看核心概览和内嵌播放器
+- 右侧阅读关键要点
+- 下方浏览章节卡片并回跳播放器时间点
+- 顶部切换知识卡片、摘要结果、思维导图入口
+- 悬浮任务面板中查看实时进度与版本历史
+
+### 3. 设置页
+
+集中管理模型、运行时、CUDA 安装、服务日志与本地服务状态。
 
 ## 技术栈
 
-| 组件 | 技术 |
-|------|------|
-| **Backend** | FastAPI |
-| **Frontend** | React + TypeScript + Vite |
-| **Desktop Shell** | Electron |
-| **Persistence** | SQLite |
-| **Download** | `yt-dlp` |
-| **Transcription** | `faster-whisper` |
-| **LLM** | OpenAI-compatible API |
-| **Packaging** | PyInstaller onedir |
-
----
+| 模块 | 技术 |
+| --- | --- |
+| Desktop | Electron |
+| Frontend | React + TypeScript + Vite |
+| Backend | FastAPI |
+| Database | SQLite |
+| Download | `yt-dlp` |
+| Transcription | `faster-whisper` |
+| Summarization | OpenAI-compatible API / 本地规则降级 |
+| Packaging | PyInstaller onedir |
 
 ## 快速开始
 
 ### 环境要求
 
 - Python `3.12`
-- `uv`
 - Node.js `20+`
 - Windows 开发和打包环境最佳
-- 开发态建议本机可用 `ffmpeg`
-- 如果开启 LLM 摘要，需要可用的 OpenAI-compatible 接口
+- 建议可用 `ffmpeg`
+- 如需 LLM 摘要，需要可用的 OpenAI-compatible 接口
 
 ### 安装依赖
 
-推荐使用 `uv` 管理 Python 工作区环境：
+推荐：
 
 ```powershell
 uv sync --python 3.12 --all-packages
 npm install --prefix .\apps\desktop
 ```
 
-如果你暂时不想切到 `uv`，也可以沿用兼容方式：
+兼容方式：
 
 ```powershell
 python -m pip install -e .\packages\infra -e .\packages\core -e .\apps\service
@@ -103,7 +104,7 @@ npm install --prefix .\apps\desktop
 Copy-Item .env.example .env
 ```
 
-默认示例配置如下：
+示例：
 
 ```env
 VIDEO_SUM_HOST=127.0.0.1
@@ -117,359 +118,109 @@ VIDEO_SUM_LLM_MODEL=qwen3.5-plus
 VIDEO_SUM_LLM_API_KEY=replace-with-your-api-key
 ```
 
-> 💡 **提示**: 如果暂时不想接 LLM，把 `VIDEO_SUM_LLM_ENABLED=false` 即可，服务会退回本地规则摘要。
+如果暂时不想接 LLM，可将 `VIDEO_SUM_LLM_ENABLED=false`，系统会回退到本地规则摘要。
 
-如果你使用 DashScope 兼容接口，常见排障点如下：
-
-- `VIDEO_SUM_LLM_BASE_URL` 保持为 `https://coding.dashscope.aliyuncs.com/v1`
-- `VIDEO_SUM_LLM_API_KEY` 需要填写有效的 DashScope AccessKey，而不是其他平台的 Key
-- 如果日志出现 `401 invalid_api_key` 或 `token expired`，现在服务会自动降级到本地规则摘要，但仍建议去设置页更新 Key
-
-### 启动方式
-
-#### 桌面端联调
-
-日常开发推荐直接在仓库根目录执行：
+### 启动开发环境
 
 ```powershell
 npm run dev
 ```
 
-这条命令会：
+这条命令会同时启动：
 
-- 启动 Vite 开发服务器
-- 启动 Electron 桌面壳
-- 由 Electron 自动拉起本地 Python 后端 `python -m video_sum_service`
+- Vite 渲染层
+- Electron 桌面壳
+- 本地 Python 后端服务
 
-#### 仅启动后端服务
+如果只想单独启动后端：
 
 ```powershell
 python -m video_sum_service
 ```
 
-或使用脚本：
+或：
 
 ```powershell
 .\scripts\run_service.ps1
 ```
 
-### 访问应用
+## 常用接口
 
-| 页面 | URL |
-|------|-----|
-| **首页** | `http://127.0.0.1:3838/` |
-| **设置** | `http://127.0.0.1:3838/settings` |
-| **健康检查** | `http://127.0.0.1:3838/health` |
-| **系统信息** | `http://127.0.0.1:3838/api/v1/system/info` |
+### 系统与设置
 
-当前桌面端已支持：
+- `GET /health`
+- `GET /api/v1/system/info`
+- `GET /api/v1/environment`
+- `GET /api/v1/settings`
+- `PUT /api/v1/settings`
+- `POST /api/v1/cuda/install`
 
-- 最小化与托盘常驻
-- 首次关闭时询问“隐藏到托盘/直接退出”并记住
-- 开机自启动开关
-- 自动拉起本地后端 `BriefVid.exe` 或开发态 Python 服务
+### 视频与任务
 
----
+- `POST /api/v1/videos/probe`
+- `GET /api/v1/videos`
+- `GET /api/v1/videos/{video_id}`
+- `DELETE /api/v1/videos/{video_id}`
+- `GET /api/v1/videos/{video_id}/tasks`
+- `POST /api/v1/videos/{video_id}/tasks`
+- `POST /api/v1/videos/{video_id}/tasks/resummary`
+- `GET /api/v1/tasks/{task_id}/result`
+- `GET /api/v1/tasks/{task_id}/events`
+- `GET /api/v1/tasks/{task_id}/events/stream`
+- `DELETE /api/v1/tasks/{task_id}`
 
-## API 概览
+## 输出结果
 
-### 系统接口
+每个任务都会在本地生成可复用结果文件：
 
-| 方法 | 路径 | 描述 |
-|------|------|------|
-| `GET` | `/health` | 健康检查 |
-| `GET` | `/api/v1/system/info` | 系统信息 |
-| `GET` | `/api/v1/system/logs` | 系统日志 |
-| `POST` | `/api/v1/system/shutdown` | 关闭服务 |
-| `GET` | `/api/v1/environment` | 环境信息 |
+- `transcript.txt`
+- `summary.json`
 
-### 设置接口
+其中 `summary.json` 同时包含：
 
-| 方法 | 路径 | 描述 |
-|------|------|------|
-| `GET` | `/api/v1/settings` | 获取设置 |
-| `PUT` | `/api/v1/settings` | 更新设置 |
-| `POST` | `/api/v1/cuda/install` | 安装 CUDA 支持 |
+- 标题
+- 结构化摘要
+- 分段信息
 
-### 视频接口
+这也是“只重新生成摘要”能力可以复用已有文本和分段的基础。
 
-| 方法 | 路径 | 描述 |
-|------|------|------|
-| `POST` | `/api/v1/videos/probe` | 探测视频信息 |
-| `GET` | `/api/v1/videos` | 获取视频列表 |
-| `GET` | `/api/v1/videos/{video_id}` | 获取视频详情 |
-| `DELETE` | `/api/v1/videos/{video_id}` | 删除视频 |
-| `GET` | `/api/v1/videos/{video_id}/tasks` | 获取视频任务列表 |
-| `POST` | `/api/v1/videos/{video_id}/tasks` | 创建视频任务 |
+## Windows 打包
 
-### 任务接口
-
-| 方法 | 路径 | 描述 |
-|------|------|------|
-| `POST` | `/api/v1/tasks` | 创建任务 |
-| `GET` | `/api/v1/tasks` | 获取任务列表 |
-| `GET` | `/api/v1/tasks/{task_id}` | 获取任务详情 |
-| `GET` | `/api/v1/tasks/{task_id}/result` | 获取任务结果 |
-| `GET` | `/api/v1/tasks/{task_id}/progress` | 获取任务进度 |
-| `GET` | `/api/v1/tasks/{task_id}/events` | 获取任务事件 |
-| `GET` | `/api/v1/tasks/{task_id}/events/stream` | SSE 事件流 |
-| `DELETE` | `/api/v1/tasks/{task_id}` | 删除任务 |
-
----
-
-## 命令行工具
-
-使用 PowerShell 脚本提交任务：
-
-```powershell
-.\scripts\submit_task.ps1 -Url "https://www.bilibili.com/video/BV1R6NFzXE1H/"
-```
-
-带标题提交：
-
-```powershell
-.\scripts\submit_task.ps1 `
-  -Url "https://www.bilibili.com/video/BV1R6NFzXE1H/" `
-  -Title "我被手表的睡眠评分，骗焦虑了好几年？【差评君】"
-```
-
----
-
-## Windows 打包分发
-
-Windows 分发主路线已经切到 `PyInstaller onedir`。
-
-如需构建完整桌面安装包，直接在仓库根目录执行：
+构建完整桌面包：
 
 ```powershell
 npm run package:win
 ```
 
-也可以使用同义命令：
+或：
 
 ```powershell
 npm run build:win
 ```
 
-### 构建流程
-
-`npm run package:win` 会自动完成整条桌面合包链路，顺序如下：
-
-1. 构建 React 渲染层，并输出到 `apps/web/static`
-2. 使用 `uv` 查找 `Python 3.12`
-3. 执行 `packaging/pyinstaller/build_onedir.py`，生成 Python 后端 `onedir` 包
-4. 编译 Electron 主进程与 preload
-5. 调用 `electron-builder` 生成 Windows 桌面分发产物
-
-可以把它理解为：
-
-> 先把 Python 后端打成 `onedir` sidecar，再把它打进 Electron 安装包。
-
-### 构建要求
-
-- 构建 Python 固定为 `3.12`
-- 建议当前机器可用真实的 `ffmpeg.exe` 和 `ffprobe.exe`
-- 如 `ffmpeg` 不在 `PATH`，可设置 `VIDEO_SUM_FFMPEG_DIR`
-- 需要本机已安装 `uv`
-
-### 单独构建后端 onedir
-
-```powershell
-python .\packaging\pyinstaller\build_onedir.py
-```
-
-产物位于：
-
-- `dist/BriefVid/BriefVid.exe`
-- `dist/BriefVid/_internal/...`
-
-### 桌面端产物
-
-完整桌面打包完成后，常见产物位于：
-
-- `dist/desktop/win-unpacked/BriefVid.exe`
-- `dist/desktop/BriefVid-<version>-win-x64-Setup.exe`
-
-当前 Windows 可执行文件与安装包图标来源于 `apps/web/static/favicon.ico`。
-
-更详细的打包说明见 [`packaging/pyinstaller/README.md`](packaging/pyinstaller/README.md)。
-
----
-
-## GPU/CUDA 支持
-
-这个项目没有把完整 CUDA 依赖直接塞进基础包，而是采用"基础运行时 + 受控 GPU 运行时"的方式：
-
-- ✅ 基础包默认保证 CPU 可用
-- ✅ 设置页可一键安装 CUDA 支持
-- ✅ CUDA 依赖安装到 `%LOCALAPPDATA%/briefvid/runtime/`
-- ✅ 安装完成后需要重启应用
-- ✅ 环境检测、日志和运行时切换都在设置页可见
-
-这套方案的目标是让 `onedir` 分发更稳定，同时保留 GPU 能力。
-
----
-
-## 数据存储
-
-### 数据目录
-
-默认数据目录位于 `%LOCALAPPDATA%/briefvid/data/`：
-
-| 文件/目录 | 描述 |
-|-----------|------|
-| `video_sum.db` | SQLite 数据库 |
-| `cache/` | 封面和缓存资源 |
-| `tasks/<task_id>/transcript.txt` | 转写文本 |
-| `tasks/<task_id>/summary.json` | 结构化摘要结果 |
-
-### 日志目录
-
-日志目录位于 `%LOCALAPPDATA%/briefvid/logs/`。
-
----
-
 ## 项目结构
 
-```
-BriefVid/
-├── apps/
-│   ├── service/          # FastAPI 后端服务
-│   ├── desktop/          # React + Electron 桌面端
-│   └── web/              # 本地 Web UI 静态资源
-├── packages/
-│   ├── core/             # 下载、转写、摘要等核心能力
-│   └── infra/            # 配置、路径、日志等基础设施
-├── scripts/
-│   ├── run_service.ps1   # 本地启动服务
-│   └── submit_task.ps1   # 命令行提交任务
-├── tests/
-│   └── unit/             # 单元测试
-├── packaging/
-│   ├── desktop/          # Electron 桌面打包脚本
-│   └── pyinstaller/      # Windows onedir 打包脚本和说明
-├── .env.example          # 环境变量示例
-├── .gitignore
-├── package.json          # 根目录 npm 代理命令
-├── pyproject.toml        # 项目配置
-└── README.md
+```text
+apps/
+  desktop/   Electron + React 桌面端
+  service/   FastAPI 本地服务
+packages/
+  core/      下载、转写、摘要核心流程
+  infra/     配置、运行时、基础设施
+docs/
+  pic/       README 截图等文档资源
+scripts/
+  *.ps1      常用开发脚本
 ```
 
----
+## 路线方向
 
-## 开发指南
+- 更完整的思维导图视图
+- 更细粒度的知识卡片导出
+- 更多视频来源支持
+- 更稳定的 GPU 与运行时管理
+- 更完整的本地知识库工作流接入
 
-### 常用命令
+## License
 
-```powershell
-npm run dev
-npm run build
-npm run package:win
-python -m video_sum_service
-python -m pytest -q
-python scripts/bump_version.py --check
-```
-
-这些命令的含义分别是：
-
-- `npm run dev`: 从仓库根目录启动桌面端联调，包含前端、Electron 和本地后端
-- `npm run build`: 构建 React 渲染层和 Electron 主进程，但不打 `onedir` 后端包
-- `npm run package:win`: 执行完整 Windows 合包，包含 `onedir` 后端和 Electron 安装包
-- `python -m video_sum_service`: 单独启动 FastAPI 后端，适合只调接口
-- `python -m pytest -q`: 运行当前单元测试
-- `python scripts/bump_version.py --check`: 检查所有版本文件是否与根目录 `VERSION` 同步
-
-### 调试说明
-
-- 前端调试：运行 `npm run dev` 后，在 Electron 窗口内按 `Ctrl+Shift+I`
-- 主进程调试：修改 `apps/desktop/electron/main.ts` 后重新执行 `npm run dev`
-- 后端调试：直接运行 `python -m video_sum_service`，日志位于 `%LOCALAPPDATA%/briefvid/logs/`
-
-### 运行测试
-
-```powershell
-python -m pytest -q
-```
-
-### 架构文档
-
-本仓库当前使用 workspace 结构：
-
-- `apps/service`
-- `packages/core`
-- `packages/infra`
-
-如果你准备继续开发，建议优先阅读：
-
-- [`README.md`](README.md)
-- [`packaging/pyinstaller/README.md`](packaging/pyinstaller/README.md)
-- [`packaging/desktop/build_windows.ps1`](packaging/desktop/build_windows.ps1)
-
-### 版本与发版
-
-- 单一版本源为根目录 `VERSION`
-- 同步脚本为 `python scripts/bump_version.py patch|minor|major`
-- 校验脚本为 `python scripts/bump_version.py --check`
-- GitHub Actions 会在推送到 `main` 或 `master` 后自动判断是否发版
-- 自动 bump 规则如下：
-  - 只有提交标题里显式带 `*` 的 `feat` / `fix` / `perf` / `refactor` 才会参与自动发版
-  - `feat*:` -> `minor`
-  - `fix*:` / `perf*:` / `refactor*:` -> `patch`
-  - 原有 breaking 规则保留：`feat!:`、`fix!:`、`perf!:`、`refactor!:`，或提交正文包含 `BREAKING CHANGE` -> `major`
-  - `feat*!:`、`fix*!:` 这类同时带 `*` 和 `!` 的写法也支持，仍按 `major` 处理
-  - 不带 `*` / `!` 的 `feat:`、`fix:`、`perf:`、`refactor:` 默认不发版
-  - `docs:`、`chore:`、`ci:` 等默认不发版
-- 对 `apps/desktop`、`packaging`、相关版本文件或 CI/build 配置的改动，`CI` workflow 会额外在 Windows runner 上直接执行一次 `npm run package:win` 做打包预检
-- 这个 Windows 打包预检只校验原有打包链路，不会创建预览版，也不会上传 GitHub Release
-- 每次检测到版本更新时，都会在同一个 workflow 里构建 Windows 安装程序并创建 GitHub Release
-- 自动发版前会先在 GitHub Actions 的 Windows runner 上真实执行一次 `npm run package:win`
-- 只有 Windows 打包预检通过，才会提交版本号、创建 tag，并把构建好的 `Setup.exe` 安装包上传到该版本的 GitHub Release
-
----
-
-## 限制与已知问题
-
-- ⚠️ 当前真实执行链路主要支持 B 站视频 URL
-- ⚠️ 任务执行仍是轻量线程 worker，不是正式队列系统
-- ⚠️ 暂未实现成熟的取消、重试和并发调度策略
-- ⚠️ 首次模型下载和首次 GPU 运行会比较慢
-- ⚠️ 当前 Web UI 以可用性为主，不是最终桌面端交互形态
-
----
-
-## 路线图
-
-- [ ] 更完整的视频平台支持（YouTube、抖音等）
-- [ ] 更稳定的任务调度与恢复机制
-- [ ] 更成熟的桌面端封装（Electron/Tauri）
-- [ ] 更清晰的模型、缓存和运行时管理
-- [ ] 支持更多 LLM 提供商
-- [ ] 添加任务队列系统（Celery/RQ）
-
----
-
-## 贡献
-
-欢迎贡献代码、报告问题或提出建议！
-
-1. Fork 本仓库
-2. 创建你的特性分支 (`git checkout -b feature/AmazingFeature`)
-3. 提交你的更改 (`git commit -m 'Add some AmazingFeature'`)
-4. 推送到分支 (`git push origin feature/AmazingFeature`)
-5. 开启一个 Pull Request
-
----
-
-## 许可证
-
-本项目采用 MIT 许可证 - 查看 [LICENSE](LICENSE) 文件了解详情。
-
----
-
-<div align="center">
-
-**BriefVid** - 让视频总结更高效
-
-Made with ❤️ by the community
-
-</div>
+MIT
