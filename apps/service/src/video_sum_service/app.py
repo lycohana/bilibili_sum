@@ -43,6 +43,7 @@ from video_sum_infra.runtime import (
 )
 from video_sum_service.repository import SqliteTaskRepository
 from video_sum_service.schemas import (
+    ResummaryRequest,
     TaskCreateRequest,
     TaskDetailResponse,
     TaskEventResponse,
@@ -519,6 +520,18 @@ def localize_video_cover(task_store: SqliteTaskRepository, video: VideoAssetReco
     return task_store.upsert_video_asset(updated)
 
 
+def load_task_segments(summary_path: str) -> list[dict[str, object]]:
+    try:
+        payload = json.loads(Path(summary_path).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=500, detail="无法读取当前任务的分段结果。") from exc
+
+    segments = payload.get("segments")
+    if not isinstance(segments, list) or not segments:
+        raise HTTPException(status_code=400, detail="当前任务缺少可复用的分段数据。")
+    return segments
+
+
 def install_cuda_support(cuda_variant: str) -> dict[str, object]:
     allowed_variants = {"cu124", "cu126", "cu128"}
     if cuda_variant not in allowed_variants:
@@ -784,6 +797,66 @@ def create_video_task(video_id: str) -> TaskDetailResponse:
     logger.info("create video task video_id=%s title=%s source=%s", video.video_id, video.title, video.source_url)
     record = task_store.create_task(
         TaskInput(input_type=InputType.URL, source=video.source_url, title=video.title),
+        video_id=video.video_id,
+    )
+    task_worker.submit(record)
+    refreshed = task_store.get_task(record.task_id)
+    assert refreshed is not None
+    return refreshed.to_detail()
+
+
+@app.post("/api/v1/videos/{video_id}/tasks/resummary", response_model=TaskDetailResponse, status_code=status.HTTP_201_CREATED)
+def create_video_resummary_task(video_id: str, request: ResummaryRequest) -> TaskDetailResponse:
+    task_store: SqliteTaskRepository = app.state.task_repository
+    task_worker: TaskWorker = app.state.task_worker
+    video = task_store.get_video_asset(video_id)
+    if video is None:
+        raise HTTPException(status_code=404, detail="Video not found.")
+
+    source_task = task_store.get_task(request.task_id) if request.task_id else None
+    if source_task is None:
+        source_task = next(
+            (
+                task
+                for task in task_store.list_tasks_for_video(video_id)
+                if task.result and task.result.transcript_text.strip() and task.result.artifacts.get("summary_path")
+            ),
+            None,
+        )
+    if source_task is None:
+        raise HTTPException(status_code=400, detail="当前视频还没有可复用的转写结果。")
+    if source_task.video_id != video_id:
+        raise HTTPException(status_code=400, detail="所选任务不属于当前视频。")
+    if source_task.result is None or not source_task.result.transcript_text.strip():
+        raise HTTPException(status_code=400, detail="所选任务还没有可复用的转写文本。")
+
+    summary_path = source_task.result.artifacts.get("summary_path") if source_task.result else None
+    if not summary_path:
+        raise HTTPException(status_code=400, detail="所选任务缺少可复用的分段文件。")
+    segments = load_task_segments(summary_path)
+
+    payload = json.dumps(
+        {
+            "title": source_task.task_input.title or video.title,
+            "transcript": source_task.result.transcript_text,
+            "segments": segments,
+        },
+        ensure_ascii=False,
+    )
+    logger.info(
+        "create video resummary task video_id=%s source_task_id=%s title=%s",
+        video.video_id,
+        source_task.task_id,
+        source_task.task_input.title or video.title,
+    )
+    record = task_store.create_task(
+        TaskInput(
+            input_type=InputType.TRANSCRIPT_TEXT,
+            source=payload,
+            title=source_task.task_input.title or video.title,
+            platform_hint=source_task.task_input.platform_hint,
+            options=source_task.task_input.options,
+        ),
         video_id=video.video_id,
     )
     task_worker.submit(record)

@@ -87,6 +87,13 @@ export const api = {
   createVideoTask(videoId: string) {
     return fetchJson<TaskDetail>(`/api/v1/videos/${videoId}/tasks`, { method: "POST" });
   },
+  resummarizeVideoTask(videoId: string, payload: { task_id?: string | null }) {
+    return fetchJson<TaskDetail>(`/api/v1/videos/${videoId}/tasks/resummary`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+  },
   getTaskResult(taskId: string) {
     return fetchJson<TaskDetail>(`/api/v1/tasks/${taskId}/result`);
   },

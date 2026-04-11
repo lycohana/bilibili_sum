@@ -139,8 +139,9 @@ def test_real_pipeline_builds_strict_summary_prompt() -> None:
     assert len(messages) == 2
     assert "json" in messages[0]["content"].lower() or "json" in messages[1]["content"].lower()
     assert "不能返回空数组" in messages[1]["content"]
-    assert "bulletPoints 必须是 4 到 6 条中文要点" in messages[1]["content"]
-    assert "chapters 必须是 3 到 6 个章节" in messages[1]["content"]
+    assert "bulletPoints 必须是 5 到 8 条中文要点" in messages[1]["content"]
+    assert "chapters 必须是 4 到 8 个章节" in messages[1]["content"]
+    assert "每条都要能单独成为一张知识卡片" in messages[1]["content"]
 
 
 def test_real_pipeline_uses_custom_prompt_template() -> None:

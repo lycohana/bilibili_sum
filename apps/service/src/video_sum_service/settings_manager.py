@@ -10,6 +10,8 @@ from video_sum_infra.config import (
     DEFAULT_SUMMARY_USER_PROMPT_TEMPLATE,
     LEGACY_SUMMARY_SYSTEM_PROMPT,
     LEGACY_SUMMARY_USER_PROMPT_TEMPLATE,
+    PREVIOUS_DEFAULT_SUMMARY_SYSTEM_PROMPT,
+    PREVIOUS_DEFAULT_SUMMARY_USER_PROMPT_TEMPLATE,
     ServiceSettings,
 )
 
@@ -63,7 +65,11 @@ class SettingsManager:
             stored = json.loads(self._settings_path.read_text(encoding="utf-8"))
             if stored.get("summary_system_prompt") == LEGACY_SUMMARY_SYSTEM_PROMPT:
                 stored["summary_system_prompt"] = DEFAULT_SUMMARY_SYSTEM_PROMPT
+            if stored.get("summary_system_prompt") == PREVIOUS_DEFAULT_SUMMARY_SYSTEM_PROMPT:
+                stored["summary_system_prompt"] = DEFAULT_SUMMARY_SYSTEM_PROMPT
             if stored.get("summary_user_prompt_template") == LEGACY_SUMMARY_USER_PROMPT_TEMPLATE:
+                stored["summary_user_prompt_template"] = DEFAULT_SUMMARY_USER_PROMPT_TEMPLATE
+            if stored.get("summary_user_prompt_template") == PREVIOUS_DEFAULT_SUMMARY_USER_PROMPT_TEMPLATE:
                 stored["summary_user_prompt_template"] = DEFAULT_SUMMARY_USER_PROMPT_TEMPLATE
             self._settings = ServiceSettings.model_validate({**self._base_settings.model_dump(), **stored})
         else:

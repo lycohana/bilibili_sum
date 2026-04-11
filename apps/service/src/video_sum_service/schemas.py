@@ -10,6 +10,10 @@ class TaskCreateRequest(TaskInput):
     video_id: str | None = None
 
 
+class ResummaryRequest(BaseModel):
+    task_id: str | None = None
+
+
 class VideoProbeRequest(BaseModel):
     url: str
     force_refresh: bool = False

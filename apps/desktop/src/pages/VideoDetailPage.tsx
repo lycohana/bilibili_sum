@@ -505,6 +505,11 @@ export function VideoDetailPage({ onRefresh }: { onRefresh(): void }) {
   const selectedTaskSnapshot = buildTaskSnapshot(selectedTaskDetail ?? selectedTaskSummary);
   const selectedTaskTokenCount = selectedResult?.llm_total_tokens ?? selectedTaskDetail?.llm_total_tokens ?? selectedTaskSummary?.llm_total_tokens ?? null;
   const selectedTaskStatus = selectedTaskDetail?.status ?? selectedTaskSummary?.status;
+  const canResummarize = Boolean(
+    selectedTaskId
+    && selectedTaskDetail?.result?.transcript_text?.trim()
+    && selectedTaskDetail.result.artifacts?.summary_path,
+  );
   const workspaceStatusLabel = isSelectedTaskLoading
     ? "加载中"
     : selectedTaskLoadError
@@ -596,20 +601,41 @@ export function VideoDetailPage({ onRefresh }: { onRefresh(): void }) {
                           className="detail-action-menu-item"
                           role="menuitem"
                           type="button"
+                          disabled={!canResummarize}
                           onClick={async () => {
                             setActionMenuOpen(false);
-                            setStatus("正在创建处理任务...");
-                            await api.createVideoTask(video.video_id);
+                            setStatus("正在基于当前版本重新生成摘要...");
+                            await api.resummarizeVideoTask(video.video_id, { task_id: selectedTaskIdRef.current });
                             await refreshDetail({ preferredTaskId: null, syncLibrary: true });
-                            setStatus("已开始新的摘要任务");
+                            setStatus("已开始新的摘要生成任务");
                           }}
                         >
                           <span className="detail-action-menu-item-icon" aria-hidden="true">
-                            <IconFileText className="detail-action-icon" />
+                            <IconSummaryRefresh className="detail-action-icon" />
                           </span>
                           <span className="detail-action-menu-copy">
                             <strong>重新生成摘要</strong>
-                            <small>立即基于当前视频创建新的摘要任务。</small>
+                            <small>复用当前查看版本的转写与分段，仅重新调用 LLM 生成更完整的摘要结果。</small>
+                          </span>
+                        </button>
+                        <button
+                          className="detail-action-menu-item"
+                          role="menuitem"
+                          type="button"
+                          onClick={async () => {
+                            setActionMenuOpen(false);
+                            setStatus("正在重新转写并生成摘要...");
+                            await api.createVideoTask(video.video_id);
+                            await refreshDetail({ preferredTaskId: null, syncLibrary: true });
+                            setStatus("已开始新的转写摘要任务");
+                          }}
+                        >
+                          <span className="detail-action-menu-item-icon" aria-hidden="true">
+                            <IconTranscriptRefresh className="detail-action-icon" />
+                          </span>
+                          <span className="detail-action-menu-copy">
+                            <strong>重新转写生成摘要</strong>
+                            <small>重新抓取音频、执行转写，再生成一份新的完整摘要任务。</small>
                           </span>
                         </button>
                         <button
@@ -1253,6 +1279,31 @@ function IconFileText(props: SVGProps<SVGSVGElement>) {
       <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />
       <path d="M14 3v5h5" />
       <path d="M9 13h6M9 17h6M9 9h2" />
+    </svg>
+  );
+}
+
+function IconSummaryRefresh(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" viewBox="0 0 24 24" {...props}>
+      <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />
+      <path d="M14 3v5h5" />
+      <path d="M9 9h2M9 13h6" />
+      <path d="M9 17a3 3 0 1 0 3-3" />
+      <path d="M13.75 15.5H12v-1.75" />
+    </svg>
+  );
+}
+
+function IconTranscriptRefresh(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" viewBox="0 0 24 24" {...props}>
+      <path d="M4 12a8 8 0 0 1 13-6" />
+      <path d="M20 12a8 8 0 0 1-13 6" />
+      <path d="M17 3v5h-5" />
+      <path d="M7 21v-5h5" />
+      <path d="M9 10.5a3 3 0 0 1 6 0c0 2.2-3 2.2-3 4.5" />
+      <path d="M12 18h.01" />
     </svg>
   );
 }

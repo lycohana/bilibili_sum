@@ -155,8 +155,6 @@ class RealPipelineRunner(PipelineRunner):
         on_event: PipelineEventReporter | None = None,
     ) -> tuple[list[PipelineEvent], TaskResult]:
         task_input = context.task_input
-        if task_input.input_type is not InputType.URL:
-            raise UnsupportedInputError("Current runner only supports URL input.")
 
         events: list[PipelineEvent] = []
 
@@ -174,7 +172,29 @@ class RealPipelineRunner(PipelineRunner):
             if on_event is not None:
                 on_event(event)
 
-        logger.info("pipeline run start task_id=%s source=%s", context.task_id, task_input.source)
+        logger.info(
+            "pipeline run start task_id=%s input_type=%s source=%s",
+            context.task_id,
+            task_input.input_type.value,
+            task_input.source,
+        )
+
+        if task_input.input_type is InputType.URL:
+            result = self._run_from_url(context, emit)
+        elif task_input.input_type is InputType.TRANSCRIPT_TEXT:
+            result = self._run_from_transcript_text(context, emit)
+        else:
+            raise UnsupportedInputError(
+                f"Current runner does not support input type '{task_input.input_type.value}'."
+            )
+        return events, result
+
+    def _run_from_url(
+        self,
+        context: PipelineContext,
+        emit: Callable[[str, int, str, dict[str, object] | None], None],
+    ) -> TaskResult:
+        task_input = context.task_input
         emit("preparing", 8, "正在规范化视频链接")
         normalized_url, bvid = normalize_video_url(task_input.source)
         if "bilibili.com/video/" not in normalized_url:
@@ -198,13 +218,88 @@ class RealPipelineRunner(PipelineRunner):
         result = self._export_result(task_dir, title, transcript, segments, summary)
         emit("exporting", 99, "结果文件已写入本地目录")
         logger.info(
-            "pipeline run finish task_id=%s segments=%d transcript_chars=%d output_dir=%s",
+            "pipeline url run finish task_id=%s segments=%d transcript_chars=%d output_dir=%s",
             context.task_id,
             len(segments),
             len(transcript),
             task_dir,
         )
-        return events, result
+        return result
+
+    def _run_from_transcript_text(
+        self,
+        context: PipelineContext,
+        emit: Callable[[str, int, str, dict[str, object] | None], None],
+    ) -> TaskResult:
+        task_dir = ensure_directory(self._settings.tasks_dir / context.task_id)
+        title, transcript, segments = self._parse_transcript_payload(context.task_input.source, context.task_input.title)
+        emit("preparing", 12, "正在复用已有转写内容", {"segment_count": len(segments)})
+        emit(
+            "transcribing",
+            32,
+            "已跳过重新转写，直接复用当前版本文本",
+            {"transcript_chars": len(transcript), "segment_count": len(segments)},
+        )
+        summary = self._summarize(transcript, segments, title, emit)
+        emit("exporting", 97, "正在导出新的摘要结果")
+        result = self._export_result(task_dir, title, transcript, segments, summary)
+        emit("exporting", 99, "新的摘要结果已写入本地目录")
+        logger.info(
+            "pipeline transcript rerun finish task_id=%s segments=%d transcript_chars=%d output_dir=%s",
+            context.task_id,
+            len(segments),
+            len(transcript),
+            task_dir,
+        )
+        return result
+
+    def _parse_transcript_payload(
+        self,
+        source: str,
+        title_hint: str | None,
+    ) -> tuple[str, str, list[dict[str, object]]]:
+        try:
+            payload = json.loads(source)
+        except json.JSONDecodeError as exc:
+            raise VideoSumError("Transcript task payload is invalid JSON.") from exc
+
+        if not isinstance(payload, dict):
+            raise VideoSumError("Transcript task payload must be an object.")
+
+        transcript = str(payload.get("transcript") or "").strip()
+        if not transcript:
+            raise VideoSumError("Transcript task payload is missing transcript content.")
+
+        raw_segments = payload.get("segments") or []
+        segments = self._coerce_transcript_segments(raw_segments)
+        if not segments:
+            raise VideoSumError("Transcript task payload is missing valid segments.")
+
+        title = str(payload.get("title") or title_hint or "视频摘要").strip() or "视频摘要"
+        return title, transcript, segments
+
+    def _coerce_transcript_segments(self, value: object) -> list[dict[str, object]]:
+        if not isinstance(value, list):
+            return []
+        segments: list[dict[str, object]] = []
+        for item in value:
+            if not isinstance(item, dict):
+                continue
+            text = str(item.get("text") or "").strip()
+            if not text:
+                continue
+            start = item.get("start")
+            end = item.get("end")
+            try:
+                start_value = float(start) if start is not None else 0.0
+            except (TypeError, ValueError):
+                start_value = 0.0
+            try:
+                end_value = float(end) if end is not None else start_value
+            except (TypeError, ValueError):
+                end_value = start_value
+            segments.append({"start": start_value, "end": end_value, "text": text})
+        return segments
 
     def _probe_video(self, url: str) -> dict:
         with YoutubeDL({"quiet": True, "no_warnings": True}) as ydl:
@@ -961,9 +1056,9 @@ class RealPipelineRunner(PipelineRunner):
             self._settings.summary_system_prompt.strip()
             if self._settings.summary_system_prompt.strip()
             else (
-                "你是一名严谨的中文视频摘要助手。"
-                "你的唯一任务是基于用户提供的转写和分段信息，生成可直接展示给前端页面的结构化摘要。"
-                "不得编造视频中没有出现的信息，不得输出 JSON 以外的任何文字。"
+                "你是一名严谨、克制、信息密度优先的中文视频内容编辑。"
+                "你的任务不是泛泛总结，而是基于转写和分段信息，产出可以直接用于“知识卡片”和“摘要结果”页面的结构化内容。"
+                "所有内容都必须忠实原文，不得编造，不得补充外部资料，不得输出 JSON 以外的任何文字。"
                 "You must return valid json only."
             )
         )
@@ -973,26 +1068,42 @@ class RealPipelineRunner(PipelineRunner):
             else """请阅读下面的视频资料，并输出一个 JSON 对象。
 注意：你必须返回合法的 json 对象，且只返回 json。
 
-目标：生成一个可读性强、信息密度高、适合中文用户阅读的视频摘要。
+目标：
+生成一个适合详情页展示的结构化摘要，让用户在不看完整视频的情况下，也能快速理解：
+1. 这支视频核心在讲什么；
+2. 有哪些关键观点、论据、案例、争议和结论；
+3. 内容是如何逐步展开的。
 
 强约束：
 1. 必须输出合法 JSON，对象顶层只允许包含 title、overview、bulletPoints、chapters 四个字段。
-2. overview 必须是 2 到 4 句中文，概括视频核心观点、讨论主题和最终结论。
-3. bulletPoints 必须是 4 到 6 条中文要点，每条 18 到 60 个字，禁止空字符串，禁止重复改写同一条意思。
-4. chapters 必须是 3 到 6 个章节，每个章节必须包含 title、start、summary。
-5. chapter.title 要短，像小标题；chapter.summary 要概括该时间段内容，20 到 80 个字。
+2. title 必须是简洁、准确的中文标题，避免口号式空话。
+3. overview 必须写成 3 到 5 句中文，整体形成一段完整概述：
+   - 第 1 句交代主题或讨论对象；
+   - 中间句交代关键论点、论据、背景、冲突或方法；
+   - 最后 1 句交代结论、判断、影响或最终落点；
+   - 总体要具体、完整，适合单独作为“核心概览”展示。
+4. bulletPoints 必须是 5 到 8 条中文要点，每条 28 到 88 个字：
+   - 每条都要能单独成为一张知识卡片；
+   - 优先提炼事实、观点、因果、对比、条件、风险、建议、争议；
+   - 不要把同一件事拆成多条近义重复表达；
+   - 不要写“作者认为”“视频提到”这类低信息密度前缀，直接写结论。
+5. chapters 必须是 4 到 8 个章节，每个章节必须包含 title、start、summary：
+   - chapter.title 要像小标题，短而具体，能体现这一段的主题推进；
+   - chapter.summary 必须比普通概述更详细，写成 2 到 3 个短句或 40 到 120 个字，说明这一段具体讲了什么、举了什么例子、得出了什么判断；
+   - chapters 应体现内容推进关系，而不是机械平均切分。
 6. start 必须使用视频里真实出现的时间点，单位为秒，按升序排列。
 7. 如果原文信息有限，也必须尽量提炼出非空 bulletPoints 和 chapters，不能返回空数组。
-8. 不要写“视频主要讲了”“本视频介绍了”这种空话，直接写内容。
-9. 不要引用不存在的数据，不要补充外部背景，不要分析说话者身份之外的隐含动机。
+8. 不要写“视频主要讲了”“本视频介绍了”“作者首先”这类模板化空话，直接进入信息本体。
+9. 不要引用不存在的数据，不要补充外部背景，不要猜测说话者未明确表达的动机。
 
 写作要求：
-- 保持中文自然、紧凑、具体。
-- 优先提炼观点、结论、争议点、使用体验、推荐条件。
-- chapters 应体现内容推进，而不是机械平均切分。
+- 保持中文自然、清楚、具体，避免官话和营销口吻。
+- 优先保留高价值信息：定义、判断、证据、例子、条件、限制、影响、结论。
+- 如果视频包含多个层次，overview 负责总览，bulletPoints 负责拆出关键结论，chapters 负责还原内容推进。
+- 摘要结果页要比知识卡片更详细，所以 overview 和 chapter.summary 都要写得更完整，而不是只写一句泛泛概括。
 
 输出格式示例：
-{{"title":"","overview":"","bulletPoints":["", "", "", ""],"chapters":[{{"title":"","start":0,"summary":""}}]}}
+{{"title":"","overview":"","bulletPoints":["", "", "", "", ""],"chapters":[{{"title":"","start":0,"summary":""}}]}}
 
 视频标题：{title}
 

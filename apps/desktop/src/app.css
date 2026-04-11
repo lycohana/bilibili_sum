@@ -2880,6 +2880,16 @@ textarea {
   transform: translateY(-1px);
 }
 
+.detail-action-menu-item:disabled {
+  cursor: not-allowed;
+  opacity: 0.52;
+}
+
+.detail-action-menu-item:disabled:hover {
+  background: transparent;
+  transform: none;
+}
+
 .detail-action-menu-item-icon {
   width: 34px;
   height: 34px;
