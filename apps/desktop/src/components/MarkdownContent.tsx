@@ -3,6 +3,8 @@ import rehypeKatex from "rehype-katex";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 
+import { normalizeRenderableMarkdown } from "../utils";
+
 type MarkdownContentProps = {
   className?: string;
   compact?: boolean;
@@ -10,7 +12,7 @@ type MarkdownContentProps = {
 };
 
 export function MarkdownContent({ className = "", compact = false, content }: MarkdownContentProps) {
-  const markdown = String(content || "").trim();
+  const markdown = normalizeRenderableMarkdown(content).trim();
   if (!markdown) {
     return null;
   }

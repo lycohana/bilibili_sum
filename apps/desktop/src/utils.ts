@@ -1,5 +1,15 @@
 import type { TaskEvent, TaskStatus } from "./types";
 
+const HTML_ENTITY_MAP: Record<string, string> = {
+  amp: "&",
+  apos: "'",
+  gt: ">",
+  hellip: "...",
+  lt: "<",
+  nbsp: " ",
+  quot: "\"",
+};
+
 export function formatDateTime(value?: string | null) {
   if (!value) return "-";
   const date = new Date(value);
@@ -89,4 +99,178 @@ export function summarizeEvents(events: TaskEvent[]) {
     isCompleted,
     hasError: Boolean(failedEvent),
   };
+}
+
+export function normalizeRenderableMarkdown(content: string) {
+  const raw = String(content || "");
+  const normalizedControls = normalizeControlCharacters(raw);
+  const normalizedNewlines = normalizeEscapedNewlines(normalizedControls).replace(/\r\n?/g, "\n");
+  const decodedEntities = decodeHtmlEntities(normalizedNewlines);
+
+  return decodedEntities
+    .split("\n")
+    .map((line) => normalizeMarkdownLine(line))
+    .join("\n");
+}
+
+function normalizeControlCharacters(content: string) {
+  return content
+    .replace(/\f(?=[A-Za-z])/g, "\\f")
+    .replace(/\v/g, " ")
+    .replace(/\u0000/g, "");
+}
+
+function normalizeEscapedNewlines(content: string) {
+  const escapedBreakCount = (content.match(/\\n/g) || []).length;
+  const actualBreakCount = (content.match(/\n/g) || []).length;
+  if (escapedBreakCount === 0 || actualBreakCount > escapedBreakCount) {
+    return content;
+  }
+  return content.replace(/\\n/g, "\n").replace(/\\t/g, "  ");
+}
+
+function decodeHtmlEntities(content: string) {
+  return content.replace(/&(#x?[0-9a-fA-F]+|[a-zA-Z]+);/g, (entity, token: string) => {
+    const named = HTML_ENTITY_MAP[token.toLowerCase()];
+    if (named != null) {
+      return named;
+    }
+
+    if (token.startsWith("#x") || token.startsWith("#X")) {
+      const codePoint = Number.parseInt(token.slice(2), 16);
+      return Number.isFinite(codePoint) ? String.fromCodePoint(codePoint) : entity;
+    }
+
+    if (token.startsWith("#")) {
+      const codePoint = Number.parseInt(token.slice(1), 10);
+      return Number.isFinite(codePoint) ? String.fromCodePoint(codePoint) : entity;
+    }
+
+    return entity;
+  });
+}
+
+function normalizeMarkdownLine(line: string) {
+  if (!line.trim() || line.includes("```")) {
+    return line;
+  }
+  if (looksLikeMarkdownTableRow(line)) {
+    return normalizeMarkdownTableLine(line);
+  }
+
+  const normalizedMathText = normalizeDollarArtifacts(normalizeBrokenMathText(line));
+  const convertedDelimiters = normalizedMathText
+    .replace(/\\\(/g, "$")
+    .replace(/\\\)/g, "$")
+    .replace(/\\\[/g, "$$")
+    .replace(/\\\]/g, "$$");
+
+  const wrappedWholeMathLine = wrapWholeMathLine(convertedDelimiters);
+  if (wrappedWholeMathLine !== convertedDelimiters) {
+    return wrappedWholeMathLine;
+  }
+  if (convertedDelimiters.includes("$$")) {
+    return convertedDelimiters;
+  }
+
+  return wrapBareLatexRuns(convertedDelimiters);
+}
+
+function looksLikeMarkdownTableRow(line: string) {
+  const trimmed = line.trim();
+  if (trimmed.startsWith("|")) {
+    return trimmed.split("|").length >= 3;
+  }
+  return (line.match(/\s\|\s/g) || []).length >= 2;
+}
+
+function normalizeBrokenMathText(line: string) {
+  return line
+    .replace(/\|\$([^$]+)\$\|/g, "\\lvert $1 \\rvert")
+    .replace(/([“"'`])((?:\\[A-Za-z]+|[A-Za-z0-9{}_^]+)[^“"'`\n]*?)\1/g, (match, quote: string, inner: string) => {
+      if (!/[\\{}_^]/.test(inner) || inner.includes("$")) {
+        return match;
+      }
+      const normalizedInner = inner.replace(/(?<=\b\w|\}|])\s+o\s+(?=\d|\\|\w)/g, " \\to ");
+      return `${quote}$${normalizedInner.trim()}$${quote}`;
+    });
+}
+
+function normalizeDollarArtifacts(line: string) {
+  let collapsed = line.replace(/\${3,}/g, "$$");
+  const displayFenceCount = (collapsed.match(/\$\$/g) || []).length;
+  if (displayFenceCount % 2 === 1) {
+    collapsed = `${collapsed}$$`;
+  }
+
+  const dollarCount = (collapsed.match(/\$/g) || []).length;
+  if (dollarCount % 2 === 1 && collapsed.trimEnd().endsWith("$") && !collapsed.trimStart().startsWith("$")) {
+    return collapsed.replace(/\$(\s*)$/, "$1");
+  }
+  return collapsed;
+}
+
+function wrapWholeMathLine(line: string) {
+  const trimmed = line.trim();
+  if (!trimmed || trimmed.includes("$") || trimmed.startsWith("#") || trimmed.startsWith("- ") || /^\d+\.\s/.test(trimmed)) {
+    return line;
+  }
+
+  const latexCommandCount = (trimmed.match(/\\[A-Za-z]+/g) || []).length;
+  const mathSignalCount = (trimmed.match(/[∀∃ε∈∞]|\\(?:forall|exists|varepsilon|in|mathbb|lim|to|text|frac|cdot|iff|Rightarrow|rightarrow)/g) || []).length;
+  if (latexCommandCount < 2 || mathSignalCount < 2) {
+    return line;
+  }
+
+  const leading = line.match(/^\s*/)?.[0] ?? "";
+  const trailing = line.match(/\s*$/)?.[0] ?? "";
+  return `${leading}$${trimmed}$${trailing}`;
+}
+
+function normalizeMarkdownTableLine(line: string) {
+  const trimmed = line.trim();
+  if (!trimmed.includes("|") || /^[:\-\s|]+$/.test(trimmed)) {
+    return line;
+  }
+
+  const cells = line.split("|");
+  const normalizedCells = cells.map((cell, index) => {
+    if ((index === 0 || index === cells.length - 1) && cell.trim() === "") {
+      return cell;
+    }
+
+    const leading = cell.match(/^\s*/)?.[0] ?? "";
+    const trailing = cell.match(/\s*$/)?.[0] ?? "";
+    const core = cell.trim();
+    if (!looksLikeMathCell(core) || core.includes("$")) {
+      return cell;
+    }
+    return `${leading}$${core}$${trailing}`;
+  });
+
+  return normalizedCells.join("|");
+}
+
+function looksLikeMathCell(content: string) {
+  if (!content) {
+    return false;
+  }
+  if (/[\u4e00-\u9fff]/.test(content)) {
+    return false;
+  }
+  return /\\[A-Za-z]+|[_^=]/.test(content);
+}
+
+function wrapBareLatexRuns(line: string) {
+  const segments = line.split(/(\${1,2}[\s\S]*?\${1,2})/g);
+  return segments
+    .map((segment, index) => (index % 2 === 1 ? segment : wrapBareLatexSegment(segment)))
+    .join("");
+}
+
+function wrapBareLatexSegment(segment: string) {
+  return segment.replace(
+    /(^|[\s(（\[【"'“‘：:，,])((?:\\[A-Za-z]+(?:\{[^{}\n]+\}){0,2}|\\\{[^{}\n]+\\\}|[A-Za-z][A-Za-z0-9]*_[A-Za-z0-9{}]+|[A-Za-z][A-Za-z0-9]*\^\{?[^{}\s]+\}?)(?:\s*(?:=|\+|-|\*|\/|\\to)\s*(?:\\[A-Za-z]+(?:\{[^{}\n]+\}){0,2}|\\\{[^{}\n]+\\\}|[A-Za-z0-9{}_^.+\-\/()]+))*)(?=$|[\s)）\]】"'”’：:，,。；;!?！？])/g,
+    (_, prefix: string, mathRun: string) => `${prefix}$${mathRun}$`,
+  );
 }
