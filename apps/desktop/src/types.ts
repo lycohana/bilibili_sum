@@ -166,6 +166,7 @@ export type ServiceSettings = {
   language: string;
   summary_mode: string;
   llm_enabled: boolean;
+  auto_generate_mindmap: boolean;
   llm_provider: string;
   llm_api_key: string;
   llm_base_url: string;

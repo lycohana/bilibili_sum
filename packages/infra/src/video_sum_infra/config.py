@@ -224,6 +224,7 @@ class ServiceSettings(BaseSettings):
     language: str = "zh"
     summary_mode: str = "llm"
     llm_enabled: bool = False
+    auto_generate_mindmap: bool = False
     llm_provider: str = "openai-compatible"
     llm_api_key: str = ""
     llm_base_url: str = ""

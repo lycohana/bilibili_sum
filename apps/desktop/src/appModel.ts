@@ -197,6 +197,7 @@ export function stageLabel(stage?: string | null) {
     downloading: "下载中",
     transcribing: "转写中",
     summarizing: "总结中",
+    mindmap_queued: "导图待生成",
     mindmap_llm_request: "调用 LLM 中",
     mindmap_generating: "思维导图生成中",
     mindmap_completed: "思维导图已完成",
@@ -219,6 +220,6 @@ export function progressEventClass(stage?: string | null) {
   if (stage === "failed") return "error";
   if (stage === "mindmap_completed") return "completed";
   if (stage === "mindmap_failed") return "error";
-  if (stage === "summarizing" || stage === "transcribing" || stage === "downloading" || stage === "mindmap_llm_request" || stage === "mindmap_generating") return "active";
+  if (stage === "summarizing" || stage === "transcribing" || stage === "downloading" || stage === "mindmap_queued" || stage === "mindmap_llm_request" || stage === "mindmap_generating") return "active";
   return "";
 }

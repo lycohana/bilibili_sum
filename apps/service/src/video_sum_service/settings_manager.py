@@ -38,6 +38,7 @@ class SettingsUpdatePayload(BaseModel):
     language: str | None = None
     summary_mode: str | None = None
     llm_enabled: bool | None = None
+    auto_generate_mindmap: bool | None = None
     llm_provider: str | None = None
     llm_base_url: str | None = None
     llm_model: str | None = None

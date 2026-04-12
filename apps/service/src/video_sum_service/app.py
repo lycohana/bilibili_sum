@@ -428,7 +428,11 @@ def build_worker(repository: SqliteTaskRepository, current_settings: ServiceSett
         summary_chunk_concurrency=runtime_settings.summary_chunk_concurrency,
         summary_chunk_retry_count=runtime_settings.summary_chunk_retry_count,
     )
-    return TaskWorker(repository=repository, pipeline_runner=RealPipelineRunner(pipeline_settings))
+    return TaskWorker(
+        repository=repository,
+        pipeline_runner=RealPipelineRunner(pipeline_settings),
+        auto_generate_mindmap=current_settings.auto_generate_mindmap,
+    )
 
 
 def serialize_settings(current_settings: ServiceSettings) -> dict[str, object]:
@@ -457,6 +461,7 @@ def serialize_settings(current_settings: ServiceSettings) -> dict[str, object]:
         "language": current_settings.language,
         "summary_mode": current_settings.summary_mode,
         "llm_enabled": current_settings.llm_enabled,
+        "auto_generate_mindmap": current_settings.auto_generate_mindmap,
         "llm_provider": current_settings.llm_provider,
         "llm_base_url": current_settings.llm_base_url,
         "llm_model": current_settings.llm_model,

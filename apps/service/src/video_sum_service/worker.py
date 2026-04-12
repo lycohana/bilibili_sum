@@ -14,9 +14,16 @@ logger = logging.getLogger("video_sum_service.worker")
 class TaskWorker:
     """Very small background worker used to execute placeholder tasks."""
 
-    def __init__(self, repository: SqliteTaskRepository, pipeline_runner: PipelineRunner) -> None:
+    def __init__(
+        self,
+        repository: SqliteTaskRepository,
+        pipeline_runner: PipelineRunner,
+        *,
+        auto_generate_mindmap: bool = False,
+    ) -> None:
         self._repository = repository
         self._pipeline_runner = pipeline_runner
+        self._auto_generate_mindmap = auto_generate_mindmap
 
     def submit(self, task: TaskRecord) -> None:
         logger.info(
@@ -109,6 +116,15 @@ class TaskWorker:
                 len(final_result.timeline),
                 len(final_result.transcript_text or ""),
             )
+            if self._auto_generate_mindmap and self._can_auto_generate_mindmap(final_result):
+                self._repository.append_event(
+                    task_id=task_id,
+                    stage="mindmap_queued",
+                    progress=100,
+                    message="已按设置自动发起思维导图生成",
+                    payload={"automatic": True},
+                )
+                self.submit_mindmap(task_id)
         except Exception as exc:
             logger.exception("task failed task_id=%s error=%s", task_id, exc)
             self._repository.update_error(task_id, "TASK_EXECUTION_FAILED", str(exc))
@@ -120,6 +136,12 @@ class TaskWorker:
                 message="任务执行失败",
                 payload={"error": str(exc)},
             )
+
+    def _can_auto_generate_mindmap(self, result: TaskResult) -> bool:
+        return bool(
+            result.knowledge_note_markdown.strip()
+            and result.artifacts.get("summary_path")
+        )
 
     def _run_mindmap(self, task_id: str, force: bool) -> None:
         record = self._repository.get_task(task_id)

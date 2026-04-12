@@ -99,6 +99,7 @@ export function SettingsPage({
   const workspaceCategories = settingsCategories.filter((category) => category.group === "workspace");
   const systemCategories = settingsCategories.filter((category) => category.group === "system");
   const llmReady = Boolean(form?.llm_enabled && form?.llm_api_key_configured);
+  const autoMindMapReady = Boolean(form?.auto_generate_mindmap);
   const updateUnsupported = isUpdateUnsupported(updateInfo);
   const updateStatusLabel = getUpdateStatusLabel(updateInfo);
   const updateStatusTone = getUpdateStatusTone(updateInfo);
@@ -248,6 +249,10 @@ export function SettingsPage({
               <span>LLM</span>
               <strong>{llmReady ? "已配置" : form.llm_enabled ? "待补全" : "关闭"}</strong>
             </div>
+            <div className="settings-nav-summary-row">
+              <span>自动导图</span>
+              <strong>{form.auto_generate_mindmap ? "开启" : "关闭"}</strong>
+            </div>
           </div>
           {saveStatus && <span className="settings-save-status">{saveStatus}</span>}
         </div>
@@ -354,6 +359,22 @@ export function SettingsPage({
                     <span className="overview-status-label">LLM 摘要</span>
                     <strong className={`overview-status-value ${form.llm_enabled ? "text-success" : ""}`}>
                       {form.llm_enabled ? "已启用" : "已关闭"}
+                    </strong>
+                  </div>
+                </div>
+                <div className="overview-status-card">
+                  <div className="overview-status-icon">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M4 5h16" />
+                      <path d="M4 12h10" />
+                      <path d="M4 19h16" />
+                      <circle cx="18" cy="12" r="2" />
+                    </svg>
+                  </div>
+                  <div className="overview-status-info">
+                    <span className="overview-status-label">自动导图</span>
+                    <strong className={`overview-status-value ${autoMindMapReady ? "text-success" : ""}`}>
+                      {autoMindMapReady ? "已启用" : "已关闭"}
                     </strong>
                   </div>
                 </div>
@@ -523,6 +544,14 @@ export function SettingsPage({
                     <option value="true">开启</option>
                   </select>
                   <span className="settings-input-caption">使用大语言模型生成更高质量的视频摘要</span>
+                </label>
+                <label className="settings-input-group">
+                  <span className="settings-input-label">自动生成思维导图</span>
+                  <select className="settings-select-field" value={form.auto_generate_mindmap ? "true" : "false"} onChange={(e) => setForm({ ...form, auto_generate_mindmap: e.target.value === "true" })}>
+                    <option value="false">关闭</option>
+                    <option value="true">开启</option>
+                  </select>
+                  <span className="settings-input-caption">任务摘要完成后，后台自动发起思维导图生成。关闭后仍可在详情页手动生成。</span>
                 </label>
                 {form.llm_enabled && (
                   <>
