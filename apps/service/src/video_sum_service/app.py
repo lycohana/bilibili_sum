@@ -19,7 +19,7 @@ from fastapi.staticfiles import StaticFiles
 import httpx
 from yt_dlp import YoutubeDL
 
-from video_sum_core.models.tasks import InputType, TaskInput, TaskStatus
+from video_sum_core.models.tasks import InputType, TaskInput, TaskMindMap, TaskStatus
 from video_sum_core.pipeline.real import PipelineSettings, RealPipelineRunner
 from video_sum_core.utils import extract_bilibili_page, normalize_video_url
 from video_sum_infra.app import AppInfo
@@ -49,6 +49,7 @@ from video_sum_service.schemas import (
     TaskCreateRequest,
     TaskDetailResponse,
     TaskEventResponse,
+    TaskMindMapResponse,
     TaskProgressResponse,
     TaskRecord,
     TaskSummaryResponse,
@@ -420,6 +421,8 @@ def build_worker(repository: SqliteTaskRepository, current_settings: ServiceSett
         llm_model=runtime_settings.llm_model,
         summary_system_prompt=runtime_settings.summary_system_prompt,
         summary_user_prompt_template=runtime_settings.summary_user_prompt_template,
+        mindmap_system_prompt=runtime_settings.mindmap_system_prompt,
+        mindmap_user_prompt_template=runtime_settings.mindmap_user_prompt_template,
         summary_chunk_target_chars=runtime_settings.summary_chunk_target_chars,
         summary_chunk_overlap_segments=runtime_settings.summary_chunk_overlap_segments,
         summary_chunk_concurrency=runtime_settings.summary_chunk_concurrency,
@@ -788,6 +791,14 @@ def load_task_segments(summary_path: str) -> list[dict[str, object]]:
     if not isinstance(segments, list) or not segments:
         raise HTTPException(status_code=400, detail="当前任务缺少可复用的分段数据。")
     return segments
+
+
+def load_task_mindmap(mindmap_path: str) -> TaskMindMap:
+    try:
+        payload = json.loads(Path(mindmap_path).read_text(encoding="utf-8"))
+        return TaskMindMap.model_validate(payload)
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
+        raise HTTPException(status_code=500, detail="无法读取当前任务的思维导图结果。") from exc
 
 
 def install_cuda_support(cuda_variant: str) -> dict[str, object]:
@@ -1239,6 +1250,109 @@ def get_task_result(task_id: str) -> TaskDetailResponse:
     if record is None:
         raise HTTPException(status_code=404, detail="Task not found.")
     return record.to_detail()
+
+
+@app.get("/api/v1/tasks/{task_id}/mindmap", response_model=TaskMindMapResponse)
+def get_task_mindmap(task_id: str) -> TaskMindMapResponse:
+    task_store: SqliteTaskRepository = app.state.task_repository
+    record = task_store.get_task(task_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Task not found.")
+
+    result = record.result
+    if result is None:
+        return TaskMindMapResponse(task_id=task_id, status="idle")
+
+    mindmap_path = result.mindmap_artifact_path or result.artifacts.get("mindmap_path")
+    mindmap = None
+    status_value = result.mindmap_status or ("ready" if mindmap_path else "idle")
+    error_message = result.mindmap_error_message
+    if status_value == "generating":
+        return TaskMindMapResponse(
+            task_id=task_id,
+            status="generating",
+            error_message=error_message,
+            updated_at=result.mindmap_updated_at,
+            mindmap=None,
+        )
+    if status_value == "failed":
+        return TaskMindMapResponse(
+            task_id=task_id,
+            status="failed",
+            error_message=error_message,
+            updated_at=result.mindmap_updated_at,
+            mindmap=None,
+        )
+    if mindmap_path:
+        try:
+            mindmap = load_task_mindmap(mindmap_path)
+        except HTTPException:
+            status_value = "failed"
+            error_message = "思维导图文件缺失或已损坏，请重新生成。"
+    if mindmap is not None:
+        status_value = "ready"
+
+    return TaskMindMapResponse(
+        task_id=task_id,
+        status=status_value,
+        error_message=error_message,
+        updated_at=result.mindmap_updated_at,
+        mindmap=mindmap,
+    )
+
+
+@app.post("/api/v1/tasks/{task_id}/mindmap", response_model=TaskMindMapResponse)
+def generate_task_mindmap(task_id: str, force: bool = False) -> TaskMindMapResponse:
+    task_store: SqliteTaskRepository = app.state.task_repository
+    task_worker: TaskWorker = app.state.task_worker
+    record = task_store.get_task(task_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Task not found.")
+    if record.status != TaskStatus.COMPLETED or record.result is None:
+        raise HTTPException(status_code=400, detail="仅已完成且有结果的任务可以生成思维导图。")
+    if not record.result.knowledge_note_markdown.strip():
+        raise HTTPException(status_code=400, detail="当前任务缺少知识笔记，暂时无法生成思维导图。")
+    if not record.result.artifacts.get("summary_path"):
+        raise HTTPException(status_code=400, detail="当前任务缺少摘要文件，暂时无法生成思维导图。")
+
+    existing_path = record.result.mindmap_artifact_path or record.result.artifacts.get("mindmap_path")
+    if record.result.mindmap_status == "generating" and not force:
+        return TaskMindMapResponse(
+            task_id=task_id,
+            status="generating",
+            error_message=None,
+            updated_at=record.result.mindmap_updated_at,
+            mindmap=None,
+        )
+    if existing_path and record.result.mindmap_status == "ready" and not force:
+        try:
+            return TaskMindMapResponse(
+                task_id=task_id,
+                status="ready",
+                error_message=None,
+                updated_at=record.result.mindmap_updated_at,
+                mindmap=load_task_mindmap(existing_path),
+            )
+        except HTTPException:
+            logger.warning("mindmap artifact missing or invalid, regenerating task_id=%s", task_id)
+
+    generating_result = record.result.model_copy(
+        update={
+            "mindmap_status": "generating",
+            "mindmap_error_message": None,
+        }
+    )
+    task_store.save_result(task_id, generating_result)
+    task_worker.submit_mindmap(task_id, force=force)
+    refreshed = task_store.get_task(task_id)
+    refreshed_result = refreshed.result if refreshed is not None else generating_result
+    return TaskMindMapResponse(
+        task_id=task_id,
+        status=refreshed_result.mindmap_status,
+        error_message=refreshed_result.mindmap_error_message,
+        updated_at=refreshed_result.mindmap_updated_at,
+        mindmap=None,
+    )
 
 
 @app.get("/api/v1/tasks/{task_id}/events", response_model=list[TaskEventResponse])

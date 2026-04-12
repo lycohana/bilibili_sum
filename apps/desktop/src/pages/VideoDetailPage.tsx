@@ -1,5 +1,7 @@
+import "@xyflow/react/dist/style.css";
+import { Controls, Handle, Position, ReactFlow, type Edge, type Node as FlowNode, type NodeProps } from "@xyflow/react";
 import { toBlob } from "html-to-image";
-import { useEffect, useMemo, useRef, useState, type SVGProps } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type SVGProps } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 
 import { progressEventClass, stageLabel, taskStatusClass } from "../appModel";
@@ -9,7 +11,7 @@ import { FloatingNoticeStack } from "../components/FloatingNoticeStack";
 import {
   buildChapterGroups,
   buildKnowledgeCards,
-  describeMindMapPlaceholder,
+  describeMindMapWorkspace,
   describeTaskContentState,
   pickDetailTaskId,
   resolveKnowledgeNoteMarkdown,
@@ -17,8 +19,8 @@ import {
   type KnowledgeCard,
   type TaskPanelState,
 } from "../detailModel";
-import type { TaskDetail, TaskEvent, TaskStatus, TaskSummary, VideoAssetDetail } from "../types";
-import { formatDateTime, formatDuration, formatTaskDuration, formatTokenCount, summarizeEvents, taskStatusLabel } from "../utils";
+import type { MindMapNode, TaskDetail, TaskEvent, TaskMindMapResponse, TaskStatus, TaskSummary, VideoAssetDetail } from "../types";
+import { formatDateTime, formatDuration, formatTaskDuration, formatTokenCount, sanitizeMindMapLabel, summarizeEvents, taskStatusLabel } from "../utils";
 
 type TaskContext = {
   detail: TaskDetail;
@@ -54,6 +56,52 @@ type PlayerSeekTarget = {
   nonce: number;
   seconds: number | null;
 };
+
+type MindMapCanvasNode = {
+  node: MindMapNode;
+  depth: number;
+  branch: "left" | "right" | "center";
+  x: number;
+  y: number;
+  parentId?: string;
+  accent: MindMapAccent;
+};
+
+type MindMapAccent = {
+  stroke: string;
+  surface: string;
+  ink: string;
+  shadow: string;
+};
+
+type MindMapFlowNodeData = {
+  label: string;
+  summary: string;
+  tone: "root" | "theme" | "topic" | "leaf";
+  branch: "left" | "right" | "center";
+  selected: boolean;
+  muted: boolean;
+  timeAnchor?: number | null;
+  sourceChapterTitles: string[];
+  sourceChapterStarts: number[];
+  accent: MindMapAccent;
+};
+
+const MINDMAP_ROOT_ACCENT: MindMapAccent = {
+  stroke: "#4c9fdd",
+  surface: "rgba(76, 159, 221, 0.18)",
+  ink: "#104f7d",
+  shadow: "rgba(76, 159, 221, 0.24)",
+};
+
+const MINDMAP_BRANCH_ACCENTS: MindMapAccent[] = [
+  { stroke: "#f2b84b", surface: "rgba(242, 184, 75, 0.18)", ink: "#805018", shadow: "rgba(242, 184, 75, 0.24)" },
+  { stroke: "#ff8c69", surface: "rgba(255, 140, 105, 0.16)", ink: "#91412a", shadow: "rgba(255, 140, 105, 0.24)" },
+  { stroke: "#8cc8ff", surface: "rgba(140, 200, 255, 0.18)", ink: "#285c86", shadow: "rgba(140, 200, 255, 0.24)" },
+  { stroke: "#f5a64a", surface: "rgba(245, 166, 74, 0.16)", ink: "#8a4a00", shadow: "rgba(245, 166, 74, 0.22)" },
+  { stroke: "#9dd8b3", surface: "rgba(157, 216, 179, 0.18)", ink: "#1f6a47", shadow: "rgba(157, 216, 179, 0.22)" },
+  { stroke: "#f7a8c2", surface: "rgba(247, 168, 194, 0.16)", ink: "#8e4563", shadow: "rgba(247, 168, 194, 0.22)" },
+];
 
 const detailTabs: Array<{ id: DetailTab; label: string; description: string }> = [
   { id: "knowledge", label: "知识卡片", description: "按概览、要点、章节整理当前任务结果。" },
@@ -144,6 +192,10 @@ function omitRecordKey<T>(record: Record<string, T>, key: string) {
   return nextRecord;
 }
 
+function shouldDisplayMindMapTimestamp(seconds?: number | null) {
+  return typeof seconds === "number" && Number.isFinite(seconds) && seconds > 0;
+}
+
 async function loadTaskContext(taskId: string): Promise<TaskContext> {
   const [detail, events] = await Promise.all([api.getTaskResult(taskId), api.getTaskEvents(taskId)]);
   return { detail, events };
@@ -162,10 +214,13 @@ export function VideoDetailPage({ onRefresh }: { onRefresh(): void }) {
   const [taskPanelState, setTaskPanelState] = useState<TaskPanelState>("collapsed");
   const [actionMenuOpen, setActionMenuOpen] = useState(false);
   const [status, setStatus] = useState("");
+  const [mindMaps, setMindMaps] = useState<Record<string, TaskMindMapResponse>>({});
+  const [mindMapLoading, setMindMapLoading] = useState<Record<string, boolean>>({});
   const [isExportingKnowledgeCard, setIsExportingKnowledgeCard] = useState(false);
   const [expandedChapterGroupIds, setExpandedChapterGroupIds] = useState<string[]>([]);
   const [selectedPageNumber, setSelectedPageNumber] = useState<number | null>(null);
   const [playerSeekTarget, setPlayerSeekTarget] = useState<PlayerSeekTarget>({ nonce: 0, seconds: null });
+  const [selectedMindMapNodeId, setSelectedMindMapNodeId] = useState<string | null>(null);
   const lastAutoRefreshEventRef = useRef<string | null>(null);
   const taskPopoverRef = useRef<HTMLDivElement | null>(null);
   const actionMenuRef = useRef<HTMLDivElement | null>(null);
@@ -244,6 +299,51 @@ export function VideoDetailPage({ onRefresh }: { onRefresh(): void }) {
 
     taskContextPromiseRef.current.set(taskId, taskContextRequest);
     return taskContextRequest;
+  }
+
+  async function loadMindMap(taskId: string, options: { force?: boolean } = {}) {
+    if (!options.force && mindMaps[taskId]) {
+      return mindMaps[taskId];
+    }
+    setMindMapLoading((current) => ({ ...current, [taskId]: true }));
+    try {
+      const response = await api.getTaskMindMap(taskId);
+      setMindMaps((current) => ({ ...current, [taskId]: response }));
+      return response;
+    } catch (error) {
+      const failedState: TaskMindMapResponse = {
+        task_id: taskId,
+        status: "failed",
+        error_message: error instanceof Error ? error.message : "思维导图加载失败",
+        updated_at: null,
+        mindmap: null,
+      };
+      setMindMaps((current) => ({ ...current, [taskId]: failedState }));
+      throw error;
+    } finally {
+      setMindMapLoading((current) => omitRecordKey(current, taskId));
+    }
+  }
+
+  async function triggerMindMapGeneration(taskId: string, options: { force?: boolean } = {}) {
+    setMindMapLoading((current) => ({ ...current, [taskId]: true }));
+    try {
+      const response = await api.generateTaskMindMap(taskId, { force: options.force });
+      setMindMaps((current) => ({ ...current, [taskId]: response }));
+      return response;
+    } catch (error) {
+      const failedState: TaskMindMapResponse = {
+        task_id: taskId,
+        status: "failed",
+        error_message: error instanceof Error ? error.message : "思维导图生成失败",
+        updated_at: null,
+        mindmap: null,
+      };
+      setMindMaps((current) => ({ ...current, [taskId]: failedState }));
+      throw error;
+    } finally {
+      setMindMapLoading((current) => omitRecordKey(current, taskId));
+    }
   }
 
   async function refreshDetail(options: RefreshDetailOptions = {}) {
@@ -333,7 +433,10 @@ export function VideoDetailPage({ onRefresh }: { onRefresh(): void }) {
     setTaskPanelState("collapsed");
     setActionMenuOpen(false);
     setStatus("");
+    setMindMaps({});
+    setMindMapLoading({});
     setSelectedPageNumber(null);
+    setSelectedMindMapNodeId(null);
     void refreshDetail({ preferredTaskId: null }).catch(() => undefined);
   }, [videoId]);
 
@@ -363,6 +466,7 @@ export function VideoDetailPage({ onRefresh }: { onRefresh(): void }) {
   const selectedTaskSummary = pageTasks.find((task) => task.task_id === selectedTaskId) ?? null;
   const selectedTaskContext = selectedTaskId ? taskContexts[selectedTaskId] ?? null : null;
   const selectedTaskDetail = selectedTaskContext?.detail ?? null;
+  const selectedTaskEvents = selectedTaskContext?.events ?? [];
   const isViewingLatest = Boolean(selectedTaskId && latestTaskId && selectedTaskId === latestTaskId);
   const isLatestTaskLoading = Boolean(latestTaskId && taskContextLoading[latestTaskId] && !latestTaskContext);
   const isSelectedTaskLoading = Boolean(selectedTaskId && taskContextLoading[selectedTaskId] && !selectedTaskContext);
@@ -398,6 +502,31 @@ export function VideoDetailPage({ onRefresh }: { onRefresh(): void }) {
       void ensureTaskContext(nextSelectedTaskId).catch(() => undefined);
     }
   }, [pageTasks]);
+
+  useEffect(() => {
+    if (!selectedTaskId || activeTab !== "mindmap") {
+      return;
+    }
+    void loadMindMap(selectedTaskId).catch(() => undefined);
+  }, [activeTab, selectedTaskId]);
+
+  useEffect(() => {
+    if (!selectedTaskId) {
+      return;
+    }
+    const currentMindMap = mindMaps[selectedTaskId];
+    const isGenerating = currentMindMap?.status === "generating" || selectedTaskDetail?.result?.mindmap_status === "generating";
+    if (!isGenerating) {
+      return;
+    }
+    const timer = window.setInterval(() => {
+      void Promise.all([
+        loadMindMap(selectedTaskId, { force: true }),
+        ensureTaskContext(selectedTaskId, { force: true }),
+      ]).catch(() => undefined);
+    }, 1500);
+    return () => window.clearInterval(timer);
+  }, [mindMaps, selectedTaskDetail?.result?.mindmap_status, selectedTaskId]);
 
   useEffect(() => {
     if (!latestTaskId) {
@@ -456,7 +585,11 @@ export function VideoDetailPage({ onRefresh }: { onRefresh(): void }) {
     }
 
     const terminalEvent = [...latestEvents].reverse().find((event) => (
-      event.stage === "completed" || event.stage === "failed" || event.stage === "cancelled"
+      event.stage === "completed"
+      || event.stage === "failed"
+      || event.stage === "cancelled"
+      || event.stage === "mindmap_completed"
+      || event.stage === "mindmap_failed"
     ));
     if (!terminalEvent) {
       return;
@@ -598,11 +731,23 @@ export function VideoDetailPage({ onRefresh }: { onRefresh(): void }) {
     }
     return describeTaskContentState(selectedTaskDetail);
   }, [isSelectedTaskLoading, selectedTaskDetail, selectedTaskLoadError]);
+  const selectedMindMap = useMemo(() => {
+    const current = selectedTaskId ? mindMaps[selectedTaskId] ?? null : null;
+    if (current?.status === "ready" && (!current.mindmap || !current.mindmap.nodes?.length)) {
+      return {
+        ...current,
+        status: "failed" as const,
+        error_message: current.error_message || "思维导图数据为空，请重新生成。",
+        mindmap: null,
+      };
+    }
+    return current;
+  }, [mindMaps, selectedTaskId]);
   const mindMapState = useMemo(() => {
     if (isSelectedTaskLoading) {
       return {
         tone: "pending",
-        title: "主题树将在版本载入后可用",
+        title: "思维导图将在版本载入后可用",
         description: "当前正在同步所选内容版本的详细结果。",
         actionLabel: "加载中",
         actionEnabled: false,
@@ -611,14 +756,14 @@ export function VideoDetailPage({ onRefresh }: { onRefresh(): void }) {
     if (selectedTaskLoadError) {
       return {
         tone: "failed",
-        title: "当前版本暂时无法打开主题树",
+        title: "当前版本暂时无法打开思维导图",
         description: selectedTaskLoadError,
         actionLabel: "稍后重试",
         actionEnabled: false,
       } as const;
     }
-    return describeMindMapPlaceholder(selectedTaskDetail);
-  }, [isSelectedTaskLoading, selectedTaskDetail, selectedTaskLoadError]);
+    return describeMindMapWorkspace(selectedTaskDetail, selectedMindMap);
+  }, [isSelectedTaskLoading, selectedMindMap, selectedTaskDetail, selectedTaskLoadError]);
   const knowledgeCards = useMemo(() => buildKnowledgeCards(selectedResult), [selectedResult]);
   const overviewCard = knowledgeCards.find((item) => item.kind === "overview") ?? null;
   const keyPointCards = knowledgeCards.filter((item) => item.kind === "key-point");
@@ -670,6 +815,58 @@ export function VideoDetailPage({ onRefresh }: { onRefresh(): void }) {
     }
     return withBilibiliPlayerSeek(bilibiliEmbedBaseUrl, playerSeekTarget.seconds, playerSeekTarget.nonce);
   }, [bilibiliEmbedBaseUrl, playerSeekTarget]);
+  const readyMindMap = selectedMindMap?.status === "ready" && selectedTaskDetail?.result?.mindmap_status !== "generating"
+    ? selectedMindMap.mindmap ?? null
+    : null;
+  const mindMapEvents = useMemo(
+    () => selectedTaskEvents.filter((event) => event.stage.startsWith("mindmap_")),
+    [selectedTaskEvents],
+  );
+  const mindMapProgress = useMemo(() => {
+    if (!selectedTaskId) {
+      return null;
+    }
+
+    const generating = selectedMindMap?.status === "generating" || selectedTaskDetail?.result?.mindmap_status === "generating";
+    const loading = Boolean(mindMapLoading[selectedTaskId]);
+    const summarized = mindMapEvents.length ? summarizeEvents(mindMapEvents) : null;
+    if (!generating && !loading && !summarized?.filtered.length) {
+      return null;
+    }
+
+    return {
+      progress: Math.max(0, Math.min(100, Math.round(summarized?.progress ?? (loading ? 6 : 90)))),
+      currentLabel: summarized?.currentEvent?.stage ? stageLabel(summarized.currentEvent.stage) : (loading ? "提交生成请求" : "等待阶段回传"),
+      message: selectedMindMap?.error_message
+        || selectedTaskDetail?.result?.mindmap_error_message
+        || summarized?.failedEvent?.message
+        || summarized?.currentEvent?.message
+        || (loading ? "正在向本地服务提交导图生成请求。" : "系统正在生成思维导图，阶段完成后会自动刷新。"),
+      events: summarized?.filtered ?? [],
+      hasError: Boolean(summarized?.failedEvent),
+    };
+  }, [mindMapEvents, mindMapLoading, selectedMindMap, selectedTaskDetail?.result?.mindmap_error_message, selectedTaskDetail?.result?.mindmap_status, selectedTaskId]);
+  const mindMapMeta = readyMindMap
+    ? "主题导图视图"
+    : mindMapProgress
+      ? `${mindMapProgress.currentLabel} · ${mindMapProgress.progress}%`
+      : "按需生成";
+  const readyMindMapRoot = useMemo(() => {
+    if (!readyMindMap) {
+      return null;
+    }
+    return readyMindMap.nodes.find((node) => node.id === readyMindMap.root) ?? readyMindMap.nodes[0] ?? null;
+  }, [readyMindMap]);
+  const mindMapFlow = useMemo(
+    () => (readyMindMapRoot ? buildMindMapFlow(readyMindMapRoot, selectedMindMapNodeId) : { nodes: [], edges: [] }),
+    [readyMindMapRoot, selectedMindMapNodeId],
+  );
+  const selectedMindMapNode = useMemo(() => {
+    if (!readyMindMapRoot || !selectedMindMapNodeId) {
+      return null;
+    }
+    return findMindMapNodeById(readyMindMapRoot, selectedMindMapNodeId);
+  }, [readyMindMapRoot, selectedMindMapNodeId]);
 
   useEffect(() => {
     const chapterGroupSignature = chapterGroups.map((group) => group.id).join("|");
@@ -692,6 +889,14 @@ export function VideoDetailPage({ onRefresh }: { onRefresh(): void }) {
     });
   }, [chapterGroups]);
 
+  useEffect(() => {
+    if (!readyMindMapRoot) {
+      setSelectedMindMapNodeId(null);
+      return;
+    }
+    setSelectedMindMapNodeId((current) => (current && findMindMapNodeById(readyMindMapRoot, current) ? current : null));
+  }, [readyMindMapRoot]);
+
   function handleSeekToChapter(seconds: number | null) {
     if (!bilibiliEmbedBaseUrl || seconds == null) {
       return;
@@ -711,6 +916,25 @@ export function VideoDetailPage({ onRefresh }: { onRefresh(): void }) {
       }
       return current.filter((item) => item !== groupId);
     });
+  }
+
+  async function handleGenerateMindMap(force = false) {
+    if (!selectedTaskId) {
+      return;
+    }
+    setActiveTab("mindmap");
+    setStatus(force ? "已发起重新生成思维导图..." : "已发起生成思维导图...");
+    try {
+      const response = await triggerMindMapGeneration(selectedTaskId, { force });
+      if (response.status === "ready") {
+        setSelectedMindMapNodeId(null);
+        setStatus("思维导图已更新");
+        return;
+      }
+      setStatus(force ? "正在重新生成思维导图..." : "正在生成思维导图...");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "思维导图生成失败");
+    }
   }
 
   if (!video) {
@@ -812,6 +1036,24 @@ export function VideoDetailPage({ onRefresh }: { onRefresh(): void }) {
                           <span className="detail-action-menu-copy">
                             <strong>重新生成摘要</strong>
                             <small>复用当前查看版本的转写与分段，仅重新调用 LLM 生成更完整的摘要结果。</small>
+                          </span>
+                        </button>
+                        <button
+                          className="detail-action-menu-item"
+                          role="menuitem"
+                          type="button"
+                          disabled={!selectedTaskId || selectedTaskStatus !== "completed" || Boolean(selectedTaskId && mindMapLoading[selectedTaskId])}
+                          onClick={async () => {
+                            setActionMenuOpen(false);
+                            await handleGenerateMindMap(true);
+                          }}
+                        >
+                          <span className="detail-action-menu-item-icon" aria-hidden="true">
+                            <IconBrainCircuit className="detail-action-icon" />
+                          </span>
+                          <span className="detail-action-menu-copy">
+                            <strong>重新生成思维导图</strong>
+                            <small>基于当前查看版本的摘要与知识笔记，重新调用 LLM 生成新的思维导图。</small>
                           </span>
                         </button>
                         <button
@@ -1340,24 +1582,139 @@ export function VideoDetailPage({ onRefresh }: { onRefresh(): void }) {
                 <section className="detail-content-section detail-content-section-last">
                   <div className="detail-section-heading">
                     <h3 className="detail-section-label">Mind Map</h3>
-                    <span className="detail-section-meta">知识图谱入口</span>
-                  </div>
-                  <article className={`detail-mindmap-placeholder tone-${mindMapState.tone}`}>
-                    <div className="detail-mindmap-copy">
-                      <h4 className="detail-section-title">{mindMapState.title}</h4>
-                      <p className="detail-section-body">{mindMapState.description}</p>
+                    <div className="detail-section-heading-actions">
+                      <span className="detail-section-meta">{mindMapMeta}</span>
                     </div>
-                    {mindMapState.actionLabel ? (
-                      <button
-                        className="secondary-button"
-                        type="button"
-                        disabled={!mindMapState.actionEnabled}
-                        aria-disabled={!mindMapState.actionEnabled}
-                      >
-                        {mindMapState.actionLabel}
-                      </button>
-                    ) : null}
-                  </article>
+                  </div>
+                  {readyMindMap ? (
+                    <div className="detail-mindmap-workspace">
+                      <div className="detail-mindmap-canvas" role="tree" aria-label="思维导图">
+                        <div className="detail-mindmap-flow-shell">
+                          <ReactFlow
+                            key={`${readyMindMap.root}-${readyMindMap.nodes.length}`}
+                            nodes={mindMapFlow.nodes}
+                            edges={mindMapFlow.edges}
+                            fitView
+                            fitViewOptions={{ padding: 0.24 }}
+                            minZoom={0.38}
+                            maxZoom={1.6}
+                            nodeTypes={mindMapNodeTypes}
+                            nodesDraggable={false}
+                            nodesConnectable={false}
+                            elementsSelectable
+                            proOptions={{ hideAttribution: true }}
+                            onNodeClick={(_, node) => setSelectedMindMapNodeId(node.id)}
+                            onPaneClick={() => setSelectedMindMapNodeId(null)}
+                          >
+                            <Controls showInteractive={false} />
+                          </ReactFlow>
+                        </div>
+                      </div>
+                      <div className="detail-mindmap-inspector">
+                        {selectedMindMapNode ? (
+                          <article className="detail-mindmap-inspector-card">
+                            <div className="detail-mindmap-inspector-head">
+                              <div>
+                                <span className="detail-mindmap-inspector-kicker">{formatMindMapNodeType(selectedMindMapNode.type)}</span>
+                                <h4>{sanitizeMindMapLabel(selectedMindMapNode.label, selectedMindMapNode.summary)}</h4>
+                              </div>
+                              {shouldDisplayMindMapTimestamp(selectedMindMapNode.time_anchor) && bilibiliEmbedBaseUrl ? (
+                                <button
+                                  className="detail-mindmap-seek-button"
+                                  type="button"
+                                  onClick={() => handleSeekToChapter(selectedMindMapNode.time_anchor ?? null)}
+                                >
+                                  <IconArrowRight className="detail-mindmap-seek-icon" />
+                                  定位到片段 {formatDuration(selectedMindMapNode.time_anchor)}
+                                </button>
+                              ) : null}
+                            </div>
+                            {selectedMindMapNode.summary ? (
+                              <MarkdownContent className="detail-mindmap-summary-markdown" compact content={selectedMindMapNode.summary} />
+                            ) : null}
+                            {selectedMindMapNode.source_chapter_titles.length ? (
+                              <div className="detail-mindmap-inspector-tags">
+                                {selectedMindMapNode.source_chapter_titles.slice(0, 3).map((title: string, index: number) => (
+                                  <span className="detail-mindmap-inspector-tag" key={`${title}-${index}`}>
+                                    {title}
+                                    {shouldDisplayMindMapTimestamp(selectedMindMapNode.source_chapter_starts[index]) ? ` · ${formatDuration(selectedMindMapNode.source_chapter_starts[index]!)}` : ""}
+                                  </span>
+                                ))}
+                              </div>
+                            ) : null}
+                          </article>
+                        ) : (
+                          <div className="detail-mindmap-inspector-hint">
+                            <strong>点击节点查看摘要与来源片段</strong>
+                            <span>主干只保留结构和标签，避免把导图重新变成一块块内容卡片。</span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ) : mindMapState ? (
+                    <article className={`detail-mindmap-placeholder tone-${mindMapState.tone}`}>
+                      <div className="detail-mindmap-copy">
+                        <h4 className="detail-section-title">{mindMapState.title}</h4>
+                        <p className="detail-section-body">{mindMapState.description}</p>
+                        {mindMapProgress ? (
+                          <div className="detail-mindmap-progress">
+                            <div className="progress-bar-wrapper">
+                              <div
+                                className="progress-bar-simple"
+                                role="progressbar"
+                                aria-valuemin={0}
+                                aria-valuemax={100}
+                                aria-valuenow={mindMapProgress.progress}
+                                aria-label="思维导图生成进度"
+                              >
+                                <div
+                                  className={`progress-fill-simple ${mindMapProgress.hasError ? "error" : mindMapProgress.progress >= 100 ? "success" : ""}`}
+                                  style={{ width: `${mindMapProgress.progress}%` }}
+                                />
+                              </div>
+                              <div className="progress-info-simple">
+                                <span className="progress-percent-simple">{mindMapProgress.progress}%</span>
+                                <span className="progress-status-simple">{mindMapProgress.message}</span>
+                              </div>
+                            </div>
+                            {mindMapProgress.events.length ? (
+                              <details className="progress-stage-card">
+                                <summary>
+                                  <strong>{mindMapProgress.currentLabel}</strong>
+                                  <span className="progress-stage-toggle">查看导图进度</span>
+                                </summary>
+                                <div className="progress-stage-list">
+                                  {mindMapProgress.events.map((event) => (
+                                    <article className={`progress-event-card ${progressEventClass(event.stage)}`} key={event.event_id}>
+                                      <div className="progress-event-index">{stageLabel(event.stage)}</div>
+                                      <div className="progress-event-copy">
+                                        <div className="progress-event-topline">
+                                          <strong>{event.message}</strong>
+                                          <time>{formatDateTime(event.created_at)}</time>
+                                        </div>
+                                        <div className="progress-event-meta">阶段进度 {event.progress}%</div>
+                                      </div>
+                                    </article>
+                                  ))}
+                                </div>
+                              </details>
+                            ) : null}
+                          </div>
+                        ) : null}
+                      </div>
+                      {mindMapState.actionLabel ? (
+                        <button
+                          className="secondary-button"
+                          type="button"
+                          disabled={!mindMapState.actionEnabled || Boolean(selectedTaskId && mindMapLoading[selectedTaskId])}
+                          aria-disabled={!mindMapState.actionEnabled || Boolean(selectedTaskId && mindMapLoading[selectedTaskId])}
+                          onClick={() => handleGenerateMindMap(mindMapState.tone === "failed")}
+                        >
+                          {selectedTaskId && mindMapLoading[selectedTaskId] ? "处理中..." : mindMapState.actionLabel}
+                        </button>
+                      ) : null}
+                    </article>
+                  ) : null}
                 </section>
               </section>
             ) : null}
@@ -1432,6 +1789,322 @@ function KnowledgeCardBlock({
     </article>
   );
 }
+
+function findMindMapNodeById(root: MindMapNode, nodeId: string): MindMapNode | null {
+  if (root.id === nodeId) {
+    return root;
+  }
+  for (const child of root.children) {
+    const match = findMindMapNodeById(child, nodeId);
+    if (match) {
+      return match;
+    }
+  }
+  return null;
+}
+
+function formatMindMapNodeType(type: MindMapNode["type"]): string {
+  switch (type) {
+    case "root":
+      return "中心主题";
+    case "theme":
+      return "一级主题";
+    case "topic":
+      return "子主题";
+    case "leaf":
+      return "知识点";
+    default:
+      return "节点";
+  }
+}
+
+function measureMindMapSpan(node: MindMapNode, depth = 0): number {
+  const minimum = depth === 0 ? 132 : node.type === "theme" ? 88 : node.type === "topic" ? 66 : 56;
+  if (!node.children.length) {
+    return minimum;
+  }
+  const childGap = depth === 0 ? 58 : depth === 1 ? 30 : 18;
+  const childrenSpan = node.children.reduce((sum, child) => sum + measureMindMapSpan(child, depth + 1), 0) + childGap * (node.children.length - 1);
+  return Math.max(minimum, childrenSpan);
+}
+
+function getMindMapHorizontalOffset(parentDepth: number, child: MindMapNode): number {
+  if (parentDepth === 0) {
+    return 112;
+  }
+  if (parentDepth === 1) {
+    return child.type === "leaf" ? 78 : 94;
+  }
+  return child.type === "leaf" ? 54 : 68;
+}
+
+function getMindMapNodeSize(node: MindMapNode): { width: number; height: number } {
+  switch (node.type) {
+    case "root":
+      return { width: 252, height: 112 };
+    case "theme":
+      return { width: 208, height: 44 };
+    case "topic":
+      return { width: 212, height: 40 };
+    case "leaf":
+      return { width: 232, height: 52 };
+    default:
+      return { width: 200, height: 48 };
+  }
+}
+
+function getMindMapFocusIds(positioned: MindMapCanvasNode[], selectedNodeId: string | null): Set<string> | null {
+  if (!selectedNodeId) {
+    return null;
+  }
+
+  const parentById = new Map<string, string>();
+  const childrenById = new Map<string, string[]>();
+
+  positioned.forEach((item) => {
+    if (!item.parentId) {
+      return;
+    }
+    parentById.set(item.node.id, item.parentId);
+    childrenById.set(item.parentId, [...(childrenById.get(item.parentId) ?? []), item.node.id]);
+  });
+
+  const focusIds = new Set<string>([selectedNodeId]);
+  let currentId = selectedNodeId;
+  while (parentById.has(currentId)) {
+    currentId = parentById.get(currentId)!;
+    focusIds.add(currentId);
+  }
+
+  const stack = [selectedNodeId];
+  while (stack.length) {
+    const nodeId = stack.pop()!;
+    const children = childrenById.get(nodeId) ?? [];
+    children.forEach((childId) => {
+      if (!focusIds.has(childId)) {
+        focusIds.add(childId);
+        stack.push(childId);
+      }
+    });
+  }
+
+  return focusIds;
+}
+
+function layoutMindMap(root: MindMapNode): MindMapCanvasNode[] {
+  const nodes: MindMapCanvasNode[] = [];
+  nodes.push({ node: root, depth: 0, branch: "center", x: 0, y: 0, accent: MINDMAP_ROOT_ACCENT });
+  const rootSize = getMindMapNodeSize(root);
+
+  const leftThemes: Array<{ node: MindMapNode; accent: MindMapAccent }> = [];
+  const rightThemes: Array<{ node: MindMapNode; accent: MindMapAccent }> = [];
+  let leftWeight = 0;
+  let rightWeight = 0;
+
+  root.children.forEach((themeNode, index) => {
+    const accent = MINDMAP_BRANCH_ACCENTS[index % MINDMAP_BRANCH_ACCENTS.length];
+    const span = measureMindMapSpan(themeNode, 1);
+    if (leftWeight <= rightWeight) {
+      leftThemes.push({ node: themeNode, accent });
+      leftWeight += span;
+      return;
+    }
+    rightThemes.push({ node: themeNode, accent });
+    rightWeight += span;
+  });
+
+  const placeSubtree = (
+    node: MindMapNode,
+    depth: number,
+    branch: "left" | "right",
+    accent: MindMapAccent,
+    x: number,
+    y: number,
+    parentId: string,
+  ) => {
+    nodes.push({ node, depth, branch, x, y, parentId, accent });
+    if (!node.children.length) {
+      return;
+    }
+
+    const childGap = depth === 1 ? 30 : 18;
+    const nodeSize = getMindMapNodeSize(node);
+    const outgoingX = branch === "left" ? x - nodeSize.width : x + nodeSize.width;
+    const childSpans = node.children.map((child) => ({ child, span: measureMindMapSpan(child, depth + 1) }));
+    const totalSpan = childSpans.reduce((sum, item) => sum + item.span, 0) + childGap * (childSpans.length - 1);
+    let cursor = y - totalSpan / 2;
+
+    childSpans.forEach(({ child, span }) => {
+      const childY = cursor + span / 2;
+      const childX = branch === "left"
+        ? outgoingX - getMindMapHorizontalOffset(depth, child)
+        : outgoingX + getMindMapHorizontalOffset(depth, child);
+      placeSubtree(child, depth + 1, branch, accent, childX, childY, node.id);
+      cursor += span + childGap;
+    });
+  };
+
+  const placeSide = (items: Array<{ node: MindMapNode; accent: MindMapAccent }>, branch: "left" | "right") => {
+    if (!items.length) {
+      return;
+    }
+    const themeGap = 58;
+    const spans = items.map((item) => ({ ...item, span: measureMindMapSpan(item.node, 1) }));
+    const totalSpan = spans.reduce((sum, item) => sum + item.span, 0) + themeGap * (spans.length - 1);
+    let cursor = -totalSpan / 2;
+
+    spans.forEach(({ node, accent, span }) => {
+      const themeY = cursor + span / 2;
+      const themeX = branch === "left"
+        ? -(rootSize.width / 2 + getMindMapHorizontalOffset(0, node))
+        : rootSize.width / 2 + getMindMapHorizontalOffset(0, node);
+      placeSubtree(node, 1, branch, accent, themeX, themeY, root.id);
+      cursor += span + themeGap;
+    });
+  };
+
+  placeSide(leftThemes, "left");
+  placeSide(rightThemes, "right");
+
+  const bounds = nodes.reduce(
+    (acc, item) => {
+      const size = getMindMapNodeSize(item.node);
+      const left = item.branch === "left" ? item.x - size.width : item.branch === "right" ? item.x : item.x - size.width / 2;
+      const right = item.branch === "left" ? item.x : item.branch === "right" ? item.x + size.width : item.x + size.width / 2;
+      return {
+        left: Math.min(acc.left, left),
+        right: Math.max(acc.right, right),
+        top: Math.min(acc.top, item.y - size.height / 2),
+        bottom: Math.max(acc.bottom, item.y + size.height / 2),
+      };
+    },
+    { left: Number.POSITIVE_INFINITY, right: Number.NEGATIVE_INFINITY, top: Number.POSITIVE_INFINITY, bottom: Number.NEGATIVE_INFINITY },
+  );
+  const offsetX = -((bounds.left + bounds.right) / 2);
+  const offsetY = -((bounds.top + bounds.bottom) / 2);
+
+  return nodes.map((item) => ({
+    ...item,
+    x: item.x + offsetX,
+    y: item.y + offsetY,
+  }));
+}
+
+function buildMindMapFlow(root: MindMapNode, selectedNodeId: string | null): { nodes: FlowNode<MindMapFlowNodeData>[]; edges: Edge[] } {
+  const positioned = layoutMindMap(root);
+  const focusIds = getMindMapFocusIds(positioned, selectedNodeId);
+  const hasFocus = Boolean(focusIds?.size);
+  const nodes: FlowNode<MindMapFlowNodeData>[] = positioned.map((item) => {
+    const selected = selectedNodeId === item.node.id;
+    const muted = hasFocus ? !focusIds!.has(item.node.id) : false;
+    const size = getMindMapNodeSize(item.node);
+    const position = item.branch === "left"
+      ? { x: item.x - size.width, y: item.y - size.height / 2 }
+      : item.branch === "right"
+        ? { x: item.x, y: item.y - size.height / 2 }
+        : { x: item.x - size.width / 2, y: item.y - size.height / 2 };
+    return {
+      id: item.node.id,
+      type: "mindmap",
+      position,
+      draggable: false,
+      selectable: true,
+      sourcePosition: item.branch === "left" ? Position.Left : Position.Right,
+      targetPosition: item.branch === "left" ? Position.Right : Position.Left,
+      className: `${selected ? "is-active " : ""}${muted ? "is-muted" : ""}`.trim(),
+      data: {
+        label: item.node.label,
+        summary: item.node.summary,
+        tone: item.node.type,
+        branch: item.branch,
+        selected,
+        muted,
+        timeAnchor: item.node.time_anchor ?? null,
+        sourceChapterTitles: item.node.source_chapter_titles,
+        sourceChapterStarts: item.node.source_chapter_starts,
+        accent: item.accent,
+      },
+    };
+  });
+
+  const edges: Edge[] = positioned
+    .filter((item) => item.parentId)
+    .map((item) => {
+      const muted = hasFocus ? !(focusIds!.has(item.node.id) && focusIds!.has(item.parentId!)) : false;
+      return {
+        id: `${item.parentId}-${item.node.id}`,
+        source: item.parentId!,
+        target: item.node.id,
+        sourceHandle: item.branch === "left" ? "source-left" : "source-right",
+        targetHandle: item.branch === "left" ? "target-right" : "target-left",
+        type: "simplebezier",
+        animated: false,
+        className: `detail-mindmap-edge${muted ? " is-muted" : ""}`,
+        style: {
+          stroke: item.accent.stroke,
+          strokeWidth: item.depth <= 1 ? 2.8 : 2.2,
+        },
+      };
+    });
+
+  return { nodes, edges };
+}
+
+function MindMapFlowNode({ data }: NodeProps<FlowNode<MindMapFlowNodeData>>) {
+  const style = {
+    "--mindmap-branch": data.accent.stroke,
+    "--mindmap-branch-soft": data.accent.surface,
+    "--mindmap-branch-ink": data.accent.ink,
+    "--mindmap-branch-shadow": data.accent.shadow,
+  } as CSSProperties;
+  const displayLabel = sanitizeMindMapLabel(data.label, data.summary);
+
+  return (
+    <div className={`detail-mindmap-node-card tone-${data.tone}`} style={style}>
+      {data.tone === "root" ? (
+        <>
+          <Handle className="detail-mindmap-handle" id="source-left" position={Position.Left} type="source" />
+          <Handle className="detail-mindmap-handle" id="source-right" position={Position.Right} type="source" />
+        </>
+      ) : (
+        <>
+          <Handle
+            className="detail-mindmap-handle"
+            id="target-left"
+            position={Position.Left}
+            type="target"
+          />
+          <Handle
+            className="detail-mindmap-handle"
+            id="target-right"
+            position={Position.Right}
+            type="target"
+          />
+          <Handle
+            className="detail-mindmap-handle"
+            id="source-left"
+            position={Position.Left}
+            type="source"
+          />
+          <Handle
+            className="detail-mindmap-handle"
+            id="source-right"
+            position={Position.Right}
+            type="source"
+          />
+        </>
+      )}
+      <div className="detail-mindmap-node-head">
+        <MarkdownContent className="detail-mindmap-node-label" compact content={displayLabel} />
+        {shouldDisplayMindMapTimestamp(data.timeAnchor) ? <small>{formatDuration(data.timeAnchor)}</small> : null}
+      </div>
+    </div>
+  );
+}
+
+const mindMapNodeTypes = {
+  mindmap: MindMapFlowNode,
+};
 
 function TaskStatePanel({ state }: { state: NonNullable<ReturnType<typeof describeTaskContentState>> }) {
   return (

@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from video_sum_core.models.tasks import InputType, TaskInput, TaskStatus
+from video_sum_core.models.tasks import InputType, TaskInput, TaskResult, TaskStatus
 from video_sum_core.errors import VideoSumError
 from video_sum_core.pipeline.real import PipelineSettings, RealPipelineRunner
 from video_sum_core.pipeline.base import PipelineContext
@@ -233,6 +233,141 @@ def test_export_result_preserves_llm_usage() -> None:
     assert result.knowledge_note_markdown.startswith("# 测试标题")
     assert result.chapter_groups[0]["children"][0]["title"] == "章节 1"
     assert result.artifacts["knowledge_note_path"].endswith("knowledge_note.md")
+
+
+def test_real_pipeline_normalizes_mindmap_payload_and_repairs_leaf_time() -> None:
+    runner = RealPipelineRunner(PipelineSettings(tasks_dir=Path(".")))
+    result = TaskResult(
+        overview="讲解函数概念与例子。",
+        knowledge_note_markdown="# 笔记",
+        timeline=[
+            {"title": "函数定义", "start": 12.0, "summary": "讲函数的定义域和值域。"},
+            {"title": "典型例子", "start": 88.0, "summary": "分析二次函数与绝对值函数。"},
+        ],
+        chapter_groups=[
+            {"title": "基础定义", "start": 12.0, "summary": "函数的基本定义。", "children": [{"title": "函数定义", "start": 12.0, "summary": "讲函数的定义域和值域。"}]},
+        ],
+    )
+
+    mindmap = runner._normalize_mindmap_payload(
+        {
+            "title": "函数导图",
+            "root": "root",
+            "nodes": [
+                {
+                    "id": "root",
+                    "label": "函数",
+                    "type": "root",
+                    "summary": "整体导图",
+                    "children": [
+                        {
+                            "label": "主题1",
+                            "type": "theme",
+                            "summary": "函数定义",
+                            "children": [
+                                {
+                                    "label": "函数定义",
+                                    "type": "leaf",
+                                    "summary": "解释定义域和值域",
+                                    "children": [],
+                                    "source_chapter_titles": ["函数定义"],
+                                    "source_chapter_starts": [12.0],
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ],
+        },
+        title="函数导图",
+        result=result,
+    )
+
+    assert mindmap.root == "root"
+    assert mindmap.nodes[0].children[0].type == "theme"
+    assert mindmap.nodes[0].children[0].label != "主题1"
+    assert mindmap.nodes[0].children[0].children[0].type == "leaf"
+    assert mindmap.nodes[0].children[0].children[0].time_anchor == 12.0
+
+
+def test_real_pipeline_preserves_latex_and_allows_richer_mindmap_structure() -> None:
+    runner = RealPipelineRunner(PipelineSettings(tasks_dir=Path(".")))
+    result = TaskResult(
+        overview="讲解数列极限的定义、证明和典型例题。",
+        knowledge_note_markdown="# 笔记",
+        timeline=[
+            {"title": "定义", "start": 10.0, "summary": "介绍 $\\varepsilon$-$N$ 定义。"},
+            {"title": "例题", "start": 120.0, "summary": "证明 $\\frac{1}{n}\\to 0$。"},
+        ],
+    )
+
+    mindmap = runner._normalize_mindmap_payload(
+        {
+            "title": "数列极限导图",
+            "root": "root",
+            "nodes": [
+                {
+                    "id": "root",
+                    "label": "数列极限",
+                    "type": "root",
+                    "summary": "整体导图",
+                    "children": [
+                        {
+                            "label": f"主题{index + 1}",
+                            "type": "theme",
+                            "summary": "围绕公式 $\\frac{1}{n}$ 与 $(-1)^n$ 的讨论，说明如何把定义、例题、注意事项一起组织成更完整的知识树。",
+                            "children": [
+                                {
+                                    "label": "例题：$\\frac{1}{n}\\to 0$",
+                                    "type": "leaf",
+                                    "summary": "利用 $N>\\frac{1}{\\varepsilon}$ 说明当 $n>N$ 时有 $\\left|\\frac{1}{n}-0\\right|<\\varepsilon$。",
+                                    "children": [],
+                                    "source_chapter_titles": ["例题"],
+                                    "source_chapter_starts": [120.0],
+                                }
+                            ],
+                        }
+                        for index in range(7)
+                    ],
+                }
+            ],
+        },
+        title="数列极限导图",
+        result=result,
+    )
+
+    assert len(mindmap.nodes[0].children) == 7
+    assert "\\frac{1}{n}" in mindmap.nodes[0].children[0].children[0].label
+    assert "\\left|\\frac{1}{n}-0\\right|<\\varepsilon" in mindmap.nodes[0].children[0].children[0].summary
+
+
+def test_clean_title_does_not_cut_inline_formula_in_half() -> None:
+    runner = RealPipelineRunner(PipelineSettings(tasks_dir=Path(".")))
+
+    cleaned = runner._clean_title(
+        "核心公式 $f(x_0+\\Delta x) \\approx f(x_0)+f'(x_0)\\Delta x$ 的几何解释与近似推导"
+    )
+
+    assert cleaned.count("$") % 2 == 0
+    assert "\\approx" in cleaned
+    assert "\\Delta x" in cleaned
+    assert len(cleaned) > 24
+
+
+def test_render_user_prompt_template_preserves_latex_braces() -> None:
+    runner = RealPipelineRunner(PipelineSettings(tasks_dir=Path(".")))
+
+    rendered = runner._render_user_prompt_template(
+        "标题：{title}\n公式：$\\frac{1}{n}$\n示例：{{\"x\":1}}\n摘要：{summary_json}",
+        title="数列极限",
+        transcript_excerpt="",
+        segments_excerpt="",
+        summary_json='{"ok": true}',
+    )
+
+    assert "$\\frac{1}{n}$" in rendered
+    assert '{"x":1}' in rendered
+    assert "数列极限" in rendered
 
 
 def test_build_summary_chunks_splits_large_segments() -> None:

@@ -5,6 +5,7 @@ import type {
   SystemInfo,
   TaskDetail,
   TaskEvent,
+  TaskMindMapResponse,
   TaskSummary,
   VideoAssetDetail,
   VideoProbeResult,
@@ -104,6 +105,16 @@ export const api = {
   },
   getTaskEvents(taskId: string) {
     return fetchJson<TaskEvent[]>(`/api/v1/tasks/${taskId}/events`);
+  },
+  getTaskMindMap(taskId: string) {
+    return fetchJson<TaskMindMapResponse>(`/api/v1/tasks/${taskId}/mindmap`);
+  },
+  generateTaskMindMap(taskId: string, options?: { force?: boolean }) {
+    const url = new URL(`/api/v1/tasks/${taskId}/mindmap`, window.location.origin);
+    if (options?.force) {
+      url.searchParams.set("force", "1");
+    }
+    return fetchJson<TaskMindMapResponse>(url.toString(), { method: "POST" });
   },
   deleteTask(taskId: string) {
     return fetchJson<{ deleted: boolean }>(`/api/v1/tasks/${taskId}`, { method: "DELETE" });

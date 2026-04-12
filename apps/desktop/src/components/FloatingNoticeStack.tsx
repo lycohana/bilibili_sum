@@ -23,7 +23,10 @@ function resolveAutoDismissDuration(message: string, tone: FloatingNoticeTone, d
   if (durationMs !== undefined) {
     return durationMs;
   }
-  if (/^正在|处理中|请先|检测到.+请先/i.test(message)) {
+  if (/^正在(刷新|导出|复制|重新生成|生成|提交|拉起)|^已发起/i.test(message)) {
+    return 3200;
+  }
+  if (/处理中|请先|检测到.+请先/i.test(message)) {
     return null;
   }
   return tone === "error" ? 6500 : 4800;

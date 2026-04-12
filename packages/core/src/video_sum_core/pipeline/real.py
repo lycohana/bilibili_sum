@@ -21,7 +21,7 @@ from video_sum_core.errors import (
     UnsupportedInputError,
     VideoSumError,
 )
-from video_sum_core.models.tasks import InputType, TaskResult
+from video_sum_core.models.tasks import InputType, MindMapNode, TaskMindMap, TaskResult
 from video_sum_core.pipeline.base import PipelineContext, PipelineEvent, PipelineEventReporter, PipelineRunner
 from video_sum_core.utils import ensure_directory, normalize_video_url, sanitize_filename
 from video_sum_infra.runtime import (
@@ -140,6 +140,8 @@ class PipelineSettings:
     llm_model: str = ""
     summary_system_prompt: str = ""
     summary_user_prompt_template: str = ""
+    mindmap_system_prompt: str = ""
+    mindmap_user_prompt_template: str = ""
     summary_chunk_target_chars: int = 2200
     summary_chunk_overlap_segments: int = 2
     summary_chunk_concurrency: int = 2
@@ -1290,15 +1292,21 @@ class RealPipelineRunner(PipelineRunner):
         transcript_excerpt: str,
         segments_excerpt: str,
         summary_json: str = "",
+        knowledge_note_markdown: str = "",
     ) -> str:
-        return template.format(
-            title=title,
-            transcript=transcript_excerpt,
-            transcript_excerpt=transcript_excerpt,
-            segments_json=segments_excerpt,
-            segments_excerpt=segments_excerpt,
-            summary_json=summary_json,
-        )
+        rendered = template
+        replacements = {
+            "title": title,
+            "transcript": transcript_excerpt,
+            "transcript_excerpt": transcript_excerpt,
+            "segments_json": segments_excerpt,
+            "segments_excerpt": segments_excerpt,
+            "summary_json": summary_json,
+            "knowledge_note_markdown": knowledge_note_markdown,
+        }
+        for key, value in replacements.items():
+            rendered = rendered.replace(f"{{{key}}}", value)
+        return rendered.replace("{{", "{").replace("}}", "}")
 
     def _build_llm_knowledge_note_payload(
         self,
@@ -1358,6 +1366,347 @@ class RealPipelineRunner(PipelineRunner):
         if not str(result.get("knowledgeNoteMarkdown") or "").strip():
             raise VideoSumError("LLM returned empty knowledge note markdown.")
         return result
+
+    def build_and_export_mindmap(
+        self,
+        task_id: str,
+        title: str,
+        result: TaskResult,
+    ) -> tuple[TaskMindMap, Path]:
+        mindmap = self._generate_mindmap_with_llm(title=title, result=result)
+        task_dir = ensure_directory(self._settings.tasks_dir / task_id)
+        mindmap_path = task_dir / "mindmap.json"
+        mindmap_path.write_text(
+            json.dumps(mindmap.model_dump(mode="json"), ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        return mindmap, mindmap_path
+
+    def _build_mindmap_messages(
+        self,
+        title: str,
+        summary_json: str,
+        knowledge_note_markdown: str,
+    ) -> list[dict[str, str]]:
+        system_prompt = (
+            self._settings.mindmap_system_prompt.strip()
+            if self._settings.mindmap_system_prompt.strip()
+            else (
+                "你是一名擅长把学习内容重新组织为知识导图的中文内容编辑。"
+                "你的任务是基于已有结构化摘要和知识笔记，输出一个适合思维导图展示、信息密度充足、覆盖完整的 JSON 树。"
+                "所有内容都必须忠实原文，不得编造，不得补充外部资料，不得输出 JSON 以外的任何文字。"
+                "You must return valid json only."
+            )
+        )
+        user_template = (
+            self._settings.mindmap_user_prompt_template.strip()
+            if self._settings.mindmap_user_prompt_template.strip()
+            else """请阅读下面的视频资料，并输出一个 JSON 对象。
+注意：你必须返回合法的 json 对象，且只返回 json。
+
+目标：
+把当前视频内容组织成一棵真正“像思维导图”的知识树。它必须以概念、主题、方法、结论之间的关系为核心，而不是把章节标题换个层级重新排列。最末层节点仍然必须能回到原视频片段。
+
+强约束：
+1. 顶层只允许包含 title、root、nodes 三个字段。
+2. root 必须是整棵导图的根节点 id。
+3. nodes 必须是数组，其中包含唯一的根节点；每个节点必须包含 id、label、type、summary、children、time_anchor、source_chapter_titles、source_chapter_starts。
+4. type 只能是 root、theme、topic、leaf 之一。
+5. 整体结构必须是树，最大深度为 root -> theme -> topic/leaf -> leaf。
+6. 顶层 theme 数量应为 4 到 8 个，每个 theme 下应有 3 到 6 个 topic 或 leaf；除非原内容本身很短，否则不要生成过于稀疏的导图。
+7. leaf 节点必须能映射到原章节，并带真实时间点；time_anchor 必须取自 source_chapter_starts 中最早的时间点。
+8. source_chapter_titles 和 source_chapter_starts 只保留最相关的 1 到 3 项，且数量一致。
+9. label 必须是有内容的主题名，禁止“主题1”“Part 1”“Section 1”等占位标题。
+10. summary 要适合学习复盘，直接写信息本体，不要重复整段知识笔记；theme/topic 的 summary 尽量写成 2 到 4 句，leaf 的 summary 至少要交代“结论 / 方法 / 条件 / 例子”中的两项。
+11. label 和 summary 内如果出现数学内容，优先使用 KaTeX 兼容的 LaTeX 写法，例如 `$\\frac{1}{n}$`、`$(-1)^n$`、`$\\varepsilon$-$N$`；不要输出无法解析的伪公式。
+12. 只允许输出 JSON；但 JSON 字符串内部允许包含少量 Markdown 和 `$...$` / `$$...$$` 数学公式。
+13. 不要把 chapters 或 chapterGroups 直接一一平移成 theme/topic；必须先做语义归纳，再组织层级。
+14. 如果多个章节都在讲同一个概念、同一种方法、同一类例子，应该聚合成一个主题，而不是拆成多个并列节点。
+15. 导图的每一层都应体现“父主题如何拆成子主题”，而不是简单的时间顺序。
+
+写作要求：
+- 优先按“概念定义 / 推导方法 / 典型例子 / 易错点 / 结论判断 / 应用条件”这类知识结构重组。
+- 根节点应该是整支视频真正的学习主题，不要只是视频标题原样重复，除非标题本身已经是明确概念。
+- theme 层应该是 4 到 8 个最核心的大主题，彼此之间要有明显区分。
+- topic 层应承担细化作用，只有当某个 theme 下确实存在两到三类不同子议题时才保留 topic；否则可直接挂 leaf。
+- leaf 节点要具体、短促、可点击后立刻看懂，不要写成长句，也不要只是“第X部分”。
+- 允许把多个来源章节压缩成一个更抽象、更像脑图节点的表达。
+- 如果原文本身是教程或知识讲解，优先提炼“知识结构”；如果原文是评论或资讯，优先提炼“观点结构”和“因果关系”。
+- 若视频包含公式、定义、判别条件、证明步骤、典型例题，不要省略它们；应把它们拆成独立主题或叶子节点，而不是只保留一个笼统标题。
+- 不要怕信息多，只要层级清楚即可；优先保证“覆盖完整”和“节点可学”，不要只给每个主题一个空泛标签。
+- 对于数学/理工类内容，优先把“定义、命题、判别条件、证明思路、典型例题、易错点”拆成不同节点；不要把整段证明压成一句泛泛描述。
+- 如果一个 theme 下只生成了 1 个叶子节点，优先继续细化，除非原文确实只讲了这一点。
+- 如果知识笔记已经给出分点、例题或条件，你应该把这些信息展开到对应节点，而不是只复述 theme 名称。
+- 最终观感要像学习者自己整理出来的脑图，而不是讲稿目录。
+
+输出格式示例：
+{{"title":"","root":"root","nodes":[{{"id":"root","label":"","type":"root","summary":"","children":[{{"id":"theme-1","label":"","type":"theme","summary":"","children":[{{"id":"leaf-1","label":"","type":"leaf","summary":"","children":[],"time_anchor":0,"source_chapter_titles":[""],"source_chapter_starts":[0]}}],"source_chapter_titles":[],"source_chapter_starts":[]}}],"source_chapter_titles":[],"source_chapter_starts":[]}}]}}
+
+视频标题：
+{title}
+
+已有结构化摘要：
+{summary_json}
+
+知识笔记：
+{knowledge_note_markdown}"""
+        )
+        return [
+            {"role": "system", "content": system_prompt},
+            {
+                "role": "user",
+                "content": self._render_user_prompt_template(
+                    user_template,
+                    title=title,
+                    transcript_excerpt="",
+                    segments_excerpt="",
+                    summary_json=summary_json,
+                    knowledge_note_markdown=knowledge_note_markdown,
+                ),
+            },
+        ]
+
+    def _build_llm_mindmap_payload(
+        self,
+        title: str,
+        summary_json: str,
+        knowledge_note_markdown: str,
+    ) -> dict[str, object]:
+        messages = self._build_mindmap_messages(title, summary_json, knowledge_note_markdown)
+        messages = self._ensure_json_keyword_in_messages(messages)
+        return {
+            "model": self._settings.llm_model,
+            "messages": messages,
+            "response_format": {"type": "json_object"},
+            "enable_thinking": False,
+        }
+
+    def _generate_mindmap_with_llm(
+        self,
+        title: str,
+        result: TaskResult,
+    ) -> TaskMindMap:
+        base_url = (self._settings.llm_base_url or "").rstrip("/")
+        if not base_url or not self._settings.llm_model:
+            raise LLMConfigurationError("LLM 配置不完整，请检查 Base URL 和模型名。")
+
+        summary_json = _truncate_text(
+            json.dumps(
+                {
+                    "title": title,
+                    "overview": result.overview,
+                    "keyPoints": result.key_points,
+                    "chapters": result.timeline,
+                    "chapterGroups": result.chapter_groups,
+                },
+                ensure_ascii=False,
+            ),
+            9000,
+        )
+        knowledge_note_markdown = _truncate_text(result.knowledge_note_markdown or "", 12000)
+        logger.info(
+            "llm mindmap request model=%s summary_chars=%d knowledge_note_chars=%d key_points=%d chapters=%d chapter_groups=%d",
+            self._settings.llm_model,
+            len(summary_json),
+            len(knowledge_note_markdown),
+            len(result.key_points or []),
+            len(result.timeline or []),
+            len(result.chapter_groups or []),
+        )
+        payload = self._build_llm_mindmap_payload(title, summary_json, knowledge_note_markdown)
+        llm_result = self._request_llm_json(base_url=base_url, payload=payload)
+        return self._normalize_mindmap_payload(llm_result, title=title, result=result)
+
+    def _normalize_mindmap_payload(
+        self,
+        payload: dict[str, object],
+        *,
+        title: str,
+        result: TaskResult,
+    ) -> TaskMindMap:
+        chapters = [
+            {
+                "title": str(item.get("title") or "").strip(),
+                "start": float(item.get("start") or 0),
+                "summary": str(item.get("summary") or "").strip(),
+            }
+            for item in result.timeline
+            if isinstance(item, dict)
+        ]
+        root_id = str(payload.get("root") or "root").strip() or "root"
+        raw_nodes = payload.get("nodes")
+        root_node_payload: dict[str, object] | None = None
+        if isinstance(raw_nodes, list):
+            for item in raw_nodes:
+                if isinstance(item, dict) and str(item.get("id") or "").strip() == root_id:
+                    root_node_payload = item
+                    break
+            if root_node_payload is None:
+                root_node_payload = next((item for item in raw_nodes if isinstance(item, dict)), None)
+        elif isinstance(raw_nodes, dict):
+            root_node_payload = raw_nodes
+        if root_node_payload is None:
+            root_node_payload = {"id": root_id, "label": title, "type": "root", "summary": result.overview, "children": []}
+
+        used_ids: set[str] = set()
+        root_node = self._normalize_mindmap_node(
+            root_node_payload,
+            depth=0,
+            title=title,
+            chapters=chapters,
+            used_ids=used_ids,
+        )
+        root_node.id = root_id
+        root_node.type = "root"
+        if not root_node.label.strip():
+            root_node.label = title
+
+        if len(root_node.children) > 8:
+            root_node.children = root_node.children[:8]
+
+        return TaskMindMap(version=1, title=str(payload.get("title") or title).strip() or title, root=root_node.id, nodes=[root_node])
+
+    def _normalize_mindmap_node(
+        self,
+        payload: dict[str, object],
+        *,
+        depth: int,
+        title: str,
+        chapters: list[dict[str, object]],
+        used_ids: set[str],
+    ) -> MindMapNode:
+        raw_children = payload.get("children")
+        child_payloads = [item for item in raw_children if isinstance(item, dict)] if isinstance(raw_children, list) else []
+        normalized_children: list[MindMapNode] = []
+        if depth < 3:
+            max_children = 8 if depth == 0 else 6
+            for child in child_payloads[:max_children]:
+                normalized_children.append(
+                    self._normalize_mindmap_node(
+                        child,
+                        depth=depth + 1,
+                        title=title,
+                        chapters=chapters,
+                        used_ids=used_ids,
+                    )
+                )
+
+        label = self._normalize_content_title(
+            str(payload.get("label") or payload.get("title") or "").strip(),
+            fallback_text=str(payload.get("summary") or "").strip(),
+            fallback_prefix="主题" if depth <= 1 else "节点",
+            fallback_index=max(1, len(used_ids) + 1),
+        )
+        summary = _truncate_text(str(payload.get("summary") or "").strip(), 360)
+        source_titles = [str(item).strip() for item in (payload.get("source_chapter_titles") or []) if str(item).strip()]
+        source_starts: list[float] = []
+        for item in (payload.get("source_chapter_starts") or []):
+            if item is None or str(item).strip() == "":
+                continue
+            try:
+                source_starts.append(float(item))
+            except (TypeError, ValueError):
+                continue
+
+        if not source_titles and not source_starts:
+            inferred_titles, inferred_starts = self._infer_mindmap_sources(label, summary, chapters)
+            source_titles = inferred_titles
+            source_starts = inferred_starts
+
+        if len(source_titles) > 3:
+            source_titles = source_titles[:3]
+        if len(source_starts) > 3:
+            source_starts = source_starts[:3]
+        pair_count = min(len(source_titles), len(source_starts))
+        if pair_count:
+            source_titles = source_titles[:pair_count]
+            source_starts = source_starts[:pair_count]
+
+        raw_time_anchor = payload.get("time_anchor")
+        time_anchor = float(raw_time_anchor) if raw_time_anchor is not None and str(raw_time_anchor).strip() != "" else None
+        if time_anchor is None and source_starts:
+            time_anchor = min(source_starts)
+        if time_anchor is None and normalized_children:
+            child_anchors = [child.time_anchor for child in normalized_children if child.time_anchor is not None]
+            if child_anchors:
+                time_anchor = min(child_anchors)
+
+        node_type = str(payload.get("type") or "").strip().lower()
+        if depth == 0:
+            node_type = "root"
+        elif depth == 1:
+            node_type = "theme"
+        elif normalized_children and depth < 3:
+            node_type = "topic"
+        else:
+            node_type = "leaf"
+            normalized_children = []
+
+        if node_type == "leaf" and time_anchor is None:
+            inferred_titles, inferred_starts = self._infer_mindmap_sources(label, summary, chapters)
+            if inferred_starts:
+                source_titles = inferred_titles
+                source_starts = inferred_starts
+                time_anchor = min(inferred_starts)
+
+        node_id = self._normalize_mindmap_node_id(str(payload.get("id") or "").strip(), label, node_type, used_ids)
+
+        return MindMapNode(
+            id=node_id,
+            label=label or ("根节点" if depth == 0 else "主题"),
+            type=node_type,
+            summary=summary,
+            children=normalized_children,
+            time_anchor=time_anchor if node_type == "leaf" else None,
+            source_chapter_titles=source_titles,
+            source_chapter_starts=source_starts,
+        )
+
+    def _normalize_mindmap_node_id(
+        self,
+        raw_id: str,
+        label: str,
+        node_type: str,
+        used_ids: set[str],
+    ) -> str:
+        base = raw_id or re.sub(r"[^a-z0-9]+", "-", self._dedupe_text_key(label or node_type)).strip("-")
+        if not base:
+            base = node_type
+        candidate = base
+        suffix = 2
+        while candidate in used_ids:
+            candidate = f"{base}-{suffix}"
+            suffix += 1
+        used_ids.add(candidate)
+        return candidate
+
+    def _infer_mindmap_sources(
+        self,
+        label: str,
+        summary: str,
+        chapters: list[dict[str, object]],
+    ) -> tuple[list[str], list[float]]:
+        if not chapters:
+            return [], []
+        query = self._dedupe_text_key(f"{label} {summary}")
+        ranked: list[tuple[int, dict[str, object]]] = []
+        for chapter in chapters:
+            title = str(chapter.get("title") or "").strip()
+            chapter_summary = str(chapter.get("summary") or "").strip()
+            haystack = self._dedupe_text_key(f"{title} {chapter_summary}")
+            score = 0
+            if label and self._dedupe_text_key(label) and self._dedupe_text_key(label) in haystack:
+                score += 5
+            if summary and self._dedupe_text_key(summary) and self._dedupe_text_key(summary)[:12] in haystack:
+                score += 4
+            if query and haystack:
+                score += len(set(query[:24]) & set(haystack[:24]))
+            ranked.append((score, chapter))
+        ranked.sort(key=lambda item: (-item[0], float(item[1].get("start") or 0)))
+        selected = [item[1] for item in ranked[:3] if item[0] > 0] or [ranked[0][1]]
+        titles = [str(item.get("title") or "").strip() for item in selected if str(item.get("title") or "").strip()]
+        starts = [float(item.get("start") or 0) for item in selected]
+        return titles[:3], starts[:3]
 
     def _build_summary_chunks(self, segments: list[dict[str, object]]) -> list[dict[str, object]]:
         if not segments:
@@ -2105,7 +2454,45 @@ class RealPipelineRunner(PipelineRunner):
     def _clean_title(self, value: str) -> str:
         title = str(value or "").strip()
         title = re.sub(r"^[\-•\d\.\)\(、\s]+", "", title)
+        if not title:
+            return ""
+        if self._looks_like_rich_title(title):
+            return self._truncate_rich_title(title, max_length=52, extension=24)
         return title[:24]
+
+    def _looks_like_rich_title(self, value: str) -> bool:
+        title = str(value or "")
+        return bool("$" in title or re.search(r"\\[A-Za-z]+|[_^{}]", title))
+
+    def _truncate_rich_title(self, value: str, *, max_length: int, extension: int = 0) -> str:
+        title = str(value or "").strip()
+        if len(title) <= max_length:
+            return title
+
+        in_math = False
+        last_safe_break = None
+        last_safe_end = None
+        hard_limit = min(len(title), max_length + max(0, extension))
+
+        for index, char in enumerate(title[:hard_limit]):
+            if char == "$" and (index == 0 or title[index - 1] != "\\"):
+                in_math = not in_math
+            if not in_math:
+                last_safe_end = index + 1
+                if char.isspace() or char in "，,。；;：:、)]）】":
+                    last_safe_break = index + 1
+                if index + 1 >= max_length:
+                    break
+
+        if in_math:
+            opening_index = title.rfind("$", 0, hard_limit)
+            if opening_index >= 8:
+                return title[:opening_index].rstrip("，,。；;：:、 ")
+
+        safe_cut = last_safe_break or last_safe_end
+        if safe_cut is None or safe_cut <= 0:
+            return title[:hard_limit].rstrip("，,。；;：:、 ")
+        return title[:safe_cut].rstrip("，,。；;：:、 ")
 
     def _is_placeholder_title(self, value: str) -> bool:
         title = str(value or "").strip()
@@ -2114,6 +2501,7 @@ class RealPipelineRunner(PipelineRunner):
         normalized = title.lower()
         return bool(
             re.fullmatch(r"(大)?章节\s*\d+", title)
+            or re.fullmatch(r"主题\s*\d+", title)
             or re.fullmatch(r"第?\s*\d+\s*(章|节|部分)", title)
             or re.fullmatch(r"(part|section|chapter)\s*[-:：]?\s*\d+", normalized)
         )

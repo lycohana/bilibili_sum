@@ -1,4 +1,4 @@
-import type { TaskDetail, TaskResult, TaskSummary, TimelineItem } from "./types";
+import type { TaskDetail, TaskMindMapResponse, TaskResult, TaskSummary, TimelineItem } from "./types";
 
 export type DetailTab = "knowledge" | "summary" | "mindmap";
 export type TaskPanelState = "collapsed" | "expanded";
@@ -28,7 +28,7 @@ export type TaskContentState = {
   detail?: string;
 };
 
-export type MindMapPlaceholderState = {
+export type MindMapWorkspaceState = {
   tone: "default" | "pending" | "failed" | "accent";
   title: string;
   description: string;
@@ -337,21 +337,45 @@ export function describeTaskContentState(task?: Pick<TaskDetail, "status" | "res
   };
 }
 
-export function describeMindMapPlaceholder(task?: Pick<TaskDetail, "status" | "result" | "error_message"> | null): MindMapPlaceholderState {
+export function describeMindMapWorkspace(
+  task?: Pick<TaskDetail, "status" | "result" | "error_message"> | null,
+  mindmap?: Pick<TaskMindMapResponse, "status" | "error_message" | "mindmap"> | null,
+): MindMapWorkspaceState | null {
+  if (mindmap?.status === "ready" && mindmap.mindmap) {
+    return null;
+  }
   if (!task) {
     return {
       tone: "default",
-      title: "主题树入口已预留",
-      description: "当任务产出结果后，这里会承接按主题组织的知识导图视图。",
-      actionLabel: "按需生成（即将开放）",
+      title: "当前还没有可生成导图的任务",
+      description: "请选择一个已完成任务。导图会基于当前任务的知识卡片和知识笔记按需生成。",
+      actionLabel: "等待可用任务",
       actionEnabled: false,
+    };
+  }
+  if (mindmap?.status === "generating" || task.result?.mindmap_status === "generating") {
+    return {
+      tone: "pending",
+      title: "思维导图正在生成",
+      description: "系统正在基于当前任务的摘要结果组织主题树，稍后会自动显示在这里。",
+      actionLabel: "生成中",
+      actionEnabled: false,
+    };
+  }
+  if (mindmap?.status === "failed" || task.result?.mindmap_status === "failed") {
+    return {
+      tone: "failed",
+      title: "思维导图生成失败",
+      description: mindmap?.error_message || task.result?.mindmap_error_message || task.error_message || "这次处理没有成功生成可展示的导图。",
+      actionLabel: "重新生成导图",
+      actionEnabled: true,
     };
   }
   if (task.status === "running" || task.status === "queued") {
     return {
       tone: "pending",
-      title: "主题树将在结果完成后可用",
-      description: "当前任务仍在处理中。后续版本会支持基于本次结果按需生成主题树。",
+      title: "任务完成后才能生成导图",
+      description: "当前任务仍在处理中。等摘要和知识笔记准备好后，就可以按需生成思维导图。",
       actionLabel: "处理中",
       actionEnabled: false,
     };
@@ -359,17 +383,17 @@ export function describeMindMapPlaceholder(task?: Pick<TaskDetail, "status" | "r
   if (task.status === "failed" || task.status === "cancelled") {
     return {
       tone: "failed",
-      title: "当前任务暂时无法生成主题树",
+      title: "当前任务暂时无法生成导图",
       description: task.error_message || "这次处理没有产出可用于导图组织的结果。",
-      actionLabel: "重新生成导图（即将开放）",
+      actionLabel: "等待可用结果",
       actionEnabled: false,
     };
   }
   return {
     tone: "accent",
-    title: "主题树视图即将开放",
-    description: "后续版本会基于当前任务结果按主题聚合概览、关键要点和章节内容。",
-    actionLabel: "按需生成（即将开放）",
-    actionEnabled: false,
+    title: "当前任务已可生成思维导图",
+    description: "导图会按主题重组知识卡片、章节结构和知识笔记，并在叶子节点保留可回看时间点。",
+    actionLabel: "生成思维导图",
+    actionEnabled: true,
   };
 }

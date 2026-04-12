@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 
-import { normalizeRenderableMarkdown } from "../src/utils.ts";
+import { normalizeRenderableMarkdown, sanitizeMindMapLabel } from "../src/utils.ts";
 
 function run(name: string, fn: () => void) {
   fn();
@@ -47,4 +47,13 @@ run("collapses redundant dollar delimiters without wrapping prose lines", () => 
   const normalized = normalizeRenderableMarkdown("> $$\\left|\\frac{1}{n} - 0\\right| = \\frac{1}{n} < \\varepsilon$$$\n> 故 $\\lim_{n \\to \\infty} \\frac{1}{n} = 0。$");
 
   assert.equal(normalized, "> $$\\left|\\frac{1}{n} - 0\\right| = \\frac{1}{n} < \\varepsilon$$\n> 故 $\\lim_{n \\to \\infty} \\frac{1}{n} = 0。$");
+});
+
+run("repairs truncated mindmap labels before rendering", () => {
+  const sanitized = sanitizeMindMapLabel(
+    "核心公式$f(x_0+\\Delta$ x)\\app",
+    "说明微分的核心近似公式与线性主部。",
+  );
+
+  assert.equal(sanitized, "核心公式$f(x_0+\\Delta x)$");
 });

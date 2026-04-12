@@ -3,7 +3,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
-from video_sum_core.models.tasks import TaskInput, TaskResult, TaskStatus
+from video_sum_core.models.tasks import MindMapNode, TaskInput, TaskMindMap, TaskResult, TaskStatus
 from video_sum_core.utils import extract_bilibili_page
 
 
@@ -124,6 +124,14 @@ class TaskDetailResponse(TaskSummaryResponse):
     result: TaskResult | None = None
     error_code: str | None = None
     error_message: str | None = None
+
+
+class TaskMindMapResponse(BaseModel):
+    task_id: str
+    status: str = "idle"
+    error_message: str | None = None
+    updated_at: datetime | None = None
+    mindmap: TaskMindMap | None = None
 
 
 class TaskEventResponse(BaseModel):

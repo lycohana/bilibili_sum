@@ -1,5 +1,6 @@
 import logging
 from datetime import datetime, timezone
+from pathlib import Path
 from threading import Thread
 
 from video_sum_core.models.tasks import TaskResult, TaskStatus
@@ -26,6 +27,11 @@ class TaskWorker:
             task.task_input.source,
         )
         thread = Thread(target=self._run_task, args=(task.task_id,), daemon=True)
+        thread.start()
+
+    def submit_mindmap(self, task_id: str, *, force: bool = False) -> None:
+        logger.info("queue task mindmap generation task_id=%s force=%s", task_id, force)
+        thread = Thread(target=self._run_mindmap, args=(task_id, force), daemon=True)
         thread.start()
 
     def _run_task(self, task_id: str) -> None:
@@ -113,4 +119,92 @@ class TaskWorker:
                 progress=100,
                 message="任务执行失败",
                 payload={"error": str(exc)},
+            )
+
+    def _run_mindmap(self, task_id: str, force: bool) -> None:
+        record = self._repository.get_task(task_id)
+        if record is None or record.result is None:
+            logger.warning("skip missing task result for mindmap task_id=%s", task_id)
+            return
+        if record.status != TaskStatus.COMPLETED:
+            logger.warning("skip non-completed task mindmap task_id=%s status=%s", task_id, record.status.value)
+            return
+        if not hasattr(self._pipeline_runner, "build_and_export_mindmap"):
+            logger.warning("pipeline runner does not support mindmap generation task_id=%s", task_id)
+            return
+
+        current_result = record.result.model_copy(
+            update={
+                "mindmap_status": "generating",
+                "mindmap_error_message": None,
+            }
+        )
+        self._repository.save_result(task_id, current_result)
+        self._repository.append_event(
+            task_id=task_id,
+            stage="mindmap_llm_request",
+            progress=90,
+            message="正在调用 LLM 生成思维导图",
+            payload={"force": force},
+        )
+
+        try:
+            mindmap, mindmap_path = self._pipeline_runner.build_and_export_mindmap(  # type: ignore[attr-defined]
+                task_id=task_id,
+                title=record.task_input.title or "思维导图",
+                result=current_result,
+            )
+            self._repository.append_event(
+                task_id=task_id,
+                stage="mindmap_generating",
+                progress=96,
+                message="正在整理导图结构并写入结果",
+            )
+            refreshed = self._repository.get_task(task_id)
+            if refreshed is None or refreshed.result is None:
+                return
+            final_result = refreshed.result.model_copy(
+                update={
+                    "artifacts": {**refreshed.result.artifacts, "mindmap_path": str(Path(mindmap_path))},
+                    "mindmap_status": "ready",
+                    "mindmap_error_message": None,
+                    "mindmap_artifact_path": str(Path(mindmap_path)),
+                    "mindmap_updated_at": datetime.now(timezone.utc),
+                }
+            )
+            self._repository.save_result(task_id, final_result)
+            self._repository.append_event(
+                task_id=task_id,
+                stage="mindmap_completed",
+                progress=100,
+                message="思维导图生成完成",
+                payload={
+                    "root": mindmap.root,
+                    "top_level_count": len(mindmap.nodes[0].children) if mindmap.nodes else 0,
+                },
+            )
+            logger.info(
+                "mindmap generation completed task_id=%s root=%s top_level=%d",
+                task_id,
+                mindmap.root,
+                len(mindmap.nodes[0].children) if mindmap.nodes else 0,
+            )
+        except Exception as exc:
+            logger.exception("mindmap generation failed task_id=%s error=%s", task_id, exc)
+            refreshed = self._repository.get_task(task_id)
+            if refreshed is None or refreshed.result is None:
+                return
+            failed_result = refreshed.result.model_copy(
+                update={
+                    "mindmap_status": "failed",
+                    "mindmap_error_message": str(exc),
+                }
+            )
+            self._repository.save_result(task_id, failed_result)
+            self._repository.append_event(
+                task_id=task_id,
+                stage="mindmap_failed",
+                progress=100,
+                message="思维导图生成失败",
+                payload={"error": str(exc), "force": force},
             )

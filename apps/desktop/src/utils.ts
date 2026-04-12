@@ -76,20 +76,31 @@ export function summarizeEvents(events: TaskEvent[]) {
 
   let currentEvent: TaskEvent | null = null;
   let failedEvent: TaskEvent | null = null;
+  const latestEvent = events.at(-1) ?? null;
+  const latestStage = latestEvent?.stage ?? null;
+  const isMindMapStageActive = latestStage === "mindmap_llm_request" || latestStage === "mindmap_generating";
+  const isMindMapStageFailed = latestStage === "mindmap_failed";
+  const isMindMapStageCompleted = latestStage === "mindmap_completed";
   for (const event of events) {
-    if (event.stage === "failed") {
+    if (event.stage === "failed" || event.stage === "mindmap_failed") {
       failedEvent = event;
       continue;
     }
     currentEvent = event;
   }
 
-  const isCompleted = events.some((event) => event.stage === "completed");
-  const progress = failedEvent
-    ? failedEvent.progress
-    : isCompleted
-      ? 100
-      : currentEvent?.progress ?? 0;
+  const isCompleted = isMindMapStageCompleted
+    ? true
+    : isMindMapStageActive || isMindMapStageFailed
+      ? false
+      : events.some((event) => event.stage === "completed");
+  const progress = isMindMapStageActive
+    ? latestEvent?.progress ?? currentEvent?.progress ?? 0
+    : failedEvent
+      ? failedEvent.progress
+      : isCompleted
+        ? 100
+        : currentEvent?.progress ?? 0;
 
   return {
     filtered,
@@ -111,6 +122,20 @@ export function normalizeRenderableMarkdown(content: string) {
     .split("\n")
     .map((line) => normalizeMarkdownLine(line))
     .join("\n");
+}
+
+export function sanitizeMindMapLabel(label: string, fallbackText = "") {
+  const normalized = normalizeRenderableMarkdown(label).trim();
+  if (!normalized) {
+    return deriveReadableMindMapLabel(fallbackText);
+  }
+
+  const repaired = repairBrokenMindMapLabel(normalized);
+  if (!looksBrokenMindMapLabel(repaired)) {
+    return repaired;
+  }
+
+  return deriveReadableMindMapLabel(fallbackText) || repaired || normalized;
 }
 
 function normalizeControlCharacters(content: string) {
@@ -194,6 +219,83 @@ function normalizeBrokenMathText(line: string) {
       const normalizedInner = inner.replace(/(?<=\b\w|\}|])\s+o\s+(?=\d|\\|\w)/g, " \\to ");
       return `${quote}$${normalizedInner.trim()}$${quote}`;
     });
+}
+
+function repairBrokenMindMapLabel(label: string) {
+  let repaired = label.trim();
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    repaired = repaired
+      .replace(/\\[A-Za-z]{1,5}$/g, "")
+      .replace(/\$([^$\n]{1,120})\$\s*([^\s$，。；;:：!?！？]+)(?=$|[\s，。；;:：!?！？])/g, (_, inline: string, tail: string) => {
+        if (!/[\\_^(){}\d]/.test(tail)) {
+          return `$${inline}$${tail}`;
+        }
+        return `$${inline} ${tail.trim()}$`;
+      })
+      .replace(/\s{2,}/g, " ")
+      .trim();
+  }
+
+  return repaired;
+}
+
+function looksBrokenMindMapLabel(label: string) {
+  const trimmed = label.trim();
+  if (!trimmed) {
+    return false;
+  }
+
+  const dollarCount = (trimmed.match(/\$/g) || []).length;
+  if (dollarCount % 2 === 1) {
+    return true;
+  }
+  if (/\\[A-Za-z]{1,5}$/.test(trimmed)) {
+    return true;
+  }
+
+  const segments = trimmed.split(/(\${1,2}[\s\S]*?\${1,2})/g);
+  let hasMathSegment = false;
+  for (let index = 0; index < segments.length; index += 1) {
+    const segment = segments[index];
+    if (!segment) {
+      continue;
+    }
+    if (index % 2 === 1) {
+      hasMathSegment = true;
+      continue;
+    }
+    if (!hasMathSegment) {
+      continue;
+    }
+    if (/[\\_^{}]/.test(segment)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function deriveReadableMindMapLabel(content: string) {
+  const plain = normalizeRenderableMarkdown(content)
+    .replace(/\[(.*?)\]\((.*?)\)/g, "$1")
+    .replace(/\${1,2}([\s\S]*?)\${1,2}/g, "$1")
+    .replace(/[`*_>#~-]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!plain) {
+    return "";
+  }
+
+  const firstSentence = plain.split(/[。；;!！?？\n]/, 1)[0]?.trim() || plain;
+  if (firstSentence.length <= 22) {
+    return firstSentence;
+  }
+
+  const clipped = firstSentence.slice(0, 22);
+  const safeBoundary = clipped.search(/[，,、：:\s][^，,、：:\s]*$/);
+  return (safeBoundary > 8 ? clipped.slice(0, safeBoundary) : clipped).trim();
 }
 
 function normalizeDollarArtifacts(line: string) {

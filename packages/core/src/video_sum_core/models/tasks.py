@@ -1,3 +1,4 @@
+from datetime import datetime
 from enum import Enum
 
 from pydantic import BaseModel, Field
@@ -45,3 +46,25 @@ class TaskResult(BaseModel):
     llm_prompt_tokens: int | None = None
     llm_completion_tokens: int | None = None
     llm_total_tokens: int | None = None
+    mindmap_status: str = "idle"
+    mindmap_error_message: str | None = None
+    mindmap_artifact_path: str | None = None
+    mindmap_updated_at: datetime | None = None
+
+
+class MindMapNode(BaseModel):
+    id: str
+    label: str
+    type: str
+    summary: str = ""
+    children: list["MindMapNode"] = Field(default_factory=list)
+    time_anchor: float | None = None
+    source_chapter_titles: list[str] = Field(default_factory=list)
+    source_chapter_starts: list[float] = Field(default_factory=list)
+
+
+class TaskMindMap(BaseModel):
+    version: int = 1
+    title: str
+    root: str
+    nodes: list[MindMapNode] = Field(default_factory=list)

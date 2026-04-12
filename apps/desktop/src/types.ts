@@ -13,6 +13,26 @@ export type ChapterGroupItem = {
   children?: TimelineItem[];
 };
 
+export type TaskMindMapStatus = "idle" | "generating" | "ready" | "failed";
+
+export type MindMapNode = {
+  id: string;
+  label: string;
+  type: "root" | "theme" | "topic" | "leaf";
+  summary: string;
+  children: MindMapNode[];
+  time_anchor?: number | null;
+  source_chapter_titles: string[];
+  source_chapter_starts: number[];
+};
+
+export type TaskMindMap = {
+  version: number;
+  title: string;
+  root: string;
+  nodes: MindMapNode[];
+};
+
 export type TaskResult = {
   overview: string;
   knowledge_note_markdown?: string;
@@ -25,6 +45,10 @@ export type TaskResult = {
   llm_prompt_tokens?: number | null;
   llm_completion_tokens?: number | null;
   llm_total_tokens?: number | null;
+  mindmap_status?: TaskMindMapStatus;
+  mindmap_error_message?: string | null;
+  mindmap_artifact_path?: string | null;
+  mindmap_updated_at?: string | null;
 };
 
 export type VideoAssetSummary = {
@@ -83,6 +107,14 @@ export type TaskDetail = TaskSummary & {
   result?: TaskResult | null;
   error_code?: string | null;
   error_message?: string | null;
+};
+
+export type TaskMindMapResponse = {
+  task_id: string;
+  status: TaskMindMapStatus;
+  error_message?: string | null;
+  updated_at?: string | null;
+  mindmap?: TaskMindMap | null;
 };
 
 export type TaskEvent = {

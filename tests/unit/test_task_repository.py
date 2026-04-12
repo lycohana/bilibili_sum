@@ -72,6 +72,8 @@ def test_repository_saves_result_and_events() -> None:
             knowledge_note_markdown="# hello",
             chapter_groups=[{"title": "大章节 1", "children": [{"title": "章节 1", "start": 0, "summary": "摘要"}]}],
             llm_total_tokens=321,
+            mindmap_status="ready",
+            mindmap_artifact_path="C:/tmp/mindmap.json",
         ),
     )
 
@@ -85,6 +87,8 @@ def test_repository_saves_result_and_events() -> None:
     assert fetched.result.knowledge_note_markdown == "# hello"
     assert fetched.result.chapter_groups[0]["title"] == "大章节 1"
     assert fetched.result.llm_total_tokens == 321
+    assert fetched.result.mindmap_status == "ready"
+    assert fetched.result.mindmap_artifact_path == "C:/tmp/mindmap.json"
     assert listed[0].result is not None
     assert listed[0].result.llm_total_tokens == 321
     assert len(events) == 1

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 
-import { buildChapterGroups, buildKnowledgeCards, describeMindMapPlaceholder, describeTaskContentState, pickDetailTaskId, resolveKnowledgeNoteMarkdown } from "../src/detailModel.ts";
-import type { TaskDetail, TaskResult, TaskSummary } from "../src/types.ts";
+import { buildChapterGroups, buildKnowledgeCards, describeMindMapWorkspace, describeTaskContentState, pickDetailTaskId, resolveKnowledgeNoteMarkdown } from "../src/detailModel.ts";
+import type { TaskDetail, TaskMindMapResponse, TaskResult, TaskSummary } from "../src/types.ts";
 
 function run(name: string, fn: () => void) {
   fn();
@@ -208,9 +208,28 @@ run("describes a failed workspace state when the selected task failed", () => {
   assert.equal(state?.detail, "LLM 请求失败");
 });
 
-run("returns an accent placeholder for a completed task mind map entry", () => {
-  const state = describeMindMapPlaceholder(createTaskDetail({ status: "completed" }));
+run("returns an accent state for a completed task that can generate mind map", () => {
+  const state = describeMindMapWorkspace(createTaskDetail({ status: "completed" }));
 
   assert.equal(state.tone, "accent");
-  assert.equal(state.actionEnabled, false);
+  assert.equal(state.actionEnabled, true);
+});
+
+run("returns null when a ready mind map exists", () => {
+  const mindmap: TaskMindMapResponse = {
+    task_id: "task-detail",
+    status: "ready",
+    error_message: null,
+    updated_at: null,
+    mindmap: {
+      version: 1,
+      title: "导图",
+      root: "root",
+      nodes: [{ id: "root", label: "导图", type: "root", summary: "", children: [], source_chapter_titles: [], source_chapter_starts: [] }],
+    },
+  };
+
+  const state = describeMindMapWorkspace(createTaskDetail({ status: "completed" }), mindmap);
+
+  assert.equal(state, null);
 });
