@@ -778,7 +778,15 @@ class RealPipelineRunner(PipelineRunner):
             logger.info("rule summary start transcript_chars=%d segments=%d", len(transcript), len(segments))
             summary = self._summarize_with_rules(transcript, segments, title)
         summary = self._normalize_summary(summary, transcript, segments, title)
-        emit("summarizing", 95, "知识卡片摘要生成完成")
+        emit(
+            "summarizing",
+            95,
+            "知识卡片摘要生成完成",
+            {
+                "result": self._build_task_result(transcript, summary).model_dump(mode="json"),
+                "result_scope": "knowledge_cards",
+            },
+        )
         if used_llm_summary:
             emit("summarizing", 96, "正在生成知识笔记")
             try:
@@ -809,7 +817,15 @@ class RealPipelineRunner(PipelineRunner):
                     {"fallback": "knowledge_note_rules", "reason": str(exc)},
                 )
             else:
-                emit("summarizing", 98, "知识笔记生成完成")
+                emit(
+                    "summarizing",
+                    98,
+                    "知识笔记生成完成",
+                    {
+                        "result": self._build_task_result(transcript, summary).model_dump(mode="json"),
+                        "result_scope": "knowledge_note",
+                    },
+                )
         emit("summarizing", 99, "结果整理完成")
         logger.info(
             "summary finished title=%s bullet_points=%d chapters=%d overview_chars=%d",
@@ -2139,6 +2155,23 @@ class RealPipelineRunner(PipelineRunner):
             summary_path,
             knowledge_note_path,
         )
+        return self._build_task_result(
+            transcript,
+            summary,
+            artifacts={
+                "transcript_path": str(transcript_path),
+                "summary_path": str(summary_path),
+                "knowledge_note_path": str(knowledge_note_path),
+            },
+        )
+
+    def _build_task_result(
+        self,
+        transcript: str,
+        summary: dict[str, object],
+        artifacts: dict[str, str] | None = None,
+    ) -> TaskResult:
+        knowledge_note_markdown = str(summary.get("knowledgeNoteMarkdown") or "").strip()
         return TaskResult(
             overview=str(summary.get("overview") or ""),
             knowledge_note_markdown=knowledge_note_markdown,
@@ -2171,11 +2204,7 @@ class RealPipelineRunner(PipelineRunner):
                 for group in summary.get("chapterGroups", [])
                 if isinstance(group, dict)
             ],
-            artifacts={
-                "transcript_path": str(transcript_path),
-                "summary_path": str(summary_path),
-                "knowledge_note_path": str(knowledge_note_path),
-            },
+            artifacts=artifacts or {},
             llm_prompt_tokens=_safe_int(summary.get("llm_prompt_tokens")),
             llm_completion_tokens=_safe_int(summary.get("llm_completion_tokens")),
             llm_total_tokens=_safe_int(summary.get("llm_total_tokens")),

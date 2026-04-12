@@ -27,6 +27,7 @@ type TaskStreamPayload = {
   event: TaskEvent;
   status: TaskStatus;
   updated_at: string;
+  result?: TaskDetail["result"] | null;
 };
 
 type HeroStat = {
@@ -410,7 +411,13 @@ export function VideoDetailPage({ onRefresh }: { onRefresh(): void }) {
           ? existingContext.events
           : [...existingContext.events, payload.event];
         const nextContext = {
-          detail: { ...existingContext.detail, status: payload.status, updated_at: payload.updated_at },
+          detail: {
+            ...existingContext.detail,
+            status: payload.status,
+            updated_at: payload.updated_at,
+            result: payload.result === undefined ? existingContext.detail.result : payload.result,
+            llm_total_tokens: payload.result?.llm_total_tokens ?? existingContext.detail.llm_total_tokens,
+          },
           events: nextEvents,
         };
         taskContextCacheRef.current.set(latestTaskId, nextContext);
@@ -418,10 +425,20 @@ export function VideoDetailPage({ onRefresh }: { onRefresh(): void }) {
       });
       setTasks((current) => current.map((task) => (
         task.task_id === latestTaskId
-          ? { ...task, status: payload.status, updated_at: payload.updated_at }
+          ? {
+            ...task,
+            status: payload.status,
+            updated_at: payload.updated_at,
+            llm_total_tokens: payload.result?.llm_total_tokens ?? task.llm_total_tokens,
+          }
           : task
       )));
-      setVideo((current) => current ? { ...current, latest_status: payload.status, updated_at: payload.updated_at } : current);
+      setVideo((current) => current ? {
+        ...current,
+        latest_status: payload.status,
+        updated_at: payload.updated_at,
+        latest_result: payload.result === undefined ? current.latest_result : payload.result,
+      } : current);
     });
     source.onerror = () => source.close();
     return () => source.close();

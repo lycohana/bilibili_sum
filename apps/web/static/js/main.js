@@ -758,11 +758,37 @@ function syncTaskEventStream() {
           ...state.selectedTaskDetail,
           status: payload.status,
           updated_at: payload.updated_at,
+          result: payload.result === undefined ? state.selectedTaskDetail.result : payload.result,
+          llm_total_tokens: payload.result?.llm_total_tokens ?? state.selectedTaskDetail.llm_total_tokens,
         };
       }
+      if (state.selectedVideoDetail) {
+        state.selectedVideoDetail = {
+          ...state.selectedVideoDetail,
+          latest_status: payload.status,
+          updated_at: payload.updated_at,
+          latest_result: payload.result === undefined ? state.selectedVideoDetail.latest_result : payload.result,
+        };
+      }
+      state.selectedVideoTasks = state.selectedVideoTasks.map((task) =>
+        task.task_id === state.selectedTaskId
+          ? {
+              ...task,
+              status: payload.status,
+              updated_at: payload.updated_at,
+              llm_total_tokens: payload.result?.llm_total_tokens ?? task.llm_total_tokens,
+            }
+          : task,
+      );
       state.videos = state.videos.map((video) =>
         video.video_id === state.selectedVideoId
-          ? { ...video, latest_status: payload.status, latest_stage: nextEvent.stage, latest_task_id: state.selectedTaskId }
+          ? {
+              ...video,
+              latest_status: payload.status,
+              latest_stage: nextEvent.stage,
+              latest_task_id: state.selectedTaskId,
+              updated_at: payload.updated_at,
+            }
           : video,
       );
       render({ regions: state.page === "video-detail" ? ["hero", "progress", "list", "summary"] : ["list", "summary"] });

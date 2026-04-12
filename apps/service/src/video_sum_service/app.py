@@ -1277,6 +1277,7 @@ async def stream_task_events(task_id: str, after: str | None = None) -> Streamin
                         "event": event.to_response().model_dump(mode="json"),
                         "status": current_record.status.value,
                         "updated_at": current_record.updated_at.isoformat(),
+                        "result": current_record.result.model_dump(mode="json") if current_record.result is not None else None,
                     }
                     yield f"event: progress\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
             else:
