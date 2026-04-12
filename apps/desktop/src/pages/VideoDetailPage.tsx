@@ -1,7 +1,7 @@
 import "@xyflow/react/dist/style.css";
 import { Controls, Handle, Position, ReactFlow, type Edge, type Node as FlowNode, type NodeProps } from "@xyflow/react";
 import { toBlob } from "html-to-image";
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type SVGProps } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type SVGProps } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 
 import { progressEventClass, stageLabel, taskStatusClass } from "../appModel";
@@ -87,6 +87,12 @@ type MindMapFlowNodeData = {
   accent: MindMapAccent;
 };
 
+type FloatingPlayerLayout = {
+  width: number;
+  x: number;
+  y: number;
+};
+
 const MINDMAP_ROOT_ACCENT: MindMapAccent = {
   stroke: "#4c9fdd",
   surface: "rgba(76, 159, 221, 0.18)",
@@ -102,6 +108,13 @@ const MINDMAP_BRANCH_ACCENTS: MindMapAccent[] = [
   { stroke: "#9dd8b3", surface: "rgba(157, 216, 179, 0.18)", ink: "#1f6a47", shadow: "rgba(157, 216, 179, 0.22)" },
   { stroke: "#f7a8c2", surface: "rgba(247, 168, 194, 0.16)", ink: "#8e4563", shadow: "rgba(247, 168, 194, 0.22)" },
 ];
+
+const FLOATING_PLAYER_ASPECT_RATIO = 16 / 9;
+const FLOATING_PLAYER_MIN_WIDTH = 220;
+const FLOATING_PLAYER_DEFAULT_WIDTH = 360;
+const FLOATING_PLAYER_VIEWPORT_MARGIN = 20;
+const FLOATING_PLAYER_TOP_OFFSET = 92;
+const FLOATING_PLAYER_CHROME_HEIGHT = 62;
 
 const detailTabs: Array<{ id: DetailTab; label: string; description: string }> = [
   { id: "knowledge", label: "知识卡片", description: "按概览、要点、章节整理当前任务结果。" },
@@ -181,6 +194,33 @@ function withBilibiliPlayerSeek(embedUrl: string, seconds: number | null, nonce:
   }
   url.searchParams.set("_ts", String(nonce));
   return url.toString();
+}
+
+function clampFloatingPlayerWidth(width: number, viewportWidth: number) {
+  const maxWidth = Math.max(FLOATING_PLAYER_MIN_WIDTH, viewportWidth - FLOATING_PLAYER_VIEWPORT_MARGIN * 2);
+  return Math.min(Math.max(width, FLOATING_PLAYER_MIN_WIDTH), maxWidth);
+}
+
+function clampFloatingPlayerLayout(layout: FloatingPlayerLayout, viewportWidth: number, viewportHeight: number): FloatingPlayerLayout {
+  const width = clampFloatingPlayerWidth(layout.width, viewportWidth);
+  const height = width / FLOATING_PLAYER_ASPECT_RATIO + FLOATING_PLAYER_CHROME_HEIGHT;
+  const maxX = Math.max(FLOATING_PLAYER_VIEWPORT_MARGIN, viewportWidth - width - FLOATING_PLAYER_VIEWPORT_MARGIN);
+  const maxY = Math.max(FLOATING_PLAYER_TOP_OFFSET, viewportHeight - height - FLOATING_PLAYER_VIEWPORT_MARGIN);
+  return {
+    width,
+    x: Math.min(Math.max(layout.x, FLOATING_PLAYER_VIEWPORT_MARGIN), maxX),
+    y: Math.min(Math.max(layout.y, FLOATING_PLAYER_TOP_OFFSET), maxY),
+  };
+}
+
+function createDefaultFloatingPlayerLayout(viewportWidth: number, viewportHeight: number): FloatingPlayerLayout {
+  const width = clampFloatingPlayerWidth(FLOATING_PLAYER_DEFAULT_WIDTH, viewportWidth);
+  const height = width / FLOATING_PLAYER_ASPECT_RATIO + FLOATING_PLAYER_CHROME_HEIGHT;
+  return {
+    width,
+    x: Math.max(FLOATING_PLAYER_VIEWPORT_MARGIN, viewportWidth - width - 28),
+    y: Math.max(FLOATING_PLAYER_TOP_OFFSET, viewportHeight - height - 28),
+  };
 }
 
 function omitRecordKey<T>(record: Record<string, T>, key: string) {
@@ -902,7 +942,9 @@ export function VideoDetailPage({ onRefresh }: { onRefresh(): void }) {
       return;
     }
     setPlayerSeekTarget((current) => ({ nonce: current.nonce + 1, seconds }));
-    playerFrameRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    if (activeTab === "knowledge") {
+      playerFrameRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
   }
 
   function handleToggleAllChapterGroups() {
@@ -1573,6 +1615,7 @@ export function VideoDetailPage({ onRefresh }: { onRefresh(): void }) {
                     </div>
                     <pre className="transcript-full">{selectedTranscript || "暂无转写全文。"}</pre>
                   </section>
+
                 </section>
               )
             ) : null}
@@ -1717,6 +1760,14 @@ export function VideoDetailPage({ onRefresh }: { onRefresh(): void }) {
                   ) : null}
                 </section>
               </section>
+            ) : null}
+
+            {bilibiliEmbedUrl && (activeTab === "summary" || activeTab === "mindmap") ? (
+              <FloatingBilibiliPlayer
+                embedUrl={bilibiliEmbedUrl}
+                sourceUrl={currentPage?.source_url || video.source_url}
+                title={video.title}
+              />
             ) : null}
           </article>
         </section>
@@ -2105,6 +2156,141 @@ function MindMapFlowNode({ data }: NodeProps<FlowNode<MindMapFlowNodeData>>) {
 const mindMapNodeTypes = {
   mindmap: MindMapFlowNode,
 };
+
+function FloatingBilibiliPlayer({
+  embedUrl,
+  sourceUrl,
+  title,
+}: {
+  embedUrl: string;
+  sourceUrl: string;
+  title: string;
+}) {
+  const pointerStateRef = useRef<{
+    mode: "drag" | "resize";
+    originX: number;
+    originY: number;
+    layout: FloatingPlayerLayout;
+  } | null>(null);
+  const [layout, setLayout] = useState<FloatingPlayerLayout>(() => {
+    if (typeof window === "undefined") {
+      return { width: FLOATING_PLAYER_DEFAULT_WIDTH, x: 0, y: 0 };
+    }
+    return createDefaultFloatingPlayerLayout(window.innerWidth, window.innerHeight);
+  });
+
+  useEffect(() => {
+    function handleViewportResize() {
+      setLayout((current) => clampFloatingPlayerLayout(current, window.innerWidth, window.innerHeight));
+    }
+
+    handleViewportResize();
+    window.addEventListener("resize", handleViewportResize);
+    return () => window.removeEventListener("resize", handleViewportResize);
+  }, []);
+
+  useEffect(() => {
+    function handlePointerMove(event: PointerEvent) {
+      const pointerState = pointerStateRef.current;
+      if (!pointerState) {
+        return;
+      }
+
+      if (pointerState.mode === "drag") {
+        setLayout((current) => clampFloatingPlayerLayout({
+          ...current,
+          width: pointerState.layout.width,
+          x: pointerState.layout.x + (event.clientX - pointerState.originX),
+          y: pointerState.layout.y + (event.clientY - pointerState.originY),
+        }, window.innerWidth, window.innerHeight));
+        return;
+      }
+
+      setLayout((current) => clampFloatingPlayerLayout({
+        ...current,
+        width: pointerState.layout.width + (event.clientX - pointerState.originX),
+      }, window.innerWidth, window.innerHeight));
+    }
+
+    function clearPointerState() {
+      pointerStateRef.current = null;
+    }
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", clearPointerState);
+    window.addEventListener("pointercancel", clearPointerState);
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", clearPointerState);
+      window.removeEventListener("pointercancel", clearPointerState);
+    };
+  }, []);
+
+  function handlePointerStart(mode: "drag" | "resize", event: ReactPointerEvent<HTMLElement>) {
+    if (event.button !== 0) {
+      return;
+    }
+    pointerStateRef.current = {
+      mode,
+      originX: event.clientX,
+      originY: event.clientY,
+      layout,
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+    event.preventDefault();
+  }
+
+  function handleResetLayout() {
+    if (typeof window === "undefined") {
+      return;
+    }
+    setLayout(createDefaultFloatingPlayerLayout(window.innerWidth, window.innerHeight));
+  }
+
+  return (
+    <div
+      className="detail-floating-player"
+      style={{
+        width: `${layout.width}px`,
+        left: `${layout.x}px`,
+        top: `${layout.y}px`,
+      }}
+    >
+      <div className="detail-floating-player-head" onPointerDown={(event) => handlePointerStart("drag", event)}>
+        <div className="detail-floating-player-copy">
+          <span className="detail-floating-player-kicker">Player</span>
+          <strong>{title}</strong>
+        </div>
+        <a
+          className="detail-floating-player-link"
+          href={sourceUrl}
+          target="_blank"
+          rel="noreferrer"
+          onPointerDown={(event) => event.stopPropagation()}
+        >
+          在 Bilibili 打开
+        </a>
+      </div>
+      <div className="detail-video-embed-frame detail-video-embed-frame-floating">
+        <iframe
+          allow="accelerometer; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"
+          allowFullScreen
+          className="detail-video-embed"
+          referrerPolicy="strict-origin-when-cross-origin"
+          scrolling="no"
+          src={embedUrl}
+          title={`${title} 悬浮播放器`}
+        />
+      </div>
+      <div
+        className="detail-floating-player-resize"
+        role="presentation"
+        onPointerDown={(event) => handlePointerStart("resize", event)}
+        onDoubleClick={handleResetLayout}
+      />
+    </div>
+  );
+}
 
 function TaskStatePanel({ state }: { state: NonNullable<ReturnType<typeof describeTaskContentState>> }) {
   return (
