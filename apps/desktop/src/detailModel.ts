@@ -1,4 +1,4 @@
-import type { TaskDetail, TaskResult, TaskSummary } from "./types";
+import type { TaskDetail, TaskResult, TaskSummary, TimelineItem } from "./types";
 
 export type DetailTab = "knowledge" | "summary" | "mindmap";
 export type TaskPanelState = "collapsed" | "expanded";
@@ -12,6 +12,13 @@ export type KnowledgeCard = {
   content: string;
   meta?: string;
   timestampSeconds?: number | null;
+};
+
+export type ChapterGroup = {
+  id: string;
+  title: string;
+  meta: string;
+  items: KnowledgeCard[];
 };
 
 export type TaskContentState = {
@@ -68,14 +75,14 @@ export function buildKnowledgeCards(result?: TaskResult | null): KnowledgeCard[]
         id: `key-point-${index}`,
         kind: "key-point",
         eyebrow: "Key Point",
-        title: `要点 ${index + 1}`,
+        title: "",
         content: item,
       });
     });
 
   if (timeline.length) {
     timeline.forEach((item, index) => {
-      const title = String(item.title || "").trim() || `章节 ${index + 1}`;
+      const title = resolveContentTitle(String(item.title || "").trim(), [], String(item.summary || "").trim(), `章节 ${index + 1}`);
       const content = String(item.summary || "").trim();
       cards.push({
         id: `chapter-${index}`,
@@ -102,6 +109,199 @@ export function buildKnowledgeCards(result?: TaskResult | null): KnowledgeCard[]
   }
 
   return cards;
+}
+
+export function buildChapterGroups(cards: KnowledgeCard[], result?: TaskResult | null): ChapterGroup[] {
+  const backendGroups = Array.isArray(result?.chapter_groups) ? result?.chapter_groups : [];
+  if (backendGroups.length) {
+    const groups: ChapterGroup[] = [];
+    backendGroups.forEach((group, groupIndex) => {
+      if (!group || typeof group !== "object") {
+        return;
+      }
+      const children = Array.isArray(group.children) ? group.children : [];
+      const items = children
+        .map((item, childIndex) => buildChapterCardFromTimelineItem(item, `${groupIndex}-${childIndex}`))
+        .filter((item): item is KnowledgeCard => Boolean(item));
+
+      if (!items.length) {
+        return;
+      }
+
+      const title = resolveContentTitle(String(group.title || "").trim(), items.map((item) => item.title), String(group.summary || "").trim(), "主题");
+      const explicitMeta = String(group.summary || "").trim();
+      const timeRange = [
+        formatOptionalMarkdownDuration(typeof group.start === "number" ? group.start : items[0]?.timestampSeconds),
+        formatOptionalMarkdownDuration(items[items.length - 1]?.timestampSeconds),
+      ]
+        .filter(Boolean)
+        .join(" - ");
+      const meta = explicitMeta || [timeRange, `${items.length} 个小章节`].filter(Boolean).join(" · ");
+
+      groups.push({
+        id: `chapter-group-${groupIndex}`,
+        title,
+        meta,
+        items,
+      });
+    });
+
+    if (groups.length) {
+      return groups;
+    }
+  }
+
+  const chapterCards = cards.filter((item) => item.kind === "chapter");
+  if (!chapterCards.length) {
+    return [];
+  }
+
+  const groupSize = chapterCards.length <= 4 ? 2 : 3;
+  const groups: ChapterGroup[] = [];
+
+  for (let index = 0; index < chapterCards.length; index += groupSize) {
+    const items = chapterCards.slice(index, index + groupSize);
+    const first = items[0];
+    const last = items[items.length - 1];
+    const title = resolveContentTitle("", items.map((item) => item.title), items.map((item) => item.title).join("；"), "主题");
+    const timeRange = [formatOptionalMarkdownDuration(first.timestampSeconds), formatOptionalMarkdownDuration(last.timestampSeconds)]
+      .filter(Boolean)
+      .join(" - ");
+    const meta = [timeRange, `${items.length} 个小章节`].filter(Boolean).join(" · ");
+
+    groups.push({
+      id: `chapter-group-${groups.length}`,
+      title,
+      meta,
+      items,
+    });
+  }
+
+  return groups;
+}
+
+function buildChapterCardFromTimelineItem(item: TimelineItem, idSuffix: string): KnowledgeCard | null {
+  if (!item || typeof item !== "object") {
+    return null;
+  }
+  const summary = String(item.summary || "").trim();
+  const title = resolveContentTitle(String(item.title || "").trim(), [], summary, "章节");
+  const content = String(item.summary || "").trim();
+  if (!title && !content) {
+    return null;
+  }
+  return {
+    id: `chapter-${idSuffix}`,
+    kind: "chapter",
+    eyebrow: "Chapter",
+    title: title || "章节",
+    content: content || "当前章节暂未生成摘要。",
+    timestampSeconds: typeof item.start === "number" ? item.start : null,
+  };
+}
+
+function resolveContentTitle(title: string, childTitles: string[], fallbackText: string, prefix: string) {
+  const normalizedTitle = normalizeTitle(title);
+  if (normalizedTitle && !isPlaceholderTitle(normalizedTitle)) {
+    return normalizedTitle;
+  }
+
+  for (const childTitle of childTitles) {
+    const normalizedChildTitle = normalizeTitle(childTitle);
+    if (normalizedChildTitle && !isPlaceholderTitle(normalizedChildTitle)) {
+      return normalizedChildTitle;
+    }
+  }
+
+  const derived = deriveTitleFromText(fallbackText);
+  if (derived) {
+    return derived;
+  }
+
+  return prefix;
+}
+
+function normalizeTitle(value: string) {
+  return value.trim().replace(/^[\-•\d.()、\s]+/, "").slice(0, 24);
+}
+
+function isPlaceholderTitle(value: string) {
+  const normalized = value.trim().toLowerCase();
+  return /^(大)?章节\s*\d+$/.test(value.trim())
+    || /^第?\s*\d+\s*(章|节|部分)$/.test(value.trim())
+    || /^(part|section|chapter)\s*[-:：]?\s*\d+$/.test(normalized);
+}
+
+function deriveTitleFromText(value: string) {
+  const compact = value
+    .trim()
+    .replace(/^(这一部分|本部分|这里|该部分|这一章|本章|本节|这一节)(主要)?(讲|介绍|讨论|说明|分析|围绕)?/, "")
+    .split(/[。；!！?？\n]/)[0]
+    ?.trim()
+    .replace(/^[：:\-]+|[，,、；;：:]+$/g, "")
+    .replace(/\s+/g, "");
+  if (!compact) {
+    return "";
+  }
+  return compact.slice(0, 24);
+}
+
+export function resolveKnowledgeNoteMarkdown(result?: TaskResult | null): string {
+  if (!result) {
+    return "";
+  }
+
+  const directMarkdown = String(result.knowledge_note_markdown || "").trim();
+  if (directMarkdown) {
+    return directMarkdown;
+  }
+
+  const sections: string[] = [];
+  const overview = String(result.overview || "").trim();
+  const keyPoints = Array.isArray(result.key_points) ? result.key_points.map((item) => item.trim()).filter(Boolean) : [];
+  const timeline = Array.isArray(result.timeline) ? result.timeline : [];
+
+  if (overview) {
+    sections.push("## 摘要概览", "", overview);
+  }
+
+  if (keyPoints.length) {
+    sections.push("", "## 关键要点", "");
+    sections.push(...keyPoints.map((item) => `- ${item}`));
+  }
+
+  if (timeline.length) {
+    sections.push("", "## 时间轴", "");
+    timeline.forEach((item, index) => {
+      const title = String(item.title || "").trim() || `章节 ${index + 1}`;
+      const summary = String(item.summary || "").trim();
+      const start = typeof item.start === "number" ? item.start : null;
+      sections.push(`### ${title}`);
+      if (start != null) {
+        sections.push("", `- 时间点：${formatMarkdownDuration(start)}`);
+      }
+      if (summary) {
+        sections.push("", summary);
+      }
+      sections.push("");
+    });
+  }
+
+  return sections.join("\n").trim();
+}
+
+function formatMarkdownDuration(totalSeconds: number) {
+  const safeSeconds = Math.max(0, Math.floor(totalSeconds));
+  const minutes = Math.floor(safeSeconds / 60);
+  const seconds = safeSeconds % 60;
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
+function formatOptionalMarkdownDuration(totalSeconds?: number | null) {
+  if (typeof totalSeconds !== "number") {
+    return "";
+  }
+  return formatMarkdownDuration(totalSeconds);
 }
 
 export function describeTaskContentState(task?: Pick<TaskDetail, "status" | "result" | "error_message"> | null): TaskContentState | null {

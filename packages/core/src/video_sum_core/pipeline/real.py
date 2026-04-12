@@ -4,6 +4,7 @@ import json
 import logging
 import math
 import os
+import re
 import subprocess
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -750,6 +751,7 @@ class RealPipelineRunner(PipelineRunner):
             self._build_summary_start_message(),
             {"llm_enabled": self._settings.llm_enabled and bool(self._settings.llm_api_key)},
         )
+        used_llm_summary = False
         if self._settings.llm_enabled and self._settings.llm_api_key:
             emit("summarizing", 91, f"正在请求 LLM：{self._settings.llm_model or '未命名模型'}")
             logger.info(
@@ -761,6 +763,7 @@ class RealPipelineRunner(PipelineRunner):
             )
             try:
                 summary = self._summarize_with_llm(transcript, segments, title, emit)
+                used_llm_summary = True
             except (LLMAuthenticationError, LLMConfigurationError) as exc:
                 logger.warning("llm unavailable, fallback to rule summary reason=%s", exc)
                 emit(
@@ -775,7 +778,55 @@ class RealPipelineRunner(PipelineRunner):
             logger.info("rule summary start transcript_chars=%d segments=%d", len(transcript), len(segments))
             summary = self._summarize_with_rules(transcript, segments, title)
         summary = self._normalize_summary(summary, transcript, segments, title)
-        emit("summarizing", 95, "摘要生成完成")
+        emit(
+            "summarizing",
+            95,
+            "知识卡片摘要生成完成",
+            {
+                "result": self._build_task_result(transcript, summary).model_dump(mode="json"),
+                "result_scope": "knowledge_cards",
+            },
+        )
+        if used_llm_summary:
+            emit("summarizing", 96, "正在生成知识笔记")
+            try:
+                note_payload = self._generate_knowledge_note_with_llm(
+                    transcript=transcript,
+                    segments=segments,
+                    title=title,
+                    summary=summary,
+                )
+                knowledge_note_markdown = str(note_payload.get("knowledgeNoteMarkdown") or "").strip()
+                if knowledge_note_markdown:
+                    summary["knowledgeNoteMarkdown"] = knowledge_note_markdown
+                summary["llm_prompt_tokens"] = (_safe_int(summary.get("llm_prompt_tokens")) or 0) + (
+                    _safe_int(note_payload.get("llm_prompt_tokens")) or 0
+                )
+                summary["llm_completion_tokens"] = (_safe_int(summary.get("llm_completion_tokens")) or 0) + (
+                    _safe_int(note_payload.get("llm_completion_tokens")) or 0
+                )
+                summary["llm_total_tokens"] = (_safe_int(summary.get("llm_total_tokens")) or 0) + (
+                    _safe_int(note_payload.get("llm_total_tokens")) or 0
+                )
+            except VideoSumError as exc:
+                logger.warning("knowledge note llm generation failed, fallback to local note builder error=%s", exc)
+                emit(
+                    "summarizing",
+                    97,
+                    f"知识笔记生成失败，已回退为本地笔记：{exc}",
+                    {"fallback": "knowledge_note_rules", "reason": str(exc)},
+                )
+            else:
+                emit(
+                    "summarizing",
+                    98,
+                    "知识笔记生成完成",
+                    {
+                        "result": self._build_task_result(transcript, summary).model_dump(mode="json"),
+                        "result_scope": "knowledge_note",
+                    },
+                )
+        emit("summarizing", 99, "结果整理完成")
         logger.info(
             "summary finished title=%s bullet_points=%d chapters=%d overview_chars=%d",
             title,
@@ -879,21 +930,31 @@ class RealPipelineRunner(PipelineRunner):
             "正在合并分块摘要",
             {"chunk_count": chunk_count},
         )
-        aggregate_transcript, aggregate_segments = self._build_aggregate_summary_inputs(partial_summaries)
+        merged_chapters = self._merge_partial_chapters(partial_summaries, segments)
+        aggregate_transcript, aggregate_segments = self._build_aggregate_summary_inputs(partial_summaries, merged_chapters)
         logger.info(
-            "llm summary aggregate request model=%s chunk_count=%d aggregate_transcript_chars=%d aggregate_segments_chars=%d",
+            "llm summary aggregate request model=%s chunk_count=%d aggregate_transcript_chars=%d aggregate_segments_chars=%d merged_chapters=%d",
             self._settings.llm_model,
             chunk_count,
             len(aggregate_transcript),
             len(aggregate_segments),
+            len(merged_chapters),
         )
-        merged = self._request_llm_summary(
+        merged = self._request_llm_json(
             base_url=base_url,
             payload=self._build_llm_summary_payload(
                 title=title,
                 transcript_excerpt=aggregate_transcript,
                 segments_excerpt=aggregate_segments,
             ),
+        )
+        merged = self._merge_structured_summary(
+            merged=merged,
+            partial_summaries=partial_summaries,
+            merged_chapters=merged_chapters,
+            transcript=transcript,
+            segments=segments,
+            title=title,
         )
         if failures:
             merged.setdefault("overview", "")
@@ -924,7 +985,7 @@ class RealPipelineRunner(PipelineRunner):
                 len(str(chunk["segments_json"])),
             )
             try:
-                partial = self._request_llm_summary(
+                partial = self._request_llm_json(
                     base_url=base_url,
                     payload=self._build_llm_summary_payload(
                         title=f"{title} - 分块 {chunk_index}",
@@ -933,6 +994,9 @@ class RealPipelineRunner(PipelineRunner):
                     ),
                 )
                 partial["chunk_index"] = chunk_index
+                partial["chunk_start"] = float(chunk.get("chunk_start") or 0)
+                partial["chunk_end"] = float(chunk.get("chunk_end") or partial["chunk_start"])
+                partial["source_segment_count"] = int(chunk.get("source_segment_count") or 0)
                 return partial
             except Exception as exc:
                 last_error = exc
@@ -946,7 +1010,7 @@ class RealPipelineRunner(PipelineRunner):
                 )
         raise VideoSumError(str(last_error) if last_error else f"Chunk {chunk_index} failed.")
 
-    def _request_llm_summary(
+    def _request_llm_json(
         self,
         base_url: str,
         payload: dict[str, object],
@@ -969,7 +1033,7 @@ class RealPipelineRunner(PipelineRunner):
                     raise
                 backoff_seconds = min(6.0, 1.5 * (attempt + 1))
                 logger.warning(
-                    "llm summary transport retry model=%s attempt=%d/%d error=%s backoff=%.1fs",
+                    "llm json transport retry model=%s attempt=%d/%d error=%s backoff=%.1fs",
                     self._settings.llm_model,
                     attempt + 1,
                     transport_retry_count + 1,
@@ -984,7 +1048,7 @@ class RealPipelineRunner(PipelineRunner):
         except httpx.HTTPStatusError as exc:
             detail = _extract_response_error_detail(exc.response)
             logger.error(
-                "llm summary request failed status=%s model=%s detail=%s",
+                "llm json request failed status=%s model=%s detail=%s",
                 exc.response.status_code,
                 self._settings.llm_model,
                 detail,
@@ -995,7 +1059,7 @@ class RealPipelineRunner(PipelineRunner):
                     f"LLM API Key 无效、已过期，或当前模型/接口无权限访问（HTTP {status_code}: {detail}）。"
                 ) from exc
             raise VideoSumError(f"LLM request failed with status {status_code}: {detail}") from exc
-        logger.info("llm summary response status=%s model=%s", response.status_code, self._settings.llm_model)
+        logger.info("llm json response status=%s model=%s", response.status_code, self._settings.llm_model)
         response_json = response.json()
         content = response_json["choices"][0]["message"]["content"]
         parsed = self._parse_llm_json_content(content)
@@ -1027,7 +1091,7 @@ class RealPipelineRunner(PipelineRunner):
                     continue
 
         preview = _truncate_text(str(content or "").replace("\r", "\\r").replace("\n", "\\n"), 600)
-        logger.error("llm summary returned invalid json content preview=%s", preview)
+        logger.error("llm json returned invalid content preview=%s", preview)
         raise VideoSumError("LLM returned invalid JSON content.")
 
     def _build_llm_summary_payload(
@@ -1057,7 +1121,7 @@ class RealPipelineRunner(PipelineRunner):
             if self._settings.summary_system_prompt.strip()
             else (
                 "你是一名严谨、克制、信息密度优先的中文视频内容编辑。"
-                "你的任务不是泛泛总结，而是基于转写和分段信息，产出可以直接用于“知识卡片”和“摘要结果”页面的结构化内容。"
+                "你的任务不是泛泛总结，而是基于转写和分段信息，产出可以直接用于“知识卡片”页面的结构化内容。"
                 "所有内容都必须忠实原文，不得编造，不得补充外部资料，不得输出 JSON 以外的任何文字。"
                 "You must return valid json only."
             )
@@ -1075,7 +1139,7 @@ class RealPipelineRunner(PipelineRunner):
 3. 内容是如何逐步展开的。
 
 强约束：
-1. 必须输出合法 JSON，对象顶层只允许包含 title、overview、bulletPoints、chapters 四个字段。
+1. 必须输出合法 JSON，对象顶层只允许包含 title、overview、bulletPoints、chapters、chapterGroups 五个字段。
 2. title 必须是简洁、准确的中文标题，避免口号式空话。
 3. overview 必须写成 3 到 5 句中文，整体形成一段完整概述：
    - 第 1 句交代主题或讨论对象；
@@ -1087,23 +1151,32 @@ class RealPipelineRunner(PipelineRunner):
    - 优先提炼事实、观点、因果、对比、条件、风险、建议、争议；
    - 不要把同一件事拆成多条近义重复表达；
    - 不要写“作者认为”“视频提到”这类低信息密度前缀，直接写结论。
-5. chapters 必须是 4 到 8 个章节，每个章节必须包含 title、start、summary：
+5. chapters 必须按内容自然分布生成，每个章节必须包含 title、start、summary：
    - chapter.title 要像小标题，短而具体，能体现这一段的主题推进；
    - chapter.summary 必须比普通概述更详细，写成 2 到 3 个短句或 40 到 120 个字，说明这一段具体讲了什么、举了什么例子、得出了什么判断；
-   - chapters 应体现内容推进关系，而不是机械平均切分。
-6. start 必须使用视频里真实出现的时间点，单位为秒，按升序排列。
-7. 如果原文信息有限，也必须尽量提炼出非空 bulletPoints 和 chapters，不能返回空数组。
-8. 不要写“视频主要讲了”“本视频介绍了”“作者首先”这类模板化空话，直接进入信息本体。
-9. 不要引用不存在的数据，不要补充外部背景，不要猜测说话者未明确表达的动机。
+   - chapters 应体现内容推进关系，而不是机械平均切分；
+   - 章节数量不要预设固定值，应根据内容转折、主题切换、论证层次和视频时长自适应决定；
+   - 短视频可以较少章节，长视频或知识密度高的视频应适当增加章节，必要时可达到 9 到 12 个；
+   - 只有在确实进入新主题、新问题、新案例或新结论时才切出新章节，不要为了凑数量硬拆。
+6. chapterGroups 用来表示“大章节 / 小章节”层级，按真实结构归纳大章节；每个大章节必须包含 title、start、summary、children：
+   - children 必须是从 chapters 中归并出来的小章节数组，每项仍然包含 title、start、summary；
+   - chapterGroups.summary 要概括该大章节的主题推进，20 到 60 个字；
+   - chapterGroups.title 必须是有内容的主题名，禁止使用“大章节1”“第一部分”“Part 1”“Section 1”这类占位标题；
+   - 当原文层级明显时，大章节数量也应随内容自适应，不要固定成 2 到 4 组；
+   - 如果层级不明显，可以少量归并；如果层级明显，可以返回更多组，但不要机械平均分配。
+7. start 必须使用视频里真实出现的时间点，单位为秒，按升序排列。
+8. 如果原文信息有限，也必须尽量提炼出非空 bulletPoints 和 chapters，不能返回空数组。
+9. 不要写“视频主要讲了”“本视频介绍了”“作者首先”这类模板化空话，直接进入信息本体。
+10. 不要引用不存在的数据，不要补充外部背景，不要猜测说话者未明确表达的动机。
 
 写作要求：
 - 保持中文自然、清楚、具体，避免官话和营销口吻。
 - 优先保留高价值信息：定义、判断、证据、例子、条件、限制、影响、结论。
-- 如果视频包含多个层次，overview 负责总览，bulletPoints 负责拆出关键结论，chapters 负责还原内容推进。
-- 摘要结果页要比知识卡片更详细，所以 overview 和 chapter.summary 都要写得更完整，而不是只写一句泛泛概括。
+- 如果视频包含多个层次，overview 负责总览，bulletPoints 负责拆出关键结论，chapters 负责还原内容推进，chapterGroups 负责归纳章节层级。
+- 标题必须像真实目录项，而不是编号占位符；宁可少而准，也不要为了数量固定而硬拆。
 
 输出格式示例：
-{{"title":"","overview":"","bulletPoints":["", "", "", "", ""],"chapters":[{{"title":"","start":0,"summary":""}}]}}
+{{"title":"","overview":"","bulletPoints":["", "", "", "", ""],"chapters":[{{"title":"","start":0,"summary":""}}],"chapterGroups":[{{"title":"","start":0,"summary":"","children":[{{"title":"","start":0,"summary":""}}]}}]}}
 
 视频标题：{title}
 
@@ -1129,6 +1202,76 @@ class RealPipelineRunner(PipelineRunner):
             },
         ]
 
+    def _build_knowledge_note_messages(
+        self,
+        title: str,
+        transcript_excerpt: str,
+        segments_excerpt: str,
+        summary_json: str,
+    ) -> list[dict[str, str]]:
+        return [
+            {
+                "role": "system",
+                "content": (
+                    "你是一名严谨、擅长整理学习型内容的中文知识编辑。"
+                    "你的任务是基于转写、分段和现有结构化摘要，单独产出一篇适合阅读的知识笔记。"
+                    "知识笔记必须比知识卡片更完整，能够承担学习、回顾和查阅任务。"
+                    "所有内容都必须忠实原文，不得编造，不得补充外部资料，不得输出 JSON 以外的任何文字。"
+                    "You must return valid json only."
+                ),
+            },
+            {
+                "role": "user",
+                "content": self._render_user_prompt_template(
+                    """请阅读下面的视频资料，并输出一个 JSON 对象。
+注意：你必须返回合法的 json 对象，且只返回 json。
+
+目标：
+基于原始转写和结构化摘要，生成一篇适合详情页“知识笔记”阅读视图的 Markdown 笔记。
+
+强约束：
+1. 顶层只允许包含 knowledgeNoteMarkdown 一个字段。
+2. knowledgeNoteMarkdown 必须是一篇完整 Markdown 笔记，不要输出代码围栏包裹整篇内容。
+3. 笔记必须明显区别于知识卡片：
+   - 不要只是把 bulletPoints 改写一遍；
+   - 要有连续叙述、上下文解释、章节展开和重点串联；
+   - 允许引用已有结构化摘要，但必须重新组织为适合阅读的笔记。
+4. 遇到知识类内容时，优先组织为：核心结论、关键概念、推理/方法、章节展开、易错点/限制。
+5. 遇到教程、评论、新闻等非知识类内容时，退化为通用深度笔记：主题概览、关键信息、内容推进、结论/影响。
+6. 只有在原文确实涉及公式、符号、函数、逻辑表达式时才使用 LaTeX：
+   - 行内公式使用 `$...$`
+   - 独立公式使用 `$$...$$`
+   - 不要强行输出数学公式。
+7. 不要照抄转写全文，不要把原始 transcript 直接拼进笔记主体。
+8. 不要补充外部背景，不要编造例子，不要猜测说话者未表达的动机。
+
+写作要求：
+- 标题层级清楚，便于长文阅读。
+- 保留定义、条件、因果、例子、结论、限制、争议等高价值信息。
+- 如果结构化摘要过于简略，应优先参考转写和分段把笔记写得更完整。
+
+输出格式示例：
+{{"knowledgeNoteMarkdown":"# 标题\n\n## 核心结论\n\n..."}}
+
+视频标题：
+{title}
+
+已有结构化摘要：
+{summary_json}
+
+转写节选：
+{transcript_excerpt}
+
+分段数据节选：
+{segments_excerpt}""",
+                    title=title,
+                    transcript_excerpt=transcript_excerpt,
+                    segments_excerpt=segments_excerpt,
+                    summary_json=summary_json,
+                ),
+            },
+        ]
+
     def _ensure_json_keyword_in_messages(self, messages: list[dict[str, str]]) -> list[dict[str, str]]:
         if any("json" in str(message.get("content") or "").lower() for message in messages):
             return messages
@@ -1146,6 +1289,7 @@ class RealPipelineRunner(PipelineRunner):
         title: str,
         transcript_excerpt: str,
         segments_excerpt: str,
+        summary_json: str = "",
     ) -> str:
         return template.format(
             title=title,
@@ -1153,7 +1297,67 @@ class RealPipelineRunner(PipelineRunner):
             transcript_excerpt=transcript_excerpt,
             segments_json=segments_excerpt,
             segments_excerpt=segments_excerpt,
+            summary_json=summary_json,
         )
+
+    def _build_llm_knowledge_note_payload(
+        self,
+        title: str,
+        transcript_excerpt: str,
+        segments_excerpt: str,
+        summary_json: str,
+    ) -> dict[str, object]:
+        messages = self._build_knowledge_note_messages(title, transcript_excerpt, segments_excerpt, summary_json)
+        messages = self._ensure_json_keyword_in_messages(messages)
+        return {
+            "model": self._settings.llm_model,
+            "messages": messages,
+            "response_format": {"type": "json_object"},
+            "enable_thinking": False,
+        }
+
+    def _generate_knowledge_note_with_llm(
+        self,
+        transcript: str,
+        segments: list[dict[str, object]],
+        title: str,
+        summary: dict[str, object],
+    ) -> dict[str, object]:
+        base_url = (self._settings.llm_base_url or "").rstrip("/")
+        if not base_url or not self._settings.llm_model:
+            raise LLMConfigurationError("LLM 配置不完整，请检查 Base URL 和模型名。")
+        transcript_excerpt = self._build_transcript_excerpt(transcript)
+        segments_excerpt = self._build_segments_excerpt(segments)
+        summary_json = _truncate_text(
+            json.dumps(
+                {
+                    "title": summary.get("title"),
+                    "overview": summary.get("overview"),
+                    "bulletPoints": summary.get("bulletPoints"),
+                    "chapters": summary.get("chapters"),
+                },
+                ensure_ascii=False,
+            ),
+            2400,
+        )
+        logger.info(
+            "llm knowledge note request model=%s transcript_chars=%d segments=%d summary_chars=%d",
+            self._settings.llm_model,
+            len(transcript_excerpt),
+            len(segments),
+            len(summary_json),
+        )
+        payload = self._build_llm_knowledge_note_payload(
+            title=title,
+            transcript_excerpt=transcript_excerpt,
+            segments_excerpt=segments_excerpt,
+            summary_json=summary_json,
+        )
+        result = self._request_llm_json(base_url=base_url, payload=payload)
+        result.setdefault("knowledgeNoteMarkdown", "")
+        if not str(result.get("knowledgeNoteMarkdown") or "").strip():
+            raise VideoSumError("LLM returned empty knowledge note markdown.")
+        return result
 
     def _build_summary_chunks(self, segments: list[dict[str, object]]) -> list[dict[str, object]]:
         if not segments:
@@ -1202,6 +1406,9 @@ class RealPipelineRunner(PipelineRunner):
                     "index": index,
                     "transcript": _truncate_text("\n".join(chunk_lines), target_chars + 400),
                     "segments_json": _truncate_text(json.dumps(compact_segments, ensure_ascii=False), target_chars + 400),
+                    "chunk_start": float(current[0].get("start") or 0),
+                    "chunk_end": float(current[-1].get("end") or current[-1].get("start") or 0),
+                    "source_segment_count": len(current),
                 }
             )
             index += 1
@@ -1213,9 +1420,29 @@ class RealPipelineRunner(PipelineRunner):
     def _build_aggregate_summary_inputs(
         self,
         partial_summaries: list[dict[str, object]],
+        merged_chapters: list[dict[str, object]] | None = None,
     ) -> tuple[str, str]:
         lines: list[str] = []
         segments: list[dict[str, object]] = []
+        final_chapters = merged_chapters or []
+
+        if final_chapters:
+            lines.append("## 合并后的全局章节")
+            for chapter in final_chapters:
+                start = float(chapter.get("start") or 0)
+                chapter_title = str(chapter.get("title") or "").strip()
+                summary = str(chapter.get("summary") or "").strip()
+                if not summary:
+                    continue
+                lines.append(f"[{self._format_seconds(start)}] {chapter_title}：{summary}")
+                segments.append(
+                    {
+                        "start": start,
+                        "text": _truncate_text(f"{chapter_title}：{summary}", 180),
+                    }
+                )
+            lines.append("")
+
         for item in partial_summaries:
             chunk_index = int(item.get("chunk_index") or 0)
             title = str(item.get("title") or f"分块 {chunk_index}")
@@ -1234,12 +1461,6 @@ class RealPipelineRunner(PipelineRunner):
                 chapter_title = str(chapter.get("title") or f"章节 {chunk_index}")
                 if summary:
                     lines.append(f"[{self._format_seconds(start)}] {chapter_title}：{summary}")
-                    segments.append(
-                        {
-                            "start": start,
-                            "text": _truncate_text(f"{chapter_title}：{summary}", 140),
-                        }
-                    )
             lines.append("")
         return _truncate_text("\n".join(lines).strip(), 5200), _truncate_text(json.dumps(segments, ensure_ascii=False), 2600)
 
@@ -1305,6 +1526,14 @@ class RealPipelineRunner(PipelineRunner):
             "overview": overview,
             "bulletPoints": bullet_points,
             "chapters": chapters,
+            "chapterGroups": self._build_chapter_groups_from_chapters(chapters),
+            "knowledgeNoteMarkdown": self._build_knowledge_note_markdown(
+                title=title or "视频摘要",
+                overview=overview,
+                bullet_points=bullet_points,
+                chapters=chapters,
+                transcript=transcript,
+            ),
         }
 
     def _normalize_summary(
@@ -1327,11 +1556,70 @@ class RealPipelineRunner(PipelineRunner):
             bullet_points = self._build_bullet_points_fallback(overview, transcript, segments)
         normalized["bulletPoints"] = bullet_points
 
-        chapters = self._coerce_chapters(normalized.get("chapters"))
+        chapters = self._coerce_chapters(normalized.get("chapters"), segments)
         if not chapters:
             chapters = self._build_chapters_fallback(segments)
         normalized["chapters"] = chapters
+        chapter_groups = self._coerce_chapter_groups(normalized.get("chapterGroups"), chapters)
+        if not chapter_groups:
+            chapter_groups = self._build_chapter_groups_from_chapters(chapters)
+        normalized["chapterGroups"] = chapter_groups
+
+        knowledge_note_markdown = str(normalized.get("knowledgeNoteMarkdown") or "").strip()
+        if not knowledge_note_markdown:
+            knowledge_note_markdown = self._build_knowledge_note_markdown(
+                title=str(normalized["title"]),
+                overview=overview,
+                bullet_points=bullet_points,
+                chapters=chapters,
+                transcript=transcript,
+            )
+        normalized["knowledgeNoteMarkdown"] = knowledge_note_markdown
         return normalized
+
+    def _build_knowledge_note_markdown(
+        self,
+        title: str,
+        overview: str,
+        bullet_points: list[str],
+        chapters: list[dict[str, object]],
+        transcript: str,
+    ) -> str:
+        sections: list[str] = [f"# {title or '知识笔记'}"]
+
+        if overview:
+            sections.extend(["", "## 核心概览", "", overview.strip()])
+
+        if bullet_points:
+            sections.extend(["", "## 关键要点", ""])
+            sections.extend(f"- {point.strip()}" for point in bullet_points if point.strip())
+
+        if chapters:
+            sections.extend(["", "## 内容展开"])
+            for index, chapter in enumerate(chapters, start=1):
+                chapter_title = str(chapter.get("title") or f"章节 {index}").strip()
+                chapter_summary = str(chapter.get("summary") or "").strip()
+                start = float(chapter.get("start") or 0)
+                sections.extend(
+                    [
+                        "",
+                        f"### {chapter_title}",
+                        "",
+                        f"- 时间点：{self._format_seconds(start)}",
+                    ]
+                )
+                if chapter_summary:
+                    sections.extend(["", chapter_summary])
+
+        transcript_lines = [line.strip() for line in transcript.splitlines() if line.strip()]
+        if transcript_lines:
+            sections.extend(["", "## 原文摘录", ""])
+            excerpt = transcript_lines[:6]
+            sections.extend(f"> {line}" for line in excerpt)
+            if len(transcript_lines) > len(excerpt):
+                sections.extend(["", "> ..."])
+
+        return "\n".join(sections).strip()
 
     def _build_overview_fallback(self, transcript: str) -> str:
         lines = [line.strip() for line in transcript.splitlines() if line.strip()]
@@ -1377,30 +1665,228 @@ class RealPipelineRunner(PipelineRunner):
                     break
         return points[:5]
 
-    def _coerce_chapters(self, value: object) -> list[dict[str, object]]:
+    def _merge_structured_summary(
+        self,
+        merged: dict[str, object],
+        partial_summaries: list[dict[str, object]],
+        merged_chapters: list[dict[str, object]],
+        transcript: str,
+        segments: list[dict[str, object]],
+        title: str,
+    ) -> dict[str, object]:
+        result = dict(merged)
+        structural_chapters = merged_chapters or self._merge_partial_chapters(partial_summaries, segments)
+        target_count = self._suggest_chapter_count(segments)
+        llm_chapters = self._coerce_chapters(result.get("chapters"), segments)
+
+        if len(llm_chapters) >= max(3, min(target_count, len(structural_chapters))) and len(llm_chapters) >= len(structural_chapters):
+            final_chapters = llm_chapters
+        else:
+            final_chapters = structural_chapters or llm_chapters or self._build_chapters_fallback(segments)
+        final_chapters = self._rebalance_chapters_for_coverage(final_chapters, segments)
+
+        result["title"] = str(result.get("title") or title or "视频摘要").strip()
+        result["overview"] = str(result.get("overview") or "").strip() or self._build_overview_from_partials(partial_summaries, transcript)
+        bullet_points = self._coerce_bullet_points(result.get("bulletPoints"))
+        if len(bullet_points) < min(5, max(3, math.ceil(target_count / 2))):
+            bullet_points = self._build_bullet_points_from_partials(partial_summaries, final_chapters, result["overview"], transcript, segments)
+        result["bulletPoints"] = bullet_points
+        result["chapters"] = final_chapters
+        result["chapterGroups"] = self._build_chapter_groups_from_chapters(final_chapters)
+        return result
+
+    def _merge_partial_chapters(
+        self,
+        partial_summaries: list[dict[str, object]],
+        segments: list[dict[str, object]],
+    ) -> list[dict[str, object]]:
+        merged: list[dict[str, object]] = []
+        seen_keys: set[tuple[int, str]] = set()
+
+        for partial in partial_summaries:
+            chunk_start = float(partial.get("chunk_start") or 0)
+            chunk_end = float(partial.get("chunk_end") or chunk_start)
+            chapters = self._coerce_chapters(partial.get("chapters"), segments)
+            for chapter in chapters:
+                start = self._align_chapter_start(float(chapter.get("start") or chunk_start), segments, chunk_start, chunk_end)
+                title = str(chapter.get("title") or "").strip()
+                summary = str(chapter.get("summary") or "").strip()
+                if not summary:
+                    continue
+                dedupe_key = (int(start), self._dedupe_text_key(title or summary))
+                if dedupe_key in seen_keys:
+                    continue
+                seen_keys.add(dedupe_key)
+                self._append_or_merge_chapter(
+                    merged,
+                    {
+                        "title": title,
+                        "start": start,
+                        "summary": summary,
+                    },
+                )
+
+        merged.sort(key=lambda item: float(item.get("start") or 0))
+        normalized: list[dict[str, object]] = []
+        for index, chapter in enumerate(merged, start=1):
+            title = self._normalize_content_title(
+                str(chapter.get("title") or "").strip(),
+                fallback_text=str(chapter.get("summary") or "").strip(),
+                fallback_prefix="章节",
+                fallback_index=index,
+            )
+            normalized.append(
+                {
+                    "title": title,
+                    "start": float(chapter.get("start") or 0),
+                    "summary": str(chapter.get("summary") or "").strip()[:160],
+                }
+            )
+        return self._rebalance_chapters_for_coverage(normalized, segments)
+
+    def _append_or_merge_chapter(
+        self,
+        chapters: list[dict[str, object]],
+        chapter: dict[str, object],
+    ) -> None:
+        start = float(chapter.get("start") or 0)
+        title_key = self._dedupe_text_key(str(chapter.get("title") or ""))
+        summary = str(chapter.get("summary") or "").strip()
+
+        for existing in chapters:
+            existing_start = float(existing.get("start") or 0)
+            existing_title_key = self._dedupe_text_key(str(existing.get("title") or ""))
+            if abs(existing_start - start) <= 45 or (title_key and title_key == existing_title_key):
+                existing_summary = str(existing.get("summary") or "").strip()
+                if len(summary) > len(existing_summary):
+                    existing["summary"] = summary
+                if len(str(chapter.get("title") or "")) > len(str(existing.get("title") or "")):
+                    existing["title"] = str(chapter.get("title") or "")
+                existing["start"] = min(existing_start, start)
+                return
+        chapters.append(dict(chapter))
+
+    def _align_chapter_start(
+        self,
+        start: float,
+        segments: list[dict[str, object]],
+        chunk_start: float,
+        chunk_end: float,
+    ) -> float:
+        if not segments:
+            return max(0.0, start)
+        candidates = [
+            float(segment.get("start") or 0)
+            for segment in segments
+            if chunk_start - 1e-6 <= float(segment.get("start") or 0) <= max(chunk_end, chunk_start)
+        ]
+        if not candidates:
+            candidates = [float(segment.get("start") or 0) for segment in segments]
+        if not candidates:
+            return max(0.0, start)
+        return min(candidates, key=lambda item: abs(item - start))
+
+    def _build_overview_from_partials(
+        self,
+        partial_summaries: list[dict[str, object]],
+        transcript: str,
+    ) -> str:
+        sentences: list[str] = []
+        for partial in partial_summaries:
+            overview = str(partial.get("overview") or "").strip()
+            if not overview:
+                continue
+            for piece in re.split(r"(?<=[。！？!?])", overview):
+                clean_piece = piece.strip()
+                if clean_piece and clean_piece not in sentences:
+                    sentences.append(clean_piece)
+                if len(sentences) >= 5:
+                    return "".join(sentences)[:400]
+        return self._build_overview_fallback(transcript)
+
+    def _build_bullet_points_from_partials(
+        self,
+        partial_summaries: list[dict[str, object]],
+        chapters: list[dict[str, object]],
+        overview: str,
+        transcript: str,
+        segments: list[dict[str, object]],
+    ) -> list[str]:
+        points: list[str] = []
+        for partial in partial_summaries:
+            for point in partial.get("bulletPoints") or []:
+                clean_point = str(point).strip()
+                if not clean_point:
+                    continue
+                key = self._dedupe_text_key(clean_point)
+                if any(self._dedupe_text_key(existing) == key for existing in points):
+                    continue
+                points.append(clean_point[:88])
+                if len(points) >= 8:
+                    return points
+
+        for chapter in chapters:
+            summary = str(chapter.get("summary") or "").strip()
+            if not summary:
+                continue
+            candidate = summary[:88]
+            key = self._dedupe_text_key(candidate)
+            if any(self._dedupe_text_key(existing) == key for existing in points):
+                continue
+            points.append(candidate)
+            if len(points) >= 8:
+                return points
+
+        fallback = self._build_bullet_points_fallback(overview, transcript, segments)
+        for point in fallback:
+            clean_point = str(point).strip()
+            key = self._dedupe_text_key(clean_point)
+            if clean_point and not any(self._dedupe_text_key(existing) == key for existing in points):
+                points.append(clean_point)
+            if len(points) >= 8:
+                break
+        return points[:8]
+
+    def _dedupe_text_key(self, value: str) -> str:
+        normalized = re.sub(r"[\W_]+", "", str(value or "").lower())
+        return normalized[:24]
+
+    def _coerce_chapters(
+        self,
+        value: object,
+        segments: list[dict[str, object]] | None = None,
+    ) -> list[dict[str, object]]:
         if not isinstance(value, list):
             return []
         chapters: list[dict[str, object]] = []
+        limit = self._chapter_limit(segments or [])
         for index, item in enumerate(value):
             if not isinstance(item, dict):
                 continue
             summary = str(item.get("summary") or "").strip()
             if not summary:
                 continue
+            title = self._normalize_content_title(
+                str(item.get("title") or "").strip(),
+                fallback_text=summary,
+                fallback_prefix="章节",
+                fallback_index=index + 1,
+            )
             chapters.append(
                 {
-                    "title": str(item.get("title") or f"章节 {index + 1}"),
+                    "title": title,
                     "start": float(item.get("start") or 0),
                     "summary": summary[:160],
                 }
             )
-        return chapters[:6]
+        return chapters[:limit]
 
     def _build_chapters_fallback(self, segments: list[dict[str, object]]) -> list[dict[str, object]]:
         if not segments:
             return []
         chapters: list[dict[str, object]] = []
-        step = max(1, len(segments) // 4)
+        target_count = self._suggest_chapter_count(segments)
+        step = max(1, math.ceil(len(segments) / max(1, target_count)))
         for index in range(0, len(segments), step):
             group = segments[index : index + step]
             if not group:
@@ -1410,14 +1896,240 @@ class RealPipelineRunner(PipelineRunner):
                 continue
             chapters.append(
                 {
-                    "title": f"章节 {len(chapters) + 1}",
+                    "title": self._normalize_content_title(
+                        "",
+                        fallback_text=summary,
+                        fallback_prefix="章节",
+                        fallback_index=len(chapters) + 1,
+                    ),
                     "start": float(group[0].get("start") or 0),
                     "summary": summary[:160],
                 }
             )
-            if len(chapters) >= 4:
+            if len(chapters) >= self._chapter_limit(segments):
                 break
-        return chapters
+        return self._rebalance_chapters_for_coverage(chapters, segments)
+
+    def _coerce_chapter_groups(
+        self,
+        value: object,
+        chapters: list[dict[str, object]] | None = None,
+    ) -> list[dict[str, object]]:
+        if not isinstance(value, list):
+            return []
+        groups: list[dict[str, object]] = []
+        limit = self._chapter_group_limit(chapters or [])
+        for index, item in enumerate(value):
+            if not isinstance(item, dict):
+                continue
+            children = self._coerce_chapters(item.get("children"), chapters)
+            if not children:
+                continue
+            summary = str(item.get("summary") or "").strip()[:120]
+            title = self._normalize_content_title(
+                str(item.get("title") or "").strip(),
+                fallback_text=summary,
+                fallback_prefix="主题",
+                fallback_index=index + 1,
+                child_titles=[str(child.get("title") or "").strip() for child in children],
+            )
+            groups.append(
+                {
+                    "title": title,
+                    "start": float(item.get("start") or children[0].get("start") or 0),
+                    "summary": summary,
+                    "children": children,
+                }
+            )
+        return groups[:limit]
+
+    def _build_chapter_groups_from_chapters(self, chapters: list[dict[str, object]]) -> list[dict[str, object]]:
+        if not chapters:
+            return []
+        desired_groups = self._suggest_chapter_group_count(chapters)
+        group_size = max(1, math.ceil(len(chapters) / max(1, desired_groups)))
+        groups: list[dict[str, object]] = []
+        for index in range(0, len(chapters), group_size):
+            items = chapters[index : index + group_size]
+            if not items:
+                continue
+            first = items[0]
+            last = items[-1]
+            summary = "；".join(str(item.get("title") or "").strip() for item in items if str(item.get("title") or "").strip())
+            groups.append(
+                {
+                    "title": self._normalize_content_title(
+                        "",
+                        fallback_text=summary,
+                        fallback_prefix="主题",
+                        fallback_index=len(groups) + 1,
+                        child_titles=[str(item.get("title") or "").strip() for item in items],
+                    ),
+                    "start": float(first.get("start") or 0),
+                    "summary": summary[:120] or f"{self._format_seconds(float(first.get('start') or 0))} - {self._format_seconds(float(last.get('start') or 0))}",
+                    "children": items,
+                }
+            )
+        return groups[: self._chapter_group_limit(chapters)]
+
+    def _chapter_limit(self, segments: list[dict[str, object]]) -> int:
+        if not segments:
+            return 12
+        target = self._suggest_chapter_count(segments)
+        return max(8, min(48, target * 2))
+
+    def _chapter_group_limit(self, chapters: list[dict[str, object]]) -> int:
+        if not chapters:
+            return 5
+        return max(2, min(8, self._suggest_chapter_group_count(chapters) + 1))
+
+    def _suggest_chapter_count(self, segments: list[dict[str, object]]) -> int:
+        if not segments:
+            return 4
+        first_start = float(segments[0].get("start") or 0)
+        last_end = float(segments[-1].get("end") or segments[-1].get("start") or first_start)
+        duration = max(0.0, last_end - first_start)
+        segment_count = len(segments)
+        duration_minutes = duration / 60.0 if duration > 0 else 0.0
+        duration_target = math.ceil(duration_minutes / 3.5) if duration_minutes > 0 else 4
+        density_target = math.ceil(segment_count / 120) if segment_count > 0 else 0
+        return max(4, min(28, max(duration_target, density_target, 4)))
+
+    def _suggest_chapter_group_count(self, chapters: list[dict[str, object]]) -> int:
+        chapter_count = len(chapters)
+        return max(1, min(8, math.ceil(chapter_count / 4)))
+
+    def _rebalance_chapters_for_coverage(
+        self,
+        chapters: list[dict[str, object]],
+        segments: list[dict[str, object]],
+    ) -> list[dict[str, object]]:
+        if not chapters:
+            return []
+
+        ordered = sorted(chapters, key=lambda item: float(item.get("start") or 0))
+        target_count = self._suggest_chapter_count(segments)
+        if len(ordered) <= target_count:
+            return ordered
+
+        first_start = float(segments[0].get("start") or ordered[0].get("start") or 0) if segments else float(ordered[0].get("start") or 0)
+        last_end = (
+            float(segments[-1].get("end") or segments[-1].get("start") or ordered[-1].get("start") or first_start)
+            if segments
+            else float(ordered[-1].get("start") or first_start)
+        )
+        duration = max(1.0, last_end - first_start)
+        window_size = max(45.0, duration / max(1, target_count))
+
+        buckets: list[list[dict[str, object]]] = []
+        for chapter in ordered:
+            start = float(chapter.get("start") or 0)
+            bucket_index = min(target_count - 1, max(0, int((start - first_start) / window_size)))
+            while len(buckets) <= bucket_index:
+                buckets.append([])
+            buckets[bucket_index].append(chapter)
+
+        merged_buckets: list[dict[str, object]] = []
+        for bucket in buckets:
+            if not bucket:
+                continue
+            merged_buckets.append(self._merge_chapter_bucket(bucket))
+
+        if len(merged_buckets) > target_count:
+            sampled: list[dict[str, object]] = []
+            for index in range(target_count):
+                source_index = min(len(merged_buckets) - 1, round(index * (len(merged_buckets) - 1) / max(1, target_count - 1)))
+                sampled.append(merged_buckets[source_index])
+            deduped: list[dict[str, object]] = []
+            seen: set[tuple[int, str]] = set()
+            for chapter in sampled:
+                key = (int(float(chapter.get("start") or 0)), self._dedupe_text_key(str(chapter.get("title") or "")))
+                if key in seen:
+                    continue
+                seen.add(key)
+                deduped.append(chapter)
+            merged_buckets = deduped
+
+        return merged_buckets
+
+    def _merge_chapter_bucket(self, bucket: list[dict[str, object]]) -> dict[str, object]:
+        first = bucket[0]
+        titles = [str(item.get("title") or "").strip() for item in bucket if str(item.get("title") or "").strip()]
+        summaries = [str(item.get("summary") or "").strip() for item in bucket if str(item.get("summary") or "").strip()]
+        title = self._normalize_content_title(
+            titles[0] if titles else "",
+            fallback_text="；".join(summaries),
+            fallback_prefix="章节",
+            fallback_index=1,
+            child_titles=titles[1:],
+        )
+        summary_parts: list[str] = []
+        seen_summary_keys: set[str] = set()
+        for summary in summaries:
+            key = self._dedupe_text_key(summary)
+            if not key or key in seen_summary_keys:
+                continue
+            seen_summary_keys.add(key)
+            summary_parts.append(summary)
+            if len("；".join(summary_parts)) >= 150:
+                break
+        return {
+            "title": title,
+            "start": float(first.get("start") or 0),
+            "summary": "；".join(summary_parts)[:160],
+        }
+
+    def _normalize_content_title(
+        self,
+        title: str,
+        fallback_text: str = "",
+        fallback_prefix: str = "章节",
+        fallback_index: int = 1,
+        child_titles: list[str] | None = None,
+    ) -> str:
+        clean_title = self._clean_title(title)
+        if clean_title and not self._is_placeholder_title(clean_title):
+            return clean_title
+
+        for child_title in child_titles or []:
+            normalized = self._clean_title(child_title)
+            if normalized and not self._is_placeholder_title(normalized):
+                return normalized
+
+        derived_from_text = self._derive_title_from_text(fallback_text)
+        if derived_from_text:
+            return derived_from_text
+
+        return f"{fallback_prefix} {fallback_index}"
+
+    def _clean_title(self, value: str) -> str:
+        title = str(value or "").strip()
+        title = re.sub(r"^[\-•\d\.\)\(、\s]+", "", title)
+        return title[:24]
+
+    def _is_placeholder_title(self, value: str) -> bool:
+        title = str(value or "").strip()
+        if not title:
+            return True
+        normalized = title.lower()
+        return bool(
+            re.fullmatch(r"(大)?章节\s*\d+", title)
+            or re.fullmatch(r"第?\s*\d+\s*(章|节|部分)", title)
+            or re.fullmatch(r"(part|section|chapter)\s*[-:：]?\s*\d+", normalized)
+        )
+
+    def _derive_title_from_text(self, value: str) -> str:
+        text = str(value or "").strip()
+        if not text:
+            return ""
+        text = re.sub(r"^(这一部分|本部分|这里|该部分|这一章|本章|本节|这一节)(主要)?(讲|介绍|讨论|说明|分析|围绕)?", "", text)
+        text = re.split(r"[。；!！?？\n]", text, maxsplit=1)[0].strip(" ：:-")
+        text = re.sub(r"\s+", "", text)
+        if not text:
+            return ""
+        if len(text) > 24:
+            text = text[:24].rstrip("，,、；;：:")
+        return text
 
     def _export_result(
         self,
@@ -1429,18 +2141,40 @@ class RealPipelineRunner(PipelineRunner):
     ) -> TaskResult:
         transcript_path = task_dir / "transcript.txt"
         summary_path = task_dir / "summary.json"
+        knowledge_note_path = task_dir / "knowledge_note.md"
+        knowledge_note_markdown = str(summary.get("knowledgeNoteMarkdown") or "").strip()
         transcript_path.write_text(transcript, encoding="utf-8")
         summary_path.write_text(
             json.dumps({"title": title, "summary": summary, "segments": segments}, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
+        knowledge_note_path.write_text(knowledge_note_markdown, encoding="utf-8")
         logger.info(
-            "result exported transcript_path=%s summary_path=%s",
+            "result exported transcript_path=%s summary_path=%s knowledge_note_path=%s",
             transcript_path,
             summary_path,
+            knowledge_note_path,
         )
+        return self._build_task_result(
+            transcript,
+            summary,
+            artifacts={
+                "transcript_path": str(transcript_path),
+                "summary_path": str(summary_path),
+                "knowledge_note_path": str(knowledge_note_path),
+            },
+        )
+
+    def _build_task_result(
+        self,
+        transcript: str,
+        summary: dict[str, object],
+        artifacts: dict[str, str] | None = None,
+    ) -> TaskResult:
+        knowledge_note_markdown = str(summary.get("knowledgeNoteMarkdown") or "").strip()
         return TaskResult(
             overview=str(summary.get("overview") or ""),
+            knowledge_note_markdown=knowledge_note_markdown,
             transcript_text=transcript,
             segment_summaries=[str(item["summary"]) for item in summary.get("chapters", [])],
             key_points=[str(item) for item in summary.get("bulletPoints", [])],
@@ -1452,10 +2186,25 @@ class RealPipelineRunner(PipelineRunner):
                 }
                 for item in summary.get("chapters", [])
             ],
-            artifacts={
-                "transcript_path": str(transcript_path),
-                "summary_path": str(summary_path),
-            },
+            chapter_groups=[
+                {
+                    "title": str(group.get("title") or ""),
+                    "start": group.get("start"),
+                    "summary": str(group.get("summary") or ""),
+                    "children": [
+                        {
+                            "title": str(item.get("title") or ""),
+                            "start": item.get("start"),
+                            "summary": str(item.get("summary") or ""),
+                        }
+                        for item in (group.get("children") or [])
+                        if isinstance(item, dict)
+                    ],
+                }
+                for group in summary.get("chapterGroups", [])
+                if isinstance(group, dict)
+            ],
+            artifacts=artifacts or {},
             llm_prompt_tokens=_safe_int(summary.get("llm_prompt_tokens")),
             llm_completion_tokens=_safe_int(summary.get("llm_completion_tokens")),
             llm_total_tokens=_safe_int(summary.get("llm_total_tokens")),

@@ -6,12 +6,21 @@ export type TimelineItem = {
   summary?: string;
 };
 
+export type ChapterGroupItem = {
+  title?: string;
+  start?: number;
+  summary?: string;
+  children?: TimelineItem[];
+};
+
 export type TaskResult = {
   overview: string;
+  knowledge_note_markdown?: string;
   transcript_text: string;
   segment_summaries: string[];
   key_points: string[];
   timeline: TimelineItem[];
+  chapter_groups?: ChapterGroupItem[];
   artifacts: Record<string, string>;
   llm_prompt_tokens?: number | null;
   llm_completion_tokens?: number | null;

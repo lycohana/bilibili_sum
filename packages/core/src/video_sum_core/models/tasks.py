@@ -35,10 +35,12 @@ class TaskInput(BaseModel):
 
 class TaskResult(BaseModel):
     overview: str = ""
+    knowledge_note_markdown: str = ""
     transcript_text: str = ""
     segment_summaries: list[str] = Field(default_factory=list)
     key_points: list[str] = Field(default_factory=list)
     timeline: list[dict[str, object]] = Field(default_factory=list)
+    chapter_groups: list[dict[str, object]] = Field(default_factory=list)
     artifacts: dict[str, str] = Field(default_factory=dict)
     llm_prompt_tokens: int | None = None
     llm_completion_tokens: int | None = None

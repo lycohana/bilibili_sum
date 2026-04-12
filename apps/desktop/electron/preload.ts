@@ -78,6 +78,9 @@ const desktop = {
       };
     },
   },
+  clipboard: {
+    writeImage: (dataUrl: string) => ipcRenderer.invoke("desktop:clipboard:write-image", dataUrl) as Promise<void>,
+  },
   shell: {
     openPath: (targetPath: string) => ipcRenderer.invoke("desktop:shell:open-path", targetPath) as Promise<string>,
   },

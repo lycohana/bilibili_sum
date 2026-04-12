@@ -38,6 +38,9 @@ type DesktopBridge = {
     status(): Promise<DesktopBackendStatus>;
     onStatus(listener: (status: DesktopBackendStatus) => void): () => void;
   };
+  clipboard: {
+    writeImage(dataUrl: string): Promise<void>;
+  };
   shell: {
     openPath(targetPath: string): Promise<string>;
   };

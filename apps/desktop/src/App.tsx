@@ -5,7 +5,6 @@ import { deriveRuntimeDeviceLabel, emptySnapshot, getUpdateDialogSignal, isUpdat
 import { api } from "./api";
 import { HomeIcon, LibraryIcon, SettingsIcon } from "./components/AppIcons";
 import { MultiPageSelectDialog } from "./components/MultiPageSelectDialog";
-import { SidebarStatusItem } from "./components/AppPrimitives";
 import { TitleBar } from "./components/TitleBar";
 import { UpdateDialog, type UpdateInfo } from "./components/UpdateDialog";
 import { HomePage } from "./pages/HomePage";
@@ -41,6 +40,13 @@ export function App() {
     }
     return window.matchMedia("(prefers-color-scheme: dark)").matches;
   });
+  const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => {
+    if (typeof window === "undefined") {
+      return false;
+    }
+    return localStorage.getItem("sidebar-collapsed") === "true";
+  });
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [updateDialogOpen, setUpdateDialogOpen] = useState(false);
   const [updateState, setUpdateState] = useState<UpdateState>({
     status: "idle",
@@ -57,6 +63,10 @@ export function App() {
     document.documentElement.setAttribute("data-theme", darkMode ? "dark" : "light");
     localStorage.setItem("theme", darkMode ? "dark" : "light");
   }, [darkMode]);
+
+  useEffect(() => {
+    localStorage.setItem("sidebar-collapsed", sidebarCollapsed ? "true" : "false");
+  }, [sidebarCollapsed]);
 
   useEffect(() => {
     let backendCleanup: (() => void) | undefined;
@@ -289,25 +299,32 @@ export function App() {
   const updateSupported = Boolean(window.desktop?.update) && !isUpdateUnsupported(updateState);
 
   return (
-    <div className="app-shell">
-      <TitleBar darkMode={darkMode} onToggleTheme={() => setDarkMode((current) => !current)} />
+    <div className={`app-shell ${sidebarCollapsed ? "sidebar-collapsed" : ""} ${mobileSidebarOpen ? "mobile-sidebar-open" : ""}`}>
+      <TitleBar
+        darkMode={darkMode}
+        onToggleTheme={() => setDarkMode((current) => !current)}
+        serviceOnline={snapshot.serviceOnline}
+        backendRunning={desktop.backend?.running}
+        runtimeDeviceLabel={runtimeDeviceLabel}
+        version={desktop.version}
+      />
       <aside className="sidebar">
         <nav className="nav">
-          <Link className={`nav-item ${location.pathname === "/" ? "active" : ""}`} to="/">
+          <Link className={`nav-item ${location.pathname === "/" ? "active" : ""}`} to="/" aria-label="首页" title="首页" onClick={() => setMobileSidebarOpen(false)}>
             <span className="nav-icon" aria-hidden="true"><HomeIcon /></span>
             <span className="nav-copy">
               <strong>首页</strong>
               <small>工作台总览</small>
             </span>
           </Link>
-          <Link className={`nav-item ${location.pathname === "/library" ? "active" : ""}`} to="/library">
+          <Link className={`nav-item ${location.pathname === "/library" ? "active" : ""}`} to="/library" aria-label="视频库" title="视频库" onClick={() => setMobileSidebarOpen(false)}>
             <span className="nav-icon" aria-hidden="true"><LibraryIcon /></span>
             <span className="nav-copy">
               <strong>视频库</strong>
               <small>资产管理</small>
             </span>
           </Link>
-          <Link className={`nav-item ${location.pathname.startsWith("/settings") ? "active" : ""}`} to="/settings">
+          <Link className={`nav-item ${location.pathname.startsWith("/settings") ? "active" : ""}`} to="/settings" aria-label="设置" title="设置" onClick={() => setMobileSidebarOpen(false)}>
             <span className="nav-icon" aria-hidden="true"><SettingsIcon /></span>
             <span className="nav-copy">
               <strong>设置</strong>
@@ -317,22 +334,48 @@ export function App() {
         </nav>
 
         <div className="nav-section-divider"></div>
-
-        <section className="live-panel">
-          <div className="panel-header panel-header-subtle">
-            <h2>运行状态</h2>
-          </div>
-          <div className="status-stack">
-            <SidebarStatusItem
-              label="服务"
-              tone={snapshot.serviceOnline ? "success" : "default"}
-              value={snapshot.serviceOnline ? "在线" : desktop.backend?.running ? "启动中" : "离线"}
-            />
-            <SidebarStatusItem label="设备" value={runtimeDeviceLabel} />
-            <SidebarStatusItem label="版本" value={desktop.version} />
-          </div>
-        </section>
+        <button
+          className="sidebar-corner-toggle"
+          type="button"
+          onClick={() => setSidebarCollapsed((current) => !current)}
+          aria-label={sidebarCollapsed ? "展开侧边栏" : "收起侧边栏"}
+          aria-pressed={sidebarCollapsed}
+          title={sidebarCollapsed ? "展开侧边栏" : "收起侧边栏"}
+        >
+          <IconSidebarToggle collapsed={sidebarCollapsed} />
+        </button>
       </aside>
+
+      {/* 移动端菜单按钮 - 仅在竖屏显示 */}
+      <button
+        className="mobile-menu-toggle"
+        type="button"
+        onClick={() => setMobileSidebarOpen(true)}
+        aria-label="打开菜单"
+        title="打开菜单"
+      >
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <line x1="3" y1="6" x2="21" y2="6" />
+          <line x1="3" y1="12" x2="21" y2="12" />
+          <line x1="3" y1="18" x2="21" y2="18" />
+        </svg>
+      </button>
+
+      {/* 移动端遮罩层 - 点击关闭 sidebar */}
+      {mobileSidebarOpen && (
+        <div
+          className="mobile-sidebar-overlay"
+          onClick={() => setMobileSidebarOpen(false)}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") {
+              setMobileSidebarOpen(false);
+            }
+          }}
+          role="button"
+          tabIndex={0}
+          aria-label="关闭菜单"
+        />
+      )}
 
       <main className="content">
         <div className={`content-frame ${isSettingsRoute ? "content-frame-settings" : ""}`}>
@@ -426,5 +469,15 @@ export function App() {
         onConfirm={handleConfirmMultiPage}
       />
     </div>
+  );
+}
+
+function IconSidebarToggle({ collapsed }: { collapsed: boolean }) {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3.5" y="4.5" width="17" height="15" rx="2.5" />
+      <path d="M9 4.5v15" />
+      {collapsed ? <path d="m13.5 12 3-3m-3 3 3 3" /> : <path d="m15.5 12-3-3m3 3-3 3" />}
+    </svg>
   );
 }

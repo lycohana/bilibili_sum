@@ -1,7 +1,23 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
-export function TitleBar({ darkMode, onToggleTheme }: { darkMode: boolean; onToggleTheme(): void }) {
+export function TitleBar({
+  darkMode,
+  onToggleTheme,
+  serviceOnline,
+  backendRunning,
+  runtimeDeviceLabel,
+  version,
+}: {
+  darkMode: boolean;
+  onToggleTheme(): void;
+  serviceOnline: boolean;
+  backendRunning?: boolean;
+  runtimeDeviceLabel: string;
+  version: string;
+}) {
   const [isMaximized, setIsMaximized] = useState(false);
+  const [statusPopoverOpen, setStatusPopoverOpen] = useState(false);
+  const statusPopoverRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     async function checkMaximized() {
@@ -11,6 +27,17 @@ export function TitleBar({ darkMode, onToggleTheme }: { darkMode: boolean; onTog
       }
     }
     void checkMaximized();
+  }, []);
+
+  useEffect(() => {
+    function handlePointerDown(event: MouseEvent) {
+      if (!statusPopoverRef.current?.contains(event.target as Node)) {
+        setStatusPopoverOpen(false);
+      }
+    }
+
+    window.addEventListener("mousedown", handlePointerDown);
+    return () => window.removeEventListener("mousedown", handlePointerDown);
   }, []);
 
   const handleMaximize = async () => {
@@ -33,6 +60,8 @@ export function TitleBar({ darkMode, onToggleTheme }: { darkMode: boolean; onTog
     }
   };
 
+  const serviceStatusText = serviceOnline ? "在线" : backendRunning ? "启动中" : "离线";
+
   return (
     <div className="title-bar">
       <div className="title-bar-sidebar-brand">
@@ -43,6 +72,44 @@ export function TitleBar({ darkMode, onToggleTheme }: { darkMode: boolean; onTog
       </div>
       <div className="title-bar-drag-region" />
       <div className="title-bar-controls">
+        <div
+          className={`title-bar-status-wrap ${statusPopoverOpen ? "is-open" : ""}`}
+          ref={statusPopoverRef}
+          onMouseEnter={() => setStatusPopoverOpen(true)}
+          onMouseLeave={() => setStatusPopoverOpen(false)}
+        >
+          <button
+            className={`title-bar-status-pill ${serviceOnline ? "is-success" : ""}`}
+            type="button"
+            onClick={() => setStatusPopoverOpen((current) => !current)}
+            aria-label="查看运行状态"
+            aria-expanded={statusPopoverOpen}
+            title="运行状态"
+          >
+            <span className={`title-bar-status-dot ${serviceOnline ? "is-success" : backendRunning ? "is-pending" : ""}`} />
+            <span>运行状态</span>
+          </button>
+
+          <div className={`title-bar-status-popover ${statusPopoverOpen ? "is-visible" : ""}`} role="dialog" aria-label="运行状态详情">
+            <div className="title-bar-status-header">
+              <h2>运行状态</h2>
+            </div>
+            <div className="title-bar-status-stack">
+              <div className={`sidebar-status-item ${serviceOnline ? "is-success" : ""}`}>
+                <span>服务</span>
+                <strong>{serviceStatusText}</strong>
+              </div>
+              <div className="sidebar-status-item">
+                <span>设备</span>
+                <strong>{runtimeDeviceLabel}</strong>
+              </div>
+              <div className="sidebar-status-item">
+                <span>版本</span>
+                <strong>{version || "-"}</strong>
+              </div>
+            </div>
+          </div>
+        </div>
         <button
           className="title-bar-button"
           type="button"

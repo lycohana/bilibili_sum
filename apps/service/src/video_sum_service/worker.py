@@ -57,15 +57,33 @@ class TaskWorker:
 
         try:
             context = PipelineContext(task_id=task_id, task_input=record.task_input)
-            events, result = self._pipeline_runner.run(
-                context,
-                on_event=lambda event: self._repository.append_event(
+
+            def handle_pipeline_event(event) -> None:
+                payload = dict(event.payload or {})
+                result_payload = payload.get("result")
+                if isinstance(result_payload, dict):
+                    try:
+                        partial_result = TaskResult.model_validate(result_payload)
+                    except Exception:
+                        logger.warning(
+                            "skip invalid partial result task_id=%s stage=%s",
+                            task_id,
+                            event.stage,
+                        )
+                    else:
+                        self._repository.save_result(task_id, partial_result)
+
+                self._repository.append_event(
                     task_id=task_id,
                     stage=event.stage,
                     progress=event.progress,
                     message=event.message,
-                    payload=event.payload,
-                ),
+                    payload=payload,
+                )
+
+            events, result = self._pipeline_runner.run(
+                context,
+                on_event=handle_pipeline_event,
             )
 
             final_result = result if isinstance(result, TaskResult) else TaskResult()

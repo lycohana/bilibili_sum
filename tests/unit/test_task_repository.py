@@ -67,7 +67,12 @@ def test_repository_saves_result_and_events() -> None:
     repository.append_event(record.task_id, stage="running", progress=50, message="处理中")
     repository.save_result(
         record.task_id,
-        TaskResult(transcript_text="hello", llm_total_tokens=321),
+        TaskResult(
+            transcript_text="hello",
+            knowledge_note_markdown="# hello",
+            chapter_groups=[{"title": "大章节 1", "children": [{"title": "章节 1", "start": 0, "summary": "摘要"}]}],
+            llm_total_tokens=321,
+        ),
     )
 
     fetched = repository.get_task(record.task_id)
@@ -77,6 +82,8 @@ def test_repository_saves_result_and_events() -> None:
     assert fetched is not None
     assert fetched.result is not None
     assert fetched.result.transcript_text == "hello"
+    assert fetched.result.knowledge_note_markdown == "# hello"
+    assert fetched.result.chapter_groups[0]["title"] == "大章节 1"
     assert fetched.result.llm_total_tokens == 321
     assert listed[0].result is not None
     assert listed[0].result.llm_total_tokens == 321

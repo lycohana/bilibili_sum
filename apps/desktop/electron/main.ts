@@ -6,6 +6,7 @@ import process from "node:process";
 import {
   app,
   BrowserWindow,
+  clipboard,
   dialog,
   ipcMain,
   Menu,
@@ -974,6 +975,13 @@ function registerIpcHandlers() {
   ipcMain.handle("desktop:backend:start", async () => startBackend());
   ipcMain.handle("desktop:backend:stop", async () => stopBackend());
   ipcMain.handle("desktop:backend:status", () => backendStatus);
+  ipcMain.handle("desktop:clipboard:write-image", (_event, dataUrl: string) => {
+    const image = nativeImage.createFromDataURL(dataUrl);
+    if (image.isEmpty()) {
+      throw new Error("图片写入剪贴板失败。");
+    }
+    clipboard.writeImage(image);
+  });
   ipcMain.handle("desktop:shell:open-path", (_event, targetPath: string) => shell.openPath(targetPath));
   ipcMain.handle("desktop:logs:get-service-log-path", () => getServiceLogPath());
   ipcMain.handle("desktop:logs:read-service-log-tail", (_event, lines = 200) => readServiceLogTail(lines));

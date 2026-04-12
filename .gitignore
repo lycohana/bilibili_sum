@@ -22,3 +22,4 @@ temp_repo_inspect/
 # Vite build artifacts
 apps/web/static/assets/*.js
 apps/web/static/assets/*.css
+apps/web/static/assets/KaTeX*

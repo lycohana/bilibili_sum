@@ -2,6 +2,7 @@ import type { FormEvent } from "react";
 
 import { platformLabel } from "../appModel";
 import { LinkIcon } from "../components/AppIcons";
+import { FloatingNoticeStack } from "../components/FloatingNoticeStack";
 import { VideoCard } from "../components/VideoCard";
 import type { VideoAssetSummary } from "../types";
 import { formatDuration } from "../utils";
@@ -25,6 +26,7 @@ export function HomePage({
 }: HomePageProps) {
   return (
     <section className="home-page">
+      <FloatingNoticeStack notices={[{ id: "home-submit-status", message: submitStatus }]} />
       <div className="section">
         <h2 className="section-title">开始总结</h2>
         <form className="task-form" onSubmit={onProbe}>
@@ -44,7 +46,6 @@ export function HomePage({
             </label>
             <button className="primary-button primary-button-hero" type="submit">开始总结</button>
           </div>
-          {submitStatus && <div className="submit-status">{submitStatus}</div>}
         </form>
 
         {probePreview && (

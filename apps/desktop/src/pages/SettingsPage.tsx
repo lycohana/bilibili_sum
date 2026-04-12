@@ -13,6 +13,7 @@ import {
   normalizeDevicePreference,
 } from "../appModel";
 import { api } from "../api";
+import { FloatingNoticeStack } from "../components/FloatingNoticeStack";
 import type { EnvironmentInfo, ServiceSettings } from "../types";
 import { settingsCategories, type SettingsCategory } from "./settingsConfig";
 
@@ -166,6 +167,13 @@ export function SettingsPage({
 
   return (
     <div className="settings-page-wrapper">
+      <FloatingNoticeStack
+        notices={[
+          { id: "settings-cuda-status", message: cudaStatus },
+          { id: "settings-backend-error", message: desktop.backend?.lastError || "", tone: "error" },
+          { id: "settings-service-status", message: serviceStatus },
+        ]}
+      />
       <aside className="settings-nav">
         <div className="settings-nav-header">
           <span className="settings-nav-label-small">BriefVid</span>
@@ -795,7 +803,6 @@ export function SettingsPage({
                   </p>
                 </div>
               ) : null}
-              {cudaStatus ? <div className="action-status">{cudaStatus}</div> : null}
               {cudaDetail ? <div className="cuda-helper-text">{cudaDetail}</div> : null}
               {cudaOutput ? (
                 <label className="input-row">
@@ -880,8 +887,6 @@ export function SettingsPage({
                   强制关闭服务
                 </button>
               </div>
-              {desktop.backend?.lastError ? <div className="action-status">{desktop.backend.lastError}</div> : null}
-              {serviceStatus ? <div className="action-status">{serviceStatus}</div> : null}
               <label className="input-row">
                 <span className="input-label">最近日志</span>
                 <textarea className="textarea-field log-viewer" rows={20} readOnly value={logOutput}></textarea>

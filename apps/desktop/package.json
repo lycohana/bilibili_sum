@@ -21,9 +21,15 @@
   },
   "dependencies": {
     "electron-updater": "^6.3.0",
+    "html-to-image": "^1.11.13",
+    "katex": "^0.16.11",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "react-router-dom": "^7.5.0"
+    "react-markdown": "^10.1.0",
+    "react-router-dom": "^7.5.0",
+    "rehype-katex": "^7.0.1",
+    "remark-gfm": "^4.0.1",
+    "remark-math": "^6.0.0"
   },
   "devDependencies": {
     "@types/node": "^22.13.10",
