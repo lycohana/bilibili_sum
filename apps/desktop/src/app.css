@@ -2365,8 +2365,28 @@ textarea {
 }
 
 .cuda-picker {
+  position: relative;
   flex: 1;
   min-width: 180px;
+}
+
+.cuda-picker::after {
+  content: "";
+  position: absolute;
+  right: 14px;
+  bottom: 18px;
+  width: 16px;
+  height: 16px;
+  pointer-events: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16' fill='none'%3E%3Cpath d='M4 6l4 4 4-4' stroke='%236a6a70' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 16px 16px;
+}
+
+.cuda-select-field {
+  background-image: none;
+  padding-right: 42px;
 }
 
 .settings-grid {
@@ -5432,6 +5452,123 @@ textarea {
   margin-top: 20px;
 }
 
+.cuda-progress-card {
+  display: grid;
+  gap: 12px;
+  padding: 14px 16px;
+  border-radius: 20px;
+  border: 1px solid var(--settings-border);
+  background: var(--settings-muted-bg);
+}
+
+.cuda-progress-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.cuda-progress-copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.cuda-progress-copy strong {
+  font-size: 0.92rem;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.cuda-progress-copy span {
+  font-size: 0.8rem;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.cuda-progress-percent {
+  flex-shrink: 0;
+  font-size: 0.92rem;
+  font-weight: 700;
+  color: var(--brand-600);
+}
+
+.cuda-progress-bar {
+  height: 5px;
+}
+
+.cuda-stepper {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+  gap: 8px;
+}
+
+.cuda-step {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 8px;
+  align-items: center;
+  padding: 8px 10px;
+  border-radius: 14px;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-card);
+}
+
+.cuda-step-index {
+  grid-row: 1 / span 2;
+  width: 20px;
+  height: 20px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 999px;
+  background: var(--bg-subtle);
+  color: var(--text-secondary);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.cuda-step-label {
+  min-width: 0;
+  font-size: 0.78rem;
+  line-height: 1.35;
+  color: var(--text-primary);
+}
+
+.cuda-step-state {
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+}
+
+.cuda-step.done {
+  border-color: rgba(34, 168, 102, 0.28);
+  background: rgba(34, 168, 102, 0.08);
+}
+
+.cuda-step.done .cuda-step-index {
+  background: rgba(34, 168, 102, 0.16);
+  color: var(--success);
+}
+
+.cuda-step.active {
+  border-color: rgba(251, 114, 153, 0.24);
+  background: rgba(251, 114, 153, 0.06);
+}
+
+.cuda-step.active .cuda-step-index {
+  background: rgba(251, 114, 153, 0.14);
+  color: var(--brand-600);
+}
+
+.cuda-step.failed {
+  border-color: rgba(225, 75, 90, 0.26);
+  background: rgba(225, 75, 90, 0.06);
+}
+
+.cuda-step.failed .cuda-step-index {
+  background: rgba(225, 75, 90, 0.14);
+  color: var(--danger);
+}
+
 .cuda-insight-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
@@ -5439,40 +5576,35 @@ textarea {
   margin-bottom: 20px;
 }
 
-.cuda-stage-list {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: 10px;
+.cuda-helper-text {
+  color: var(--text-secondary);
+  line-height: 1.55;
+  font-size: 0.78rem;
 }
 
-.cuda-stage-item {
-  display: grid;
-  gap: 6px;
-  padding: 12px;
-  border-radius: var(--radius-md);
-  border: 1px solid var(--border-subtle);
-  background: var(--bg-card);
+.cuda-helper-text + .cuda-helper-text {
+  margin-top: 8px;
 }
 
-.cuda-stage-item span {
-  font-size: 0.8rem;
+.cuda-progress-card .cuda-helper-text {
+  margin: 0;
   color: var(--text-secondary);
 }
 
-.cuda-stage-item strong {
-  font-size: 0.85rem;
-  font-weight: 600;
-  color: var(--text-primary);
+.cuda-status-note {
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  font-size: 0.8rem;
+  line-height: 1.55;
+  color: var(--text-secondary);
 }
 
-.cuda-stage-item.done {
-  border-color: var(--success);
-  background: var(--bg-success);
-}
-
-.cuda-stage-item.active {
-  border-color: var(--brand-400);
-  background: var(--bg-accent);
+.cuda-status-note.is-error {
+  color: var(--danger);
+  border-color: rgba(225, 75, 90, 0.22);
+  background: rgba(225, 75, 90, 0.06);
 }
 
 .log-viewer {

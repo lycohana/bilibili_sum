@@ -191,6 +191,15 @@ def _run_command(command: list[str], runtime_channel: str, timeout: int = 3600) 
         )
 
 
+def _command_error_detail(exc: subprocess.CalledProcessError, fallback: str) -> str:
+    parts = [str(exc.stdout or "").strip(), str(exc.stderr or "").strip()]
+    merged = "\n".join(part for part in parts if part).strip()
+    if not merged:
+      merged = str(exc)
+    merged = merged[-1500:]
+    return f"{fallback}\n\n{merged}".strip()
+
+
 def _ensure_runtime_pip(python_executable: Path, runtime_channel: str) -> None:
     check_command = [str(python_executable), "-m", "pip", "--version"]
     try:
@@ -213,7 +222,7 @@ def _install_workspace_packages(python_executable: Path, runtime_channel: str) -
 
     _ensure_runtime_pip(python_executable, runtime_channel)
     root = repo_root()
-    command = [
+    bootstrap_command = [
         str(python_executable),
         "-m",
         "pip",
@@ -222,11 +231,21 @@ def _install_workspace_packages(python_executable: Path, runtime_channel: str) -
         "pip",
         "setuptools",
         "wheel",
+        "hatchling>=1.27.0",
+    ]
+    _run_command(bootstrap_command, runtime_channel=runtime_channel, timeout=900)
+
+    workspace_command = [
+        str(python_executable),
+        "-m",
+        "pip",
+        "install",
+        "--no-build-isolation",
         str(root / "packages" / "infra"),
         str(root / "packages" / "core"),
         str(root / "apps" / "service"),
     ]
-    _run_command(command, runtime_channel=runtime_channel, timeout=1800)
+    _run_command(workspace_command, runtime_channel=runtime_channel, timeout=1800)
 
 
 def _create_source_runtime(runtime_channel: str) -> Path:
@@ -860,7 +879,7 @@ def install_cuda_support(cuda_variant: str) -> dict[str, object]:
         clear_environment_probe_cache(runtime_channel)
         raise HTTPException(
             status_code=500,
-            detail=((exc.stderr or exc.stdout or str(exc))[-1500:]),
+            detail=_command_error_detail(exc, "安装基础依赖失败。"),
         ) from exc
 
     command = [
@@ -880,7 +899,10 @@ def install_cuda_support(cuda_variant: str) -> dict[str, object]:
         result = _run_command(command, runtime_channel=runtime_channel)
     except subprocess.CalledProcessError as exc:
         clear_environment_probe_cache(runtime_channel)
-        raise HTTPException(status_code=500, detail=((exc.stderr or exc.stdout or str(exc))[-1500:])) from exc
+        raise HTTPException(
+            status_code=500,
+            detail=_command_error_detail(exc, "安装 CUDA 依赖失败。"),
+        ) from exc
 
     current_settings = settings_manager.save(
         SettingsUpdatePayload(cuda_variant=cuda_variant, runtime_channel=runtime_channel)

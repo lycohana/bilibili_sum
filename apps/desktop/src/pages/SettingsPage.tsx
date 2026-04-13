@@ -153,13 +153,14 @@ export function SettingsPage({
     ? getUpdateSummary(updateInfo, desktop.version)
     : "当前环境不支持桌面自动更新。";
   const updateActionBusy = updateInfo.status === "checking" || updateInfo.status === "downloading" || updateInfo.status === "installing";
+  const hasCudaError = cudaStatus.includes("失败");
   const cudaPhasePlan = [
-    { threshold: 10, label: "准备 GPU 运行时目录" },
-    { threshold: 26, label: "引导 pip 和基础安装能力" },
-    { threshold: 48, label: "同步 BriefVid 工作区依赖" },
-    { threshold: 78, label: "安装 PyTorch CUDA 依赖" },
-    { threshold: 92, label: "刷新环境探测与运行时信息" },
-    { threshold: 100, label: "完成安装并切换推荐配置" },
+    { threshold: 10, label: "准备环境" },
+    { threshold: 26, label: "安装基础工具" },
+    { threshold: 48, label: "同步应用依赖" },
+    { threshold: 78, label: "安装 CUDA 依赖" },
+    { threshold: 92, label: "刷新环境信息" },
+    { threshold: 100, label: "完成设置" },
   ];
 
   useEffect(() => {
@@ -259,11 +260,27 @@ export function SettingsPage({
     const previousThreshold = index === 0 ? 0 : cudaPhasePlan[index - 1].threshold;
     const isComplete = cudaProgress >= phase.threshold;
     const isActive = !isComplete && cudaProgress > previousThreshold;
+    const isFailed = hasCudaError && isActive;
     return {
       ...phase,
-      state: isComplete ? "done" : isActive ? "active" : "pending",
+      state: isComplete ? "done" : isFailed ? "failed" : isActive ? "active" : "pending",
     };
   });
+  const currentCudaPhase =
+    cudaPhaseItems.find((phase) => phase.state === "failed")
+    || cudaPhaseItems.find((phase) => phase.state === "active")
+    || (cudaProgress >= 100 ? cudaPhaseItems[cudaPhaseItems.length - 1] : cudaPhaseItems.find((phase) => phase.state === "done"))
+    || null;
+  const cudaProgressValue = Math.round(Math.min(cudaProgress, 100));
+  const cudaStageDetail = cudaStage.includes("·") ? cudaStage.split("·")[1]?.trim() || "" : "";
+  const cudaProgressTitle = cudaStatus.includes("失败")
+    ? "安装失败"
+    : cudaProgress >= 100
+      ? "安装完成"
+      : cudaInstalling
+        ? "正在安装 CUDA 支持"
+        : "安装进度";
+  const cudaProgressSummary = currentCudaPhase?.label || "等待开始";
 
   return (
     <div className="settings-page-wrapper">
@@ -542,7 +559,7 @@ export function SettingsPage({
                 <div className="overview-info-grid">
                   <div className="overview-info-item">
                     <span className="overview-info-label">应用版本</span>
-                    <span className="overview-info-value">v{desktop.version}</span>
+                    <span className="overview-info-value">v{desktop.version || "-"}</span>
                   </div>
                   <div className="overview-info-item">
                     <span className="overview-info-label">监听地址</span>
@@ -885,7 +902,7 @@ export function SettingsPage({
                   <label className="input-row cuda-picker">
                     <span className="input-label">CUDA 目标版本</span>
                     <select
-                      className="select-field"
+                      className="select-field cuda-select-field"
                       value={form.cuda_variant}
                       disabled={cudaInstalling}
                       onChange={(event) => updateForm({ ...form, cuda_variant: event.target.value })}
@@ -975,34 +992,43 @@ export function SettingsPage({
               </div>
               {(cudaInstalling || cudaProgress > 0 || cudaStatus) ? (
                 <div className="cuda-progress-card">
-                  <div className="progress-bar-wrapper">
-                    <div className="progress-bar-simple">
-                      <div
-                        className={`progress-fill-simple ${cudaStatus.includes("失败") ? "error" : cudaProgress >= 100 ? "success" : ""}`}
-                        style={{ width: `${Math.min(cudaProgress, 100)}%` }}
-                      />
+                  <div className="cuda-progress-header">
+                    <div className="cuda-progress-copy">
+                      <strong>{cudaProgressTitle}</strong>
+                      <span>
+                        {cudaProgressSummary}
+                        {cudaStageDetail ? ` · ${cudaStageDetail}` : ""}
+                      </span>
                     </div>
-                    <div className="progress-info-simple">
-                      <span className="progress-percent-simple">{Math.round(Math.min(cudaProgress, 100))}%</span>
-                      <span className="progress-status-simple">{cudaStage || "等待开始"}</span>
-                    </div>
+                    <span className="cuda-progress-percent">{cudaProgressValue}%</span>
                   </div>
-                  <div className="cuda-stage-list">
-                    {cudaPhaseItems.map((phase) => (
-                      <div key={phase.label} className={`cuda-stage-item ${phase.state}`}>
-                        <span>{phase.label}</span>
-                        <strong>
-                          {phase.state === "done" ? "已完成" : phase.state === "active" ? "进行中" : "待执行"}
-                        </strong>
+                  <div className="progress-bar-simple cuda-progress-bar">
+                    <div
+                      className={`progress-fill-simple ${hasCudaError ? "error" : cudaProgress >= 100 ? "success" : ""}`}
+                      style={{ width: `${Math.min(cudaProgress, 100)}%` }}
+                    />
+                  </div>
+                  <div className="cuda-stepper" role="list" aria-label="CUDA 安装步骤">
+                    {cudaPhaseItems.map((phase, index) => (
+                      <div key={phase.label} className={`cuda-step ${phase.state}`} role="listitem">
+                        <span className="cuda-step-index">{index + 1}</span>
+                        <span className="cuda-step-label">{phase.label}</span>
+                        <span className="cuda-step-state">
+                          {phase.state === "done" ? "已完成" : phase.state === "failed" ? "失败" : phase.state === "active" ? "进行中" : "未开始"}
+                        </span>
                       </div>
                     ))}
                   </div>
                   <p className="cuda-helper-text">
-                    阶段进度为估计值；最终结果以安装输出和重新检测结果为准。
+                    安装通常需要几分钟。完成后点击“重新检测”确认 GPU 运行时是否已就绪。
                   </p>
+                  {cudaDetail ? (
+                    <div className={`cuda-status-note ${hasCudaError ? "is-error" : ""}`}>
+                      {cudaDetail}
+                    </div>
+                  ) : null}
                 </div>
               ) : null}
-              {cudaDetail ? <div className="cuda-helper-text">{cudaDetail}</div> : null}
               {cudaOutput ? (
                 <label className="input-row">
                   <span className="input-label">CUDA 安装输出</span>

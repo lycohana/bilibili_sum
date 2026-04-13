@@ -2,7 +2,12 @@ export async function fetchJson(url, options) {
   const response = await fetch(url, options);
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(text || `请求失败：${response.status}`);
+    try {
+      const payload = JSON.parse(text);
+      throw new Error(payload.detail || payload.message || text || `请求失败：${response.status}`);
+    } catch {
+      throw new Error(text || `请求失败：${response.status}`);
+    }
   }
   return await response.json();
 }

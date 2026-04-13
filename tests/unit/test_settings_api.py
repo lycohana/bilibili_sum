@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import video_sum_service.app as service_app
 from video_sum_infra.config import ServiceSettings
 from video_sum_service.app import app, install_local_asr, settings_manager, update_settings
 from video_sum_service.settings_manager import SettingsUpdatePayload
@@ -92,3 +93,43 @@ def test_install_local_asr_refreshes_environment(monkeypatch, tmp_path: Path) ->
     assert response["installed"] is True
     assert response["runtimeChannel"] == "base"
     assert response["environment"]["localAsrVersion"] == "1.1.1"
+
+
+def test_install_workspace_packages_bootstraps_hatchling_before_local_packages(
+    monkeypatch, tmp_path: Path
+) -> None:
+    commands: list[list[str]] = []
+
+    monkeypatch.setattr(service_app, "is_frozen", lambda: False)
+    monkeypatch.setattr(service_app, "_ensure_runtime_pip", lambda python_executable, runtime_channel: None)
+    monkeypatch.setattr(service_app, "repo_root", lambda: tmp_path)
+    monkeypatch.setattr(
+        service_app,
+        "_run_command",
+        lambda command, runtime_channel, timeout=1800: commands.append(command) or type("Result", (), {"stdout": "", "stderr": ""})(),
+    )
+
+    service_app._install_workspace_packages(tmp_path / "python.exe", runtime_channel="gpu-cu128")
+
+    assert len(commands) == 2
+    assert commands[0][:7] == [
+        str(tmp_path / "python.exe"),
+        "-m",
+        "pip",
+        "install",
+        "--upgrade",
+        "pip",
+        "setuptools",
+    ]
+    assert "wheel" in commands[0]
+    assert "hatchling>=1.27.0" in commands[0]
+    assert commands[1][:5] == [
+        str(tmp_path / "python.exe"),
+        "-m",
+        "pip",
+        "install",
+        "--no-build-isolation",
+    ]
+    assert str(tmp_path / "packages" / "infra") in commands[1]
+    assert str(tmp_path / "packages" / "core") in commands[1]
+    assert str(tmp_path / "apps" / "service") in commands[1]

@@ -16,6 +16,7 @@ import {
   Tray,
 } from "electron";
 import { autoUpdater, ProgressInfo, UpdateInfo as ElectronUpdateInfo } from "electron-updater";
+import desktopPackage from "../package.json";
 
 type CloseBehavior = "ask" | "tray" | "exit";
 
@@ -45,6 +46,7 @@ type UpdateInfo = {
 };
 
 const isDev = !app.isPackaged;
+const desktopAppVersion = String(desktopPackage.version || "");
 const repoRoot = path.resolve(__dirname, "../../..");
 const rendererUrl = process.env.BRIEFVID_RENDERER_URL ?? "http://127.0.0.1:5173";
 const backendUrl = "http://127.0.0.1:3838";
@@ -956,7 +958,7 @@ function installAndRestart(): void {
 }
 
 function registerIpcHandlers() {
-  ipcMain.handle("desktop:app:get-version", () => app.getVersion());
+  ipcMain.handle("desktop:app:get-version", () => desktopAppVersion || app.getVersion());
   ipcMain.handle("desktop:app:get-auto-launch", () => app.getLoginItemSettings().openAtLogin);
   ipcMain.handle("desktop:app:set-auto-launch", (_event, enabled: boolean) => setAutoLaunch(Boolean(enabled)));
   ipcMain.handle("desktop:window:show", () => {
