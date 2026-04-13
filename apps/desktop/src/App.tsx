@@ -231,11 +231,14 @@ export function App() {
 
   const runtimeDeviceLabel = useMemo(() => {
     return deriveRuntimeDeviceLabel({
+      transcriptionProvider: snapshot.settings?.transcription_provider,
       whisperDevice: snapshot.settings?.whisper_device,
       cudaAvailable: snapshot.environment?.cudaAvailable,
       hasSettings: Boolean(snapshot.settings),
     });
   }, [snapshot.environment?.cudaAvailable, snapshot.settings]);
+
+  const runtimeVersionLabel = desktop.version || snapshot.systemInfo?.application?.version || "";
 
   async function handleProbe(event: FormEvent) {
     event.preventDefault();
@@ -306,7 +309,7 @@ export function App() {
         serviceOnline={snapshot.serviceOnline}
         backendRunning={desktop.backend?.running}
         runtimeDeviceLabel={runtimeDeviceLabel}
-        version={desktop.version}
+        version={runtimeVersionLabel}
       />
       <aside className="sidebar">
         <nav className="nav">
@@ -441,6 +444,20 @@ export function App() {
                     onDownloadUpdate={handleDownloadUpdate}
                     onInstallUpdate={handleInstallUpdate}
                     onRefresh={() => setRefreshSeed((value) => value + 1)}
+                    onSettingsSaved={(settings, environment) => {
+                      setSnapshot((current) => ({
+                        ...current,
+                        settings,
+                        environment: environment ?? current.environment,
+                        systemInfo: current.systemInfo
+                          ? {
+                              ...current.systemInfo,
+                              settings,
+                              environment: environment ?? current.systemInfo.environment,
+                            }
+                          : current.systemInfo,
+                      }));
+                    }}
                     snapshot={snapshot}
                     updateInfo={updateState}
                     updateSupported={updateSupported}

@@ -67,14 +67,20 @@ export function devicePreferenceLabel(value?: string | null): string {
 }
 
 export function deriveRuntimeDeviceLabel({
+  transcriptionProvider,
   whisperDevice,
   cudaAvailable,
   hasSettings,
 }: {
+  transcriptionProvider?: string | null;
   whisperDevice?: string | null;
   cudaAvailable?: boolean;
   hasSettings: boolean;
-}): "GPU" | "CPU" {
+}): string {
+  const provider = String(transcriptionProvider || "").trim().toLowerCase();
+  if (provider === "siliconflow") {
+    return "云端";
+  }
   const effectiveDevice = normalizeDevicePreference(whisperDevice);
   if (effectiveDevice === "cuda") {
     return "GPU";

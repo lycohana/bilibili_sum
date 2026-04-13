@@ -2,7 +2,11 @@ from pathlib import Path
 
 import pytest
 
-from video_sum_core.errors import LLMAuthenticationError
+from video_sum_core.errors import (
+    LLMAuthenticationError,
+    TranscriptionAuthenticationError,
+    TranscriptionConfigurationError,
+)
 from video_sum_core.pipeline.real import PipelineSettings, RealPipelineRunner
 
 
@@ -145,3 +149,117 @@ def test_summarize_emits_partial_result_payloads() -> None:
     assert knowledge_note_event["result_scope"] == "knowledge_note"
     assert knowledge_note_event["result"]["knowledge_note_markdown"] == "# 知识笔记\n\n内容"
     assert summary["knowledgeNoteMarkdown"] == "# 知识笔记\n\n内容"
+
+
+def test_build_fallback_segments_from_transcript_preserves_order() -> None:
+    runner = RealPipelineRunner(PipelineSettings(tasks_dir=Path("tests/tmp_tasks")))
+
+    segments = runner._build_fallback_segments_from_transcript(
+        "第一句。第二句继续展开。第三句给出结论。",
+        duration=30.0,
+    )
+
+    assert len(segments) >= 1
+    assert segments[0]["start"] == 0.0
+    assert float(segments[-1]["end"]) == 30.0
+    assert "第一句" in "".join(str(segment["text"]) for segment in segments)
+
+
+def test_build_fallback_segments_from_long_comma_only_transcript_splits_into_multiple_timestamps() -> None:
+    runner = RealPipelineRunner(PipelineSettings(tasks_dir=Path("tests/tmp_tasks")))
+
+    transcript = (
+        "你的ai正在变得越来越会舔了，那么早期ai最大的问题是幻觉啊，"
+        "如果你两三年前用过ai1定会对它的胡言乱语印象深刻，"
+        "怕你说啊，这ai加1它等于3，那ai都可能一本正经的回答，"
+        "当然，在如今的大模型里，这种离谱的情况已经越来越少了，"
+        "但是取而代之的是一种更隐蔽的问题。"
+    )
+
+    segments = runner._build_fallback_segments_from_transcript(transcript, duration=75.0)
+    rendered = runner._render_transcript_from_segments(segments)
+
+    assert len(segments) >= 3
+    assert rendered.count("[") >= 3
+    assert "[00:00]" in rendered
+    assert "[01:" not in rendered or float(segments[-1]["end"]) <= 75.0
+
+
+def test_transcribe_uses_siliconflow_provider(monkeypatch: pytest.MonkeyPatch) -> None:
+    runner = RealPipelineRunner(
+        PipelineSettings(
+            tasks_dir=Path("tests/tmp_tasks"),
+            transcription_provider="siliconflow",
+            siliconflow_asr_api_key="test-key",
+        )
+    )
+
+    called: dict[str, object] = {}
+
+    def fake_siliconflow(
+        audio_path: Path,
+        duration: float | None,
+        emit,
+    ) -> tuple[str, list[dict[str, object]]]:
+        called["audio_path"] = audio_path
+        called["duration"] = duration
+        return "mock transcript", [{"start": 0.0, "end": 5.0, "text": "mock"}]
+
+    monkeypatch.setattr(runner, "_transcribe_with_siliconflow", fake_siliconflow)
+
+    transcript, segments = runner._transcribe(Path("sample.mp3"), 12.0, lambda *_args, **_kwargs: None)
+
+    assert transcript == "mock transcript"
+    assert segments[0]["text"] == "mock"
+    assert called["audio_path"] == Path("sample.mp3")
+    assert called["duration"] == 12.0
+
+
+def test_transcribe_with_siliconflow_requires_api_key() -> None:
+    runner = RealPipelineRunner(
+        PipelineSettings(
+            tasks_dir=Path("tests/tmp_tasks"),
+            transcription_provider="siliconflow",
+            siliconflow_asr_api_key="",
+        )
+    )
+
+    with pytest.raises(TranscriptionConfigurationError, match="API key"):
+        runner._transcribe_with_siliconflow(Path("sample.mp3"), 10.0, lambda *_args, **_kwargs: None)
+
+
+def test_transcribe_with_siliconflow_maps_auth_error(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    runner = RealPipelineRunner(
+        PipelineSettings(
+            tasks_dir=Path("tests/tmp_tasks"),
+            transcription_provider="siliconflow",
+            siliconflow_asr_api_key="test-key",
+        )
+    )
+    audio_path = tmp_path / "sample.mp3"
+    audio_path.write_bytes(b"fake audio")
+
+    class FakeResponse:
+        status_code = 401
+        text = '{"error":{"message":"invalid key"}}'
+
+        def json(self) -> dict[str, object]:
+            return {"error": {"message": "invalid key"}}
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def __enter__(self) -> "FakeClient":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def post(self, *args, **kwargs) -> FakeResponse:
+            return FakeResponse()
+
+    monkeypatch.setattr("video_sum_core.pipeline.real.httpx.Client", FakeClient)
+
+    with pytest.raises(TranscriptionAuthenticationError, match="authentication failed"):
+        runner._transcribe_with_siliconflow(audio_path, 10.0, lambda *_args, **_kwargs: None)

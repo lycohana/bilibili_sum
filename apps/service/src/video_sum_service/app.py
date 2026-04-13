@@ -390,7 +390,11 @@ def clear_environment_probe_cache(runtime_channel: str | None = None) -> None:
     _environment_probe_failures.pop(runtime_channel, None)
 
 
-def build_worker(repository: SqliteTaskRepository, current_settings: ServiceSettings) -> TaskWorker:
+def build_worker(
+    repository: SqliteTaskRepository,
+    current_settings: ServiceSettings,
+    environment_info: dict[str, object] | None = None,
+) -> TaskWorker:
     selected_runtime_channel = current_settings.runtime_channel
     if selected_runtime_channel != "base" and runtime_python_executable(selected_runtime_channel) is None:
         logger.warning("runtime channel %s is not ready, falling back to base", selected_runtime_channel)
@@ -398,11 +402,13 @@ def build_worker(repository: SqliteTaskRepository, current_settings: ServiceSett
 
     bootstrap_managed_runtime(selected_runtime_channel)
     prepend_runtime_path(selected_runtime_channel)
+    environment = environment_info or detect_environment(selected_runtime_channel)
     runtime_settings = current_settings.with_resolved_runtime(
-        cuda_available=bool(detect_environment(selected_runtime_channel).get("cudaAvailable"))
+        cuda_available=bool(environment.get("cudaAvailable"))
     )
     logger.info(
-        "build worker whisper_model=%s whisper_device=%s whisper_compute_type=%s llm_enabled=%s llm_model=%s",
+        "build worker transcription_provider=%s whisper_model=%s whisper_device=%s whisper_compute_type=%s llm_enabled=%s llm_model=%s",
+        runtime_settings.transcription_provider,
         runtime_settings.whisper_model,
         runtime_settings.whisper_device,
         runtime_settings.whisper_compute_type,
@@ -412,9 +418,13 @@ def build_worker(repository: SqliteTaskRepository, current_settings: ServiceSett
     pipeline_settings = PipelineSettings(
         tasks_dir=runtime_settings.tasks_dir,
         runtime_channel=selected_runtime_channel,
+        transcription_provider=runtime_settings.transcription_provider,
         whisper_model=runtime_settings.whisper_model,
         whisper_device=runtime_settings.whisper_device,
         whisper_compute_type=runtime_settings.whisper_compute_type,
+        siliconflow_asr_base_url=runtime_settings.siliconflow_asr_base_url,
+        siliconflow_asr_model=runtime_settings.siliconflow_asr_model,
+        siliconflow_asr_api_key=runtime_settings.siliconflow_asr_api_key,
         llm_enabled=runtime_settings.llm_enabled,
         llm_api_key=runtime_settings.llm_api_key,
         llm_base_url=runtime_settings.llm_base_url,
@@ -435,9 +445,13 @@ def build_worker(repository: SqliteTaskRepository, current_settings: ServiceSett
     )
 
 
-def serialize_settings(current_settings: ServiceSettings) -> dict[str, object]:
+def serialize_settings(
+    current_settings: ServiceSettings,
+    environment_info: dict[str, object] | None = None,
+) -> dict[str, object]:
+    environment = environment_info or detect_environment(current_settings.runtime_channel)
     runtime_settings = current_settings.with_resolved_runtime(
-        cuda_available=bool(detect_environment(current_settings.runtime_channel).get("cudaAvailable"))
+        cuda_available=bool(environment.get("cudaAvailable"))
     )
     return {
         "host": current_settings.host,
@@ -446,6 +460,7 @@ def serialize_settings(current_settings: ServiceSettings) -> dict[str, object]:
         "cache_dir": str(current_settings.cache_dir),
         "tasks_dir": str(current_settings.tasks_dir),
         "database_url": current_settings.database_url,
+        "transcription_provider": current_settings.transcription_provider,
         "whisper_model": runtime_settings.whisper_model,
         "whisper_device": runtime_settings.whisper_device,
         "whisper_compute_type": runtime_settings.whisper_compute_type,
@@ -453,6 +468,10 @@ def serialize_settings(current_settings: ServiceSettings) -> dict[str, object]:
         "compute_type": current_settings.compute_type,
         "model_mode": current_settings.model_mode,
         "fixed_model": current_settings.fixed_model,
+        "siliconflow_asr_base_url": current_settings.siliconflow_asr_base_url,
+        "siliconflow_asr_model": current_settings.siliconflow_asr_model,
+        "siliconflow_asr_api_key": current_settings.siliconflow_asr_api_key,
+        "siliconflow_asr_api_key_configured": bool(current_settings.siliconflow_asr_api_key),
         "cuda_variant": current_settings.cuda_variant,
         "runtime_channel": current_settings.runtime_channel,
         "output_dir": current_settings.output_dir,
@@ -968,17 +987,26 @@ def get_settings() -> dict[str, object]:
 
 @app.put("/api/v1/settings")
 def update_settings(payload: SettingsUpdatePayload) -> dict[str, object]:
+    previous_settings = settings_manager.current
     current_settings = settings_manager.save(payload)
-    clear_environment_probe_cache()
     bootstrap_managed_runtime(current_settings.runtime_channel)
     prepend_runtime_path(current_settings.runtime_channel)
     current_settings.data_dir.mkdir(parents=True, exist_ok=True)
     current_settings.cache_dir.mkdir(parents=True, exist_ok=True)
     current_settings.tasks_dir.mkdir(parents=True, exist_ok=True)
-    app.state.task_worker = build_worker(app.state.task_repository, current_settings)
+    runtime_channel_changed = previous_settings.runtime_channel != current_settings.runtime_channel
+    if runtime_channel_changed:
+        clear_environment_probe_cache(previous_settings.runtime_channel)
+        clear_environment_probe_cache(current_settings.runtime_channel)
+    environment = detect_environment(current_settings.runtime_channel)
+    app.state.task_worker = build_worker(
+        app.state.task_repository,
+        current_settings,
+        environment_info=environment,
+    )
     return {
         "saved": True,
-        "settings": serialize_settings(current_settings),
+        "settings": serialize_settings(current_settings, environment_info=environment),
         "message": "设置已保存。涉及服务监听地址的修改将在下次启动后生效。",
     }
 

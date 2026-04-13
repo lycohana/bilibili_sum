@@ -151,6 +151,7 @@ export type ServiceSettings = {
   cache_dir: string;
   tasks_dir: string;
   database_url: string;
+  transcription_provider: string;
   whisper_model: string;
   whisper_device: string;
   whisper_compute_type: string;
@@ -158,6 +159,10 @@ export type ServiceSettings = {
   compute_type: string;
   model_mode: string;
   fixed_model: string;
+  siliconflow_asr_base_url: string;
+  siliconflow_asr_model: string;
+  siliconflow_asr_api_key: string;
+  siliconflow_asr_api_key_configured?: boolean;
   cuda_variant: string;
   runtime_channel: string;
   output_dir: string;

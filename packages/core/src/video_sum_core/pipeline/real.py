@@ -18,6 +18,8 @@ from yt_dlp import YoutubeDL
 from video_sum_core.errors import (
     LLMAuthenticationError,
     LLMConfigurationError,
+    TranscriptionAuthenticationError,
+    TranscriptionConfigurationError,
     UnsupportedInputError,
     VideoSumError,
 )
@@ -131,9 +133,13 @@ def _should_retry_llm_transport_error(error: Exception) -> bool:
 class PipelineSettings:
     tasks_dir: Path
     runtime_channel: str = "base"
+    transcription_provider: str = "local"
     whisper_model: str = "tiny"
     whisper_device: str = "cpu"
     whisper_compute_type: str = "int8"
+    siliconflow_asr_base_url: str = "https://api.siliconflow.cn/v1"
+    siliconflow_asr_model: str = "TeleAI/TeleSpeechASR"
+    siliconflow_asr_api_key: str = ""
     llm_enabled: bool = False
     llm_api_key: str = ""
     llm_base_url: str = ""
@@ -479,6 +485,16 @@ class RealPipelineRunner(PipelineRunner):
         duration: float | None,
         emit: Callable[[str, int, str, dict[str, object] | None], None],
     ) -> tuple[str, list[dict[str, object]]]:
+        if self._settings.transcription_provider == "siliconflow":
+            return self._transcribe_with_siliconflow(audio_path, duration, emit)
+        return self._transcribe_with_local_whisper(audio_path, duration, emit)
+
+    def _transcribe_with_local_whisper(
+        self,
+        audio_path: Path,
+        duration: float | None,
+        emit: Callable[[str, int, str, dict[str, object] | None], None],
+    ) -> tuple[str, list[dict[str, object]]]:
         attempts = [
             {
                 "model": self._settings.whisper_model,
@@ -544,6 +560,158 @@ class RealPipelineRunner(PipelineRunner):
                 emit("transcribing", 56, "转写引擎异常，正在切换兼容模式重试")
 
         raise last_error or VideoSumError("Transcription failed.")
+
+    def _transcribe_with_siliconflow(
+        self,
+        audio_path: Path,
+        duration: float | None,
+        emit: Callable[[str, int, str, dict[str, object] | None], None],
+    ) -> tuple[str, list[dict[str, object]]]:
+        base_url = (self._settings.siliconflow_asr_base_url or "").rstrip("/")
+        model_name = (self._settings.siliconflow_asr_model or "").strip()
+        api_key = (self._settings.siliconflow_asr_api_key or "").strip()
+        if not base_url or not model_name:
+            raise TranscriptionConfigurationError("SiliconFlow ASR settings are incomplete.")
+        if not api_key:
+            raise TranscriptionConfigurationError("SiliconFlow ASR API key is not configured.")
+
+        request_url = f"{base_url}/audio/transcriptions"
+        emit(
+            "transcribing",
+            52,
+            f"正在连接语音识别服务 {model_name}",
+            {"provider": "siliconflow", "model": model_name},
+        )
+        emit(
+            "transcribing",
+            58,
+            "正在上传音频到硅基流动语音识别服务",
+            {"provider": "siliconflow", "audio_name": audio_path.name},
+        )
+
+        headers = {"Authorization": f"Bearer {api_key}"}
+        timeout = httpx.Timeout(connect=30.0, read=600.0, write=600.0, pool=30.0)
+        try:
+            with audio_path.open("rb") as audio_handle, httpx.Client(timeout=timeout) as client:
+                response = client.post(
+                    request_url,
+                    headers=headers,
+                    data={"model": model_name},
+                    files={"file": (audio_path.name, audio_handle, "audio/mpeg")},
+                )
+        except httpx.HTTPError as exc:
+            raise VideoSumError(f"SiliconFlow ASR request failed: {exc}") from exc
+
+        if response.status_code in {401, 403}:
+            detail = _extract_response_error_detail(response)
+            raise TranscriptionAuthenticationError(f"SiliconFlow ASR authentication failed: {detail}")
+        if response.status_code >= 400:
+            detail = _extract_response_error_detail(response)
+            raise VideoSumError(f"SiliconFlow ASR request failed: {detail}")
+
+        payload = response.json()
+        transcript = str(payload.get("text") or "").strip() if isinstance(payload, dict) else ""
+        if not transcript:
+            raise VideoSumError("SiliconFlow ASR returned empty transcript text.")
+
+        emit(
+            "transcribing",
+            78,
+            "云端语音识别完成，正在整理文本结构",
+            {"provider": "siliconflow", "transcript_chars": len(transcript)},
+        )
+        segments = self._build_fallback_segments_from_transcript(transcript, duration)
+        emit(
+            "transcribing",
+            84,
+            f"转写完成，共整理 {len(segments)} 段",
+            {"provider": "siliconflow", "segment_count": len(segments)},
+        )
+        return self._render_transcript_from_segments(segments), segments
+
+    def _build_fallback_segments_from_transcript(
+        self,
+        transcript: str,
+        duration: float | None,
+    ) -> list[dict[str, object]]:
+        normalized = re.sub(r"\s+", " ", str(transcript or "")).strip()
+        if not normalized:
+            return []
+
+        chunks = self._split_transcript_into_timed_chunks(normalized)
+
+        total_chars = sum(len(chunk) for chunk in chunks) or len(normalized)
+        effective_duration = max(float(duration or 0.0), float(len(chunks) * 6))
+        current = 0.0
+        segments: list[dict[str, object]] = []
+        for index, chunk in enumerate(chunks):
+            weight = len(chunk) / total_chars if total_chars > 0 else 1 / len(chunks)
+            start = current
+            if index == len(chunks) - 1:
+                end = effective_duration
+            else:
+                end = min(effective_duration, current + max(2.0, effective_duration * weight))
+            segments.append({"start": round(start, 3), "end": round(end, 3), "text": chunk})
+            current = end
+        return segments
+
+    def _split_transcript_into_timed_chunks(self, transcript: str) -> list[str]:
+        text = str(transcript or "").strip()
+        if not text:
+            return []
+
+        sentence_parts = [
+            part.strip()
+            for part in re.split(r"(?<=[。！？!?；;：:，,、])", text)
+            if part and part.strip()
+        ]
+        if not sentence_parts:
+            sentence_parts = [text]
+
+        soft_target_chars = 56
+        hard_limit_chars = 88
+        chunks: list[str] = []
+        buffer = ""
+
+        def flush_buffer() -> None:
+            nonlocal buffer
+            if buffer.strip():
+                chunks.append(buffer.strip())
+                buffer = ""
+
+        for part in sentence_parts:
+            candidate = f"{buffer}{part}".strip()
+            if buffer and len(candidate) > soft_target_chars:
+                flush_buffer()
+                candidate = part.strip()
+
+            while len(candidate) > hard_limit_chars:
+                split_index = max(
+                    candidate.rfind(marker, 0, hard_limit_chars)
+                    for marker in ("，", "、", ",", "；", ";", "：", ":", " ")
+                )
+                if split_index < 24:
+                    split_index = hard_limit_chars
+                head = candidate[:split_index].strip(" ，、；;：:")
+                if head:
+                    chunks.append(head)
+                candidate = candidate[split_index:].strip()
+
+            buffer = candidate
+
+        flush_buffer()
+        return chunks or [text]
+
+    def _render_transcript_from_segments(self, segments: list[dict[str, object]]) -> str:
+        lines = [
+            f"[{self._format_seconds(float(segment.get('start') or 0))}] {str(segment.get('text') or '').strip()}"
+            for segment in segments
+            if str(segment.get("text") or "").strip()
+        ]
+        transcript = "\n".join(lines).strip()
+        if transcript:
+            return transcript
+        return "\n".join(str(segment.get("text") or "").strip() for segment in segments if str(segment.get("text") or "").strip())
 
     def _run_transcription_subprocess(
         self,

@@ -148,6 +148,10 @@ export function renderSettingsView(state) {
           <!-- 转写模型 -->
           <section class="settings-subsection">
             <h3>转写模型</h3>
+            ${renderSelect("transcription_provider", "转写方式", settings.transcription_provider || "local", [
+              { value: "local", label: "本地 faster-whisper" },
+              { value: "siliconflow", label: "硅基流动 API" }
+            ])}
             ${renderSelect("device_preference", "推理设备", settings.device_preference || "cpu", [
               { value: "auto", label: "自动选择" },
               { value: "cuda", label: "CUDA (GPU)" },
@@ -168,6 +172,9 @@ export function renderSettingsView(state) {
               { value: "base", label: "Base (平衡)" },
               { value: "large-v3-turbo", label: "Large v3 Turbo (最准)" }
             ])}
+            ${renderInput("siliconflow_asr_base_url", "SiliconFlow Base URL", settings.siliconflow_asr_base_url || "https://api.siliconflow.cn/v1", "text", "https://api.siliconflow.cn/v1")}
+            ${renderInput("siliconflow_asr_model", "SiliconFlow ASR 模型", settings.siliconflow_asr_model || "TeleAI/TeleSpeechASR", "text", "TeleAI/TeleSpeechASR")}
+            ${renderInput("siliconflow_asr_api_key", "SiliconFlow API Key", settings.siliconflow_asr_api_key || "", "password", "sk-...", "current-password")}
             ${renderInput("language", "语言", settings.language || "", "text", "zh")}
           </section>
 
@@ -243,6 +250,9 @@ export function renderSettingsView(state) {
         </div>
         <div class="setting-list">
           ${renderRow("LLM 启用", settings.llm_enabled ? "✓ 是" : "✗ 否", settings.llm_enabled ? "success" : "neutral")}
+          ${renderRow("转写方式", settings.transcription_provider === "siliconflow" ? "硅基流动 API" : "本地 faster-whisper", settings.transcription_provider === "siliconflow" ? "success" : "neutral")}
+          ${renderRow("SiliconFlow 模型", settings.siliconflow_asr_model || "-", settings.siliconflow_asr_model ? "success" : "neutral")}
+          ${renderRow("SiliconFlow API Key", settings.siliconflow_asr_api_key_configured ? "✓ 已配置" : "✗ 未配置", settings.siliconflow_asr_api_key_configured ? "success" : "warning")}
           ${renderRow("LLM Base URL", settings.llm_base_url || "-", settings.llm_base_url ? "success" : "neutral")}
           ${renderRow("LLM 模型", settings.llm_model || "-", settings.llm_model ? "success" : "neutral")}
           ${renderRow("运行时通道", settings.runtime_channel || "base", "neutral")}

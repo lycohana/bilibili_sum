@@ -21,6 +21,7 @@ type SettingsPageProps = {
   snapshot: Snapshot;
   desktop: DesktopState;
   onRefresh(): void;
+  onSettingsSaved(settings: ServiceSettings, environment: EnvironmentInfo | null): void;
   updateInfo: UpdateState;
   updateSupported: boolean;
   onCheckUpdate(): Promise<unknown>;
@@ -33,6 +34,7 @@ export function SettingsPage({
   snapshot,
   desktop,
   onRefresh,
+  onSettingsSaved,
   updateInfo,
   updateSupported,
   onCheckUpdate,
@@ -42,6 +44,8 @@ export function SettingsPage({
 }: SettingsPageProps) {
   const [form, setForm] = useState<ServiceSettings | null>(snapshot.settings);
   const [environment, setEnvironment] = useState<EnvironmentInfo | null>(snapshot.environment);
+  const [isDirty, setIsDirty] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
   const [saveStatus, setSaveStatus] = useState("");
   const [cudaStatus, setCudaStatus] = useState("");
   const [cudaOutput, setCudaOutput] = useState("");
@@ -56,8 +60,11 @@ export function SettingsPage({
   const [activeCategory, setActiveCategory] = useState<SettingsCategory>("overview");
 
   useEffect(() => {
+    if (isDirty) {
+      return;
+    }
     setForm(snapshot.settings);
-  }, [snapshot.settings]);
+  }, [isDirty, snapshot.settings]);
 
   useEffect(() => {
     setEnvironment(snapshot.environment);
@@ -100,6 +107,8 @@ export function SettingsPage({
   const systemCategories = settingsCategories.filter((category) => category.group === "system");
   const llmReady = Boolean(form?.llm_enabled && form?.llm_api_key_configured);
   const autoMindMapReady = Boolean(form?.auto_generate_mindmap);
+  const asrReady =
+    form?.transcription_provider !== "siliconflow" || Boolean(form?.siliconflow_asr_api_key_configured);
   const updateUnsupported = isUpdateUnsupported(updateInfo);
   const updateStatusLabel = getUpdateStatusLabel(updateInfo);
   const updateStatusTone = getUpdateStatusTone(updateInfo);
@@ -138,21 +147,39 @@ export function SettingsPage({
 
   if (!form) return <section className="grid-card empty-state-card">正在加载设置...</section>;
 
+  const usesSiliconFlowAsr = form.transcription_provider === "siliconflow";
+
+  function updateForm(next: ServiceSettings) {
+    setIsDirty(true);
+    setForm(next);
+  }
+
   async function save(event: FormEvent) {
     event.preventDefault();
-    if (!form) return;
+    if (!form || isSaving) return;
     try {
+      setIsSaving(true);
       const response = await api.updateSettings({
         ...form,
         device_preference: normalizeDevicePreference(form.device_preference),
       });
       const nextSettings = response.settings;
       setForm(nextSettings);
+      setIsDirty(false);
       setSaveStatus(response.message || "设置已保存");
-      setEnvironment(await api.getEnvironment({ runtimeChannel: nextSettings.runtime_channel, refresh: true }));
-      onRefresh();
+      void (async () => {
+        try {
+          const nextEnvironment = await api.getEnvironment({ runtimeChannel: nextSettings.runtime_channel });
+          setEnvironment(nextEnvironment);
+          onSettingsSaved(nextSettings, nextEnvironment);
+        } catch {
+          onSettingsSaved(nextSettings, null);
+        }
+      })();
     } catch (error) {
       setSaveStatus(error instanceof Error ? error.message : "保存设置失败");
+    } finally {
+      setIsSaving(false);
     }
   }
 
@@ -170,6 +197,7 @@ export function SettingsPage({
     <div className="settings-page-wrapper">
       <FloatingNoticeStack
         notices={[
+          { id: "settings-save-status", message: saveStatus },
           { id: "settings-cuda-status", message: cudaStatus },
           { id: "settings-backend-error", message: desktop.backend?.lastError || "", tone: "error" },
           { id: "settings-service-status", message: serviceStatus },
@@ -237,8 +265,8 @@ export function SettingsPage({
           </div>
         </div>
         <div className="settings-nav-actions">
-          <button className="primary-button settings-save-btn" type="button" onClick={async (e) => { e.preventDefault(); await save(e as FormEvent); }}>
-            保存设置
+          <button className="primary-button settings-save-btn" type="button" disabled={isSaving} onClick={async (e) => { e.preventDefault(); await save(e as FormEvent); }}>
+            {isSaving ? "保存中..." : "保存设置"}
           </button>
           <div className="settings-nav-summary">
             <div className="settings-nav-summary-row">
@@ -254,7 +282,6 @@ export function SettingsPage({
               <strong>{form.auto_generate_mindmap ? "开启" : "关闭"}</strong>
             </div>
           </div>
-          {saveStatus && <span className="settings-save-status">{saveStatus}</span>}
         </div>
       </aside>
 
@@ -301,8 +328,8 @@ export function SettingsPage({
                     <strong>{form.host}:{form.port}</strong>
                   </div>
                   <div className="settings-story-stat">
-                    <span>Whisper</span>
-                    <strong>{form.fixed_model}</strong>
+                    <span>转写</span>
+                    <strong>{form.transcription_provider === "siliconflow" ? "SiliconFlow API" : form.fixed_model}</strong>
                   </div>
                   <div className="settings-story-stat">
                     <span>摘要模式</span>
@@ -346,7 +373,7 @@ export function SettingsPage({
                   </div>
                   <div className="overview-status-info">
                     <span className="overview-status-label">推理设备</span>
-                    <strong className="overview-status-value">{devicePreferenceLabel(form.whisper_device)}</strong>
+                    <strong className="overview-status-value">{form.transcription_provider === "siliconflow" ? "云端识别" : devicePreferenceLabel(form.whisper_device)}</strong>
                   </div>
                 </div>
                 <div className="overview-status-card">
@@ -359,6 +386,23 @@ export function SettingsPage({
                     <span className="overview-status-label">LLM 摘要</span>
                     <strong className={`overview-status-value ${form.llm_enabled ? "text-success" : ""}`}>
                       {form.llm_enabled ? "已启用" : "已关闭"}
+                    </strong>
+                  </div>
+                </div>
+                <div className="overview-status-card">
+                  <div className="overview-status-icon">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                    </svg>
+                  </div>
+                  <div className="overview-status-info">
+                    <span className="overview-status-label">语音识别服务</span>
+                    <strong className={`overview-status-value ${asrReady ? "text-success" : "text-danger"}`}>
+                      {form.transcription_provider === "siliconflow"
+                        ? asrReady
+                          ? "硅基流动已配置"
+                          : "硅基流动待补全"
+                        : "本地 faster-whisper"}
                     </strong>
                   </div>
                 </div>
@@ -433,7 +477,7 @@ export function SettingsPage({
                   </div>
                   <div className="overview-info-item">
                     <span className="overview-info-label">Whisper 模型</span>
-                    <span className="overview-info-value">{form.fixed_model}</span>
+                    <span className="overview-info-value">{form.transcription_provider === "siliconflow" ? form.siliconflow_asr_model : form.fixed_model}</span>
                   </div>
                 </div>
               </div>
@@ -459,12 +503,12 @@ export function SettingsPage({
               <div className="settings-form-group">
                 <label className="settings-input-group">
                   <span className="settings-input-label">监听地址</span>
-                  <input className="settings-input-field" value={form.host} onChange={(e) => setForm({ ...form, host: e.target.value })} />
+                  <input className="settings-input-field" value={form.host} onChange={(e) => updateForm({ ...form, host: e.target.value })} />
                   <span className="settings-input-caption">服务绑定的 IP 地址，默认为 127.0.0.1</span>
                 </label>
                 <label className="settings-input-group">
                   <span className="settings-input-label">监听端口</span>
-                  <input className="settings-input-field" type="number" value={form.port} onChange={(e) => setForm({ ...form, port: parseInt(e.target.value) || 3838 })} />
+                  <input className="settings-input-field" type="number" value={form.port} onChange={(e) => updateForm({ ...form, port: parseInt(e.target.value) || 3838 })} />
                   <span className="settings-input-caption">服务端口号，默认 3838</span>
                 </label>
               </div>
@@ -480,17 +524,17 @@ export function SettingsPage({
               <div className="settings-form-group">
                 <label className="settings-input-group">
                   <span className="settings-input-label">数据目录</span>
-                  <input className="settings-input-field" value={String(form.data_dir)} onChange={(e) => setForm({ ...form, data_dir: e.target.value })} />
+                  <input className="settings-input-field" value={String(form.data_dir)} onChange={(e) => updateForm({ ...form, data_dir: e.target.value })} />
                   <span className="settings-input-caption">存储视频摘要和元数据</span>
                 </label>
                 <label className="settings-input-group">
                   <span className="settings-input-label">缓存目录</span>
-                  <input className="settings-input-field" value={String(form.cache_dir)} onChange={(e) => setForm({ ...form, cache_dir: e.target.value })} />
+                  <input className="settings-input-field" value={String(form.cache_dir)} onChange={(e) => updateForm({ ...form, cache_dir: e.target.value })} />
                   <span className="settings-input-caption">临时缓存文件</span>
                 </label>
                 <label className="settings-input-group">
                   <span className="settings-input-label">任务目录</span>
-                  <input className="settings-input-field" value={String(form.tasks_dir)} onChange={(e) => setForm({ ...form, tasks_dir: e.target.value })} />
+                  <input className="settings-input-field" value={String(form.tasks_dir)} onChange={(e) => updateForm({ ...form, tasks_dir: e.target.value })} />
                   <span className="settings-input-caption">任务历史记录</span>
                 </label>
               </div>
@@ -501,31 +545,61 @@ export function SettingsPage({
             <section className="settings-category-section">
               <header className="settings-category-header">
                 <h2>模型设置</h2>
-                <p>Whisper 模型和推理设备配置。</p>
+                <p>本地 faster-whisper 与云端 SiliconFlow 语音识别配置。</p>
               </header>
               <div className="settings-form-group">
                 <label className="settings-input-group">
-                  <span className="settings-input-label">推理设备</span>
-                  <select className="settings-select-field" value={normalizeDevicePreference(form.device_preference)} onChange={(e) => setForm({ ...form, device_preference: e.target.value })}>
-                    <option value="auto">自动选择</option>
-                    <option value="cuda">GPU (CUDA)</option>
-                    <option value="cpu">CPU</option>
+                  <span className="settings-input-label">转写方式</span>
+                  <select className="settings-select-field" value={form.transcription_provider} onChange={(e) => updateForm({ ...form, transcription_provider: e.target.value })}>
+                    <option value="local">本地 faster-whisper</option>
+                    <option value="siliconflow">硅基流动 API</option>
                   </select>
-                  <span className="settings-input-caption">选择推理设备，GPU 需要 CUDA 支持</span>
+                  <span className="settings-input-caption">本地模式依赖 CPU/GPU 运行时；云端模式通过 SiliconFlow 调用 TeleSpeechASR。</span>
                 </label>
-                <label className="settings-input-group">
-                  <span className="settings-input-label">模型模式</span>
-                  <select className="settings-select-field" value={form.model_mode} onChange={(e) => setForm({ ...form, model_mode: e.target.value })}>
-                    <option value="fixed">固定模型</option>
-                    <option value="auto">自动选择</option>
-                  </select>
-                  <span className="settings-input-caption">自动模式会根据设备选择最优模型</span>
-                </label>
-                <label className="settings-input-group">
-                  <span className="settings-input-label">固定模型</span>
-                  <input className="settings-input-field" value={form.fixed_model} onChange={(e) => setForm({ ...form, fixed_model: e.target.value })} placeholder="tiny / base / small / medium / large-v3" />
-                  <span className="settings-input-caption">Whisper 模型名称，小模型速度快但精度低</span>
-                </label>
+                {usesSiliconFlowAsr ? (
+                  <>
+                    <label className="settings-input-group">
+                      <span className="settings-input-label">SiliconFlow Base URL</span>
+                      <input className="settings-input-field" value={form.siliconflow_asr_base_url} onChange={(e) => updateForm({ ...form, siliconflow_asr_base_url: e.target.value })} placeholder="https://api.siliconflow.cn/v1" />
+                      <span className="settings-input-caption">默认保持 `https://api.siliconflow.cn/v1` 即可。</span>
+                    </label>
+                    <label className="settings-input-group">
+                      <span className="settings-input-label">SiliconFlow API Key</span>
+                      <input className="settings-input-field" type="password" value={form.siliconflow_asr_api_key} onChange={(e) => updateForm({ ...form, siliconflow_asr_api_key: e.target.value })} placeholder="sk-..." />
+                      <span className="settings-input-caption">调用云端语音识别必须提供 API Key。</span>
+                    </label>
+                    <label className="settings-input-group">
+                      <span className="settings-input-label">ASR 模型</span>
+                      <input className="settings-input-field" value={form.siliconflow_asr_model} onChange={(e) => updateForm({ ...form, siliconflow_asr_model: e.target.value })} placeholder="TeleAI/TeleSpeechASR" />
+                      <span className="settings-input-caption">首批支持 `TeleAI/TeleSpeechASR`。</span>
+                    </label>
+                  </>
+                ) : (
+                  <>
+                    <label className="settings-input-group">
+                      <span className="settings-input-label">推理设备</span>
+                      <select className="settings-select-field" value={normalizeDevicePreference(form.device_preference)} onChange={(e) => updateForm({ ...form, device_preference: e.target.value })}>
+                        <option value="auto">自动选择</option>
+                        <option value="cuda">GPU (CUDA)</option>
+                        <option value="cpu">CPU</option>
+                      </select>
+                      <span className="settings-input-caption">选择推理设备，GPU 需要 CUDA 支持</span>
+                    </label>
+                    <label className="settings-input-group">
+                      <span className="settings-input-label">模型模式</span>
+                      <select className="settings-select-field" value={form.model_mode} onChange={(e) => updateForm({ ...form, model_mode: e.target.value })}>
+                        <option value="fixed">固定模型</option>
+                        <option value="auto">自动选择</option>
+                      </select>
+                      <span className="settings-input-caption">自动模式会根据设备选择最优模型</span>
+                    </label>
+                    <label className="settings-input-group">
+                      <span className="settings-input-label">固定模型</span>
+                      <input className="settings-input-field" value={form.fixed_model} onChange={(e) => updateForm({ ...form, fixed_model: e.target.value })} placeholder="tiny / base / small / medium / large-v3" />
+                      <span className="settings-input-caption">Whisper 模型名称，小模型速度快但精度低</span>
+                    </label>
+                  </>
+                )}
               </div>
             </section>
           )}
@@ -539,7 +613,7 @@ export function SettingsPage({
               <div className="settings-form-group">
                 <label className="settings-input-group">
                   <span className="settings-input-label">启用 LLM 摘要</span>
-                  <select className="settings-select-field" value={form.llm_enabled ? "true" : "false"} onChange={(e) => setForm({ ...form, llm_enabled: e.target.value === "true" })}>
+                  <select className="settings-select-field" value={form.llm_enabled ? "true" : "false"} onChange={(e) => updateForm({ ...form, llm_enabled: e.target.value === "true" })}>
                     <option value="false">关闭</option>
                     <option value="true">开启</option>
                   </select>
@@ -547,7 +621,7 @@ export function SettingsPage({
                 </label>
                 <label className="settings-input-group">
                   <span className="settings-input-label">自动生成思维导图</span>
-                  <select className="settings-select-field" value={form.auto_generate_mindmap ? "true" : "false"} onChange={(e) => setForm({ ...form, auto_generate_mindmap: e.target.value === "true" })}>
+                  <select className="settings-select-field" value={form.auto_generate_mindmap ? "true" : "false"} onChange={(e) => updateForm({ ...form, auto_generate_mindmap: e.target.value === "true" })}>
                     <option value="false">关闭</option>
                     <option value="true">开启</option>
                   </select>
@@ -557,7 +631,7 @@ export function SettingsPage({
                   <>
                     <label className="settings-input-group">
                       <span className="settings-input-label">LLM 提供商</span>
-                      <select className="settings-select-field" value={form.llm_provider} onChange={(e) => setForm({ ...form, llm_provider: e.target.value })}>
+                      <select className="settings-select-field" value={form.llm_provider} onChange={(e) => updateForm({ ...form, llm_provider: e.target.value })}>
                         <option value="openai-compatible">OpenAI Compatible</option>
                         <option value="openai">OpenAI</option>
                         <option value="anthropic">Anthropic</option>
@@ -566,17 +640,17 @@ export function SettingsPage({
                     </label>
                     <label className="settings-input-group">
                       <span className="settings-input-label">API Base URL</span>
-                      <input className="settings-input-field" value={form.llm_base_url} onChange={(e) => setForm({ ...form, llm_base_url: e.target.value })} placeholder="https://api.openai.com/v1" />
+                      <input className="settings-input-field" value={form.llm_base_url} onChange={(e) => updateForm({ ...form, llm_base_url: e.target.value })} placeholder="https://api.openai.com/v1" />
                       <span className="settings-input-caption">LLM API 的基础 URL 地址</span>
                     </label>
                     <label className="settings-input-group">
                       <span className="settings-input-label">API Key</span>
-                      <input className="settings-input-field" type="password" value={form.llm_api_key} onChange={(e) => setForm({ ...form, llm_api_key: e.target.value })} placeholder="sk-..." />
+                      <input className="settings-input-field" type="password" value={form.llm_api_key} onChange={(e) => updateForm({ ...form, llm_api_key: e.target.value })} placeholder="sk-..." />
                       <span className="settings-input-caption">LLM 服务的 API 密钥</span>
                     </label>
                     <label className="settings-input-group">
                       <span className="settings-input-label">模型名称</span>
-                      <input className="settings-input-field" value={form.llm_model} onChange={(e) => setForm({ ...form, llm_model: e.target.value })} placeholder="gpt-4o-mini / claude-3-haiku" />
+                      <input className="settings-input-field" value={form.llm_model} onChange={(e) => updateForm({ ...form, llm_model: e.target.value })} placeholder="gpt-4o-mini / claude-3-haiku" />
                       <span className="settings-input-caption">要使用的 LLM 模型名称</span>
                     </label>
                   </>
@@ -594,14 +668,14 @@ export function SettingsPage({
               <div className="settings-form-group">
                 <label className="settings-input-group">
                   <span className="settings-input-label">摘要模式</span>
-                  <select className="settings-select-field" value={form.summary_mode} onChange={(e) => setForm({ ...form, summary_mode: e.target.value })}>
+                  <select className="settings-select-field" value={form.summary_mode} onChange={(e) => updateForm({ ...form, summary_mode: e.target.value })}>
                     <option value="llm">LLM 智能摘要</option>
                     <option value="extract">抽取式摘要</option>
                   </select>
                 </label>
                 <label className="settings-input-group">
                   <span className="settings-input-label">语言</span>
-                  <select className="settings-select-field" value={form.language} onChange={(e) => setForm({ ...form, language: e.target.value })}>
+                  <select className="settings-select-field" value={form.language} onChange={(e) => updateForm({ ...form, language: e.target.value })}>
                     <option value="zh">中文</option>
                     <option value="en">English</option>
                     <option value="ja">日本語</option>
@@ -609,22 +683,22 @@ export function SettingsPage({
                 </label>
                 <label className="settings-input-group">
                   <span className="settings-input-label">分块目标字符数</span>
-                  <input className="settings-input-field" type="number" value={form.summary_chunk_target_chars} onChange={(e) => setForm({ ...form, summary_chunk_target_chars: parseInt(e.target.value) || 2200 })} />
+                  <input className="settings-input-field" type="number" value={form.summary_chunk_target_chars} onChange={(e) => updateForm({ ...form, summary_chunk_target_chars: parseInt(e.target.value) || 2200 })} />
                   <span className="settings-input-caption">LLM 处理时分块的目标字符数</span>
                 </label>
                 <label className="settings-input-group">
                   <span className="settings-input-label">分块重叠段数</span>
-                  <input className="settings-input-field" type="number" value={form.summary_chunk_overlap_segments} onChange={(e) => setForm({ ...form, summary_chunk_overlap_segments: parseInt(e.target.value) || 2 })} />
+                  <input className="settings-input-field" type="number" value={form.summary_chunk_overlap_segments} onChange={(e) => updateForm({ ...form, summary_chunk_overlap_segments: parseInt(e.target.value) || 2 })} />
                   <span className="settings-input-caption">分块之间的重叠段数，保证连续性</span>
                 </label>
                 <label className="settings-input-group">
                   <span className="settings-input-label">并发数</span>
-                  <input className="settings-input-field" type="number" value={form.summary_chunk_concurrency} onChange={(e) => setForm({ ...form, summary_chunk_concurrency: parseInt(e.target.value) || 2 })} />
+                  <input className="settings-input-field" type="number" value={form.summary_chunk_concurrency} onChange={(e) => updateForm({ ...form, summary_chunk_concurrency: parseInt(e.target.value) || 2 })} />
                   <span className="settings-input-caption">同时处理的分块数量</span>
                 </label>
                 <label className="settings-input-group">
                   <span className="settings-input-label">重试次数</span>
-                  <input className="settings-input-field" type="number" value={form.summary_chunk_retry_count} onChange={(e) => setForm({ ...form, summary_chunk_retry_count: parseInt(e.target.value) || 2 })} />
+                  <input className="settings-input-field" type="number" value={form.summary_chunk_retry_count} onChange={(e) => updateForm({ ...form, summary_chunk_retry_count: parseInt(e.target.value) || 2 })} />
                   <span className="settings-input-caption">API 调用失败时的重试次数</span>
                 </label>
               </div>
@@ -640,7 +714,7 @@ export function SettingsPage({
               <div className="settings-form-group">
                 <label className="settings-input-group">
                   <span className="settings-input-label">CUDA 变体</span>
-                  <select className="settings-select-field" value={form.cuda_variant} onChange={(e) => setForm({ ...form, cuda_variant: e.target.value })}>
+                  <select className="settings-select-field" value={form.cuda_variant} onChange={(e) => updateForm({ ...form, cuda_variant: e.target.value })}>
                     <option value="cu128">CUDA 12.8</option>
                     <option value="cu126">CUDA 12.6</option>
                     <option value="cu124">CUDA 12.4</option>
@@ -649,7 +723,7 @@ export function SettingsPage({
                 </label>
                 <label className="settings-input-group">
                   <span className="settings-input-label">运行时通道</span>
-                  <select className="settings-select-field" value={form.runtime_channel} onChange={(e) => setForm({ ...form, runtime_channel: e.target.value })}>
+                  <select className="settings-select-field" value={form.runtime_channel} onChange={(e) => updateForm({ ...form, runtime_channel: e.target.value })}>
                     <option value="base">基础版</option>
                     <option value="gpu-cu128">GPU CUDA12.8</option>
                     <option value="gpu-cu126">GPU CUDA12.6</option>
@@ -658,14 +732,14 @@ export function SettingsPage({
                 </label>
                 <label className="settings-input-group">
                   <span className="settings-input-label">保留临时音频</span>
-                  <select className="settings-select-field" value={form.preserve_temp_audio ? "true" : "false"} onChange={(e) => setForm({ ...form, preserve_temp_audio: e.target.value === "true" })}>
+                  <select className="settings-select-field" value={form.preserve_temp_audio ? "true" : "false"} onChange={(e) => updateForm({ ...form, preserve_temp_audio: e.target.value === "true" })}>
                     <option value="false">不保留</option>
                     <option value="true">保留</option>
                   </select>
                 </label>
                 <label className="settings-input-group">
                   <span className="settings-input-label">启用缓存</span>
-                  <select className="settings-select-field" value={form.enable_cache ? "true" : "false"} onChange={(e) => setForm({ ...form, enable_cache: e.target.value === "true" })}>
+                  <select className="settings-select-field" value={form.enable_cache ? "true" : "false"} onChange={(e) => updateForm({ ...form, enable_cache: e.target.value === "true" })}>
                     <option value="true">开启</option>
                     <option value="false">关闭</option>
                   </select>
@@ -737,7 +811,7 @@ export function SettingsPage({
                       className="select-field"
                       value={form.cuda_variant}
                       disabled={cudaInstalling}
-                      onChange={(event) => setForm({ ...form, cuda_variant: event.target.value })}
+                      onChange={(event) => updateForm({ ...form, cuda_variant: event.target.value })}
                     >
                       <option value="cu128">CUDA 12.8</option>
                       <option value="cu126">CUDA 12.6</option>
@@ -788,6 +862,7 @@ export function SettingsPage({
                         setCudaOutput(result.stdoutTail || "");
                         setCudaDetail(`安装目标：${result.cudaVariant || form.cuda_variant}，运行时通道：${nextRuntimeChannel}。`);
                         setForm({ ...form, runtime_channel: nextRuntimeChannel, cuda_variant: result.cudaVariant || form.cuda_variant });
+                        setIsDirty(false);
                         setEnvironment(await api.getEnvironment({ runtimeChannel: nextRuntimeChannel, refresh: true }));
                         onRefresh();
                       } catch (error) {

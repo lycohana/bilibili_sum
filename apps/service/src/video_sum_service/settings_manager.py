@@ -26,10 +26,14 @@ class SettingsUpdatePayload(BaseModel):
     whisper_model: str | None = None
     whisper_device: str | None = None
     whisper_compute_type: str | None = None
+    transcription_provider: str | None = None
     device_preference: str | None = None
     compute_type: str | None = None
     model_mode: str | None = None
     fixed_model: str | None = None
+    siliconflow_asr_base_url: str | None = None
+    siliconflow_asr_model: str | None = None
+    siliconflow_asr_api_key: str | None = None
     cuda_variant: str | None = None
     runtime_channel: str | None = None
     output_dir: str | None = None

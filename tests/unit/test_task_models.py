@@ -6,7 +6,7 @@ from video_sum_core.models.tasks import InputType, TaskInput, TaskResult, TaskSt
 from video_sum_core.errors import VideoSumError
 from video_sum_core.pipeline.real import PipelineSettings, RealPipelineRunner
 from video_sum_core.pipeline.base import PipelineContext
-from video_sum_infra.config import ServiceSettings
+from video_sum_infra.config import ServiceSettings, normalize_transcription_provider
 from video_sum_infra.runtime import default_data_dir
 
 
@@ -54,6 +54,19 @@ def test_service_settings_normalize_gpu_alias_to_cuda() -> None:
     assert settings.device_preference == "cuda"
     assert device == "cuda"
     assert compute_type == "int8_float16"
+
+
+def test_normalize_transcription_provider_aliases() -> None:
+    assert normalize_transcription_provider("faster-whisper") == "local"
+    assert normalize_transcription_provider("silicon_flow") == "siliconflow"
+
+
+def test_service_settings_supports_siliconflow_asr_defaults() -> None:
+    settings = ServiceSettings(transcription_provider="silicon-flow")
+
+    assert settings.transcription_provider == "siliconflow"
+    assert settings.siliconflow_asr_base_url == "https://api.siliconflow.cn/v1"
+    assert settings.siliconflow_asr_model == "TeleAI/TeleSpeechASR"
 
 
 def test_service_settings_default_to_managed_user_data_dir() -> None:

@@ -194,12 +194,29 @@ DEVICE_PREFERENCE_ALIASES = {
     "gpu": "cuda",
 }
 
+TRANSCRIPTION_PROVIDER_ALIASES = {
+    "local": "local",
+    "faster-whisper": "local",
+    "faster_whisper": "local",
+    "whisper": "local",
+    "siliconflow": "siliconflow",
+    "silicon-flow": "siliconflow",
+    "silicon_flow": "siliconflow",
+}
+
 
 def normalize_device_preference(value: str | None, default: str = "cpu") -> str:
     normalized = str(value or "").strip().lower()
     if not normalized:
         return default
     return DEVICE_PREFERENCE_ALIASES.get(normalized, default)
+
+
+def normalize_transcription_provider(value: str | None, default: str = "local") -> str:
+    normalized = str(value or "").strip().lower()
+    if not normalized:
+        return default
+    return TRANSCRIPTION_PROVIDER_ALIASES.get(normalized, default)
 
 
 class ServiceSettings(BaseSettings):
@@ -212,10 +229,14 @@ class ServiceSettings(BaseSettings):
     whisper_model: str = "tiny"
     whisper_device: str = "cpu"
     whisper_compute_type: str = "int8"
+    transcription_provider: str = "local"
     device_preference: str = "cpu"
     compute_type: str = "int8"
     model_mode: str = "fixed"
     fixed_model: str = "tiny"
+    siliconflow_asr_base_url: str = "https://api.siliconflow.cn/v1"
+    siliconflow_asr_model: str = "TeleAI/TeleSpeechASR"
+    siliconflow_asr_api_key: str = ""
     cuda_variant: str = "cu128"
     runtime_channel: str = "base"
     output_dir: str = ""
@@ -248,6 +269,11 @@ class ServiceSettings(BaseSettings):
     @classmethod
     def _normalize_device_preference(cls, value: str | None) -> str:
         return normalize_device_preference(value)
+
+    @field_validator("transcription_provider", mode="before")
+    @classmethod
+    def _normalize_transcription_provider(cls, value: str | None) -> str:
+        return normalize_transcription_provider(value)
 
     def resolve_whisper_runtime(
         self,
