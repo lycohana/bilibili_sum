@@ -1,4 +1,4 @@
-import { type FormEvent, useEffect, useState } from "react";
+import { type FormEvent, useEffect, useRef, useState } from "react";
 
 import {
   DesktopState,
@@ -9,6 +9,7 @@ import {
   getUpdateStatusLabel,
   getUpdateStatusTone,
   getUpdateSummary,
+  getConfigHealth,
   isUpdateUnsupported,
   normalizeDevicePreference,
 } from "../appModel";
@@ -52,6 +53,7 @@ function SiliconFlowApiKeyHelp() {
 type SettingsPageProps = {
   snapshot: Snapshot;
   desktop: DesktopState;
+  focusIssueRequest?: { issueKey: string; nonce: number } | null;
   onRefresh(): void;
   onSettingsSaved(settings: ServiceSettings, environment: EnvironmentInfo | null): void;
   updateInfo: UpdateState;
@@ -65,6 +67,7 @@ type SettingsPageProps = {
 export function SettingsPage({
   snapshot,
   desktop,
+  focusIssueRequest,
   onRefresh,
   onSettingsSaved,
   updateInfo,
@@ -93,6 +96,10 @@ export function SettingsPage({
   const [logPath, setLogPath] = useState(snapshot.systemInfo?.service?.log_file || desktop.logPath || "");
   const [serviceStatus, setServiceStatus] = useState("");
   const [activeCategory, setActiveCategory] = useState<SettingsCategory>("overview");
+  const [pendingFocusTarget, setPendingFocusTarget] = useState<string | null>(null);
+  const [activeFocusTarget, setActiveFocusTarget] = useState<string | null>(null);
+  const focusTargetRefs = useRef<Record<string, HTMLElement | null>>({});
+  const lastHandledExternalFocusNonce = useRef<number | null>(null);
 
   useEffect(() => {
     if (isDirty) {
@@ -273,6 +280,7 @@ export function SettingsPage({
     || null;
   const cudaProgressValue = Math.round(Math.min(cudaProgress, 100));
   const cudaStageDetail = cudaStage.includes("·") ? cudaStage.split("·")[1]?.trim() || "" : "";
+  const configHealth = getConfigHealth(form, environment);
   const cudaProgressTitle = cudaStatus.includes("失败")
     ? "安装失败"
     : cudaProgress >= 100
@@ -281,6 +289,92 @@ export function SettingsPage({
         ? "正在安装 CUDA 支持"
         : "安装进度";
   const cudaProgressSummary = currentCudaPhase?.label || "等待开始";
+
+  function registerFocusTarget(targetKey: string) {
+    return (node: HTMLElement | null) => {
+      focusTargetRefs.current[targetKey] = node;
+    };
+  }
+
+  function resolveIssueTarget(issueKey: string): { category: SettingsCategory; targetKey: string } | null {
+    if (!form) {
+      return null;
+    }
+    if (issueKey === "siliconflow_asr_api_key") {
+      return { category: "model", targetKey: "siliconflow_asr_api_key" };
+    }
+    if (issueKey === "local_asr_runtime") {
+      return { category: "environment", targetKey: "local_asr_runtime" };
+    }
+    if (issueKey === "auto_mindmap_requires_llm") {
+      return { category: "llm", targetKey: "llm_enabled" };
+    }
+    if (issueKey === "llm_configuration") {
+      if (!String(form.llm_base_url || "").trim()) {
+        return { category: "llm", targetKey: "llm_base_url" };
+      }
+      if (!form.llm_api_key_configured && !String(form.llm_api_key || "").trim()) {
+        return { category: "llm", targetKey: "llm_api_key" };
+      }
+      if (!String(form.llm_model || "").trim()) {
+        return { category: "llm", targetKey: "llm_model" };
+      }
+      return { category: "llm", targetKey: "llm_base_url" };
+    }
+    return null;
+  }
+
+  function handleConfigIssueClick(issueKey: string) {
+    const target = resolveIssueTarget(issueKey);
+    if (!target) {
+      return;
+    }
+    setActiveCategory(target.category);
+    setPendingFocusTarget(target.targetKey);
+  }
+
+  useEffect(() => {
+    if (!focusIssueRequest || !form) {
+      return;
+    }
+    if (lastHandledExternalFocusNonce.current === focusIssueRequest.nonce) {
+      return;
+    }
+    lastHandledExternalFocusNonce.current = focusIssueRequest.nonce;
+    handleConfigIssueClick(focusIssueRequest.issueKey);
+  }, [focusIssueRequest, form]);
+
+  useEffect(() => {
+    if (!pendingFocusTarget) {
+      return;
+    }
+    const targetNode = focusTargetRefs.current[pendingFocusTarget];
+    if (!targetNode) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      targetNode.scrollIntoView({ behavior: "smooth", block: "center" });
+      const focusable = targetNode.matches("input, select, textarea, button")
+        ? targetNode
+        : targetNode.querySelector("input, select, textarea, button");
+      if (focusable instanceof HTMLElement) {
+        focusable.focus({ preventScroll: true });
+      }
+      setActiveFocusTarget(pendingFocusTarget);
+      setPendingFocusTarget(null);
+    }, 80);
+
+    return () => window.clearTimeout(timer);
+  }, [activeCategory, pendingFocusTarget]);
+
+  useEffect(() => {
+    if (!activeFocusTarget) {
+      return;
+    }
+    const timer = window.setTimeout(() => setActiveFocusTarget((current) => (current === activeFocusTarget ? null : current)), 2200);
+    return () => window.clearTimeout(timer);
+  }, [activeFocusTarget]);
 
   return (
     <div className="settings-page-wrapper">
@@ -387,6 +481,9 @@ export function SettingsPage({
               <span className={`settings-hero-chip ${serviceOnline ? "is-success" : "is-danger"}`}>
                 {serviceOnline ? "服务在线" : "服务离线"}
               </span>
+              <span className={`settings-hero-chip ${configHealth.hasBlockingIssues ? "is-danger" : !configHealth.isConfigured ? "is-warning" : "is-success"}`}>
+                {configHealth.hasBlockingIssues ? "配置缺失" : configHealth.isConfigured ? "配置完整" : "配置待补全"}
+              </span>
               <span className="settings-hero-chip">
                 {environment?.runtimeChannel || form.runtime_channel || "base"}
               </span>
@@ -398,6 +495,31 @@ export function SettingsPage({
               </span>
             </div>
           </header>
+
+          {configHealth.checked ? (
+            <section className={`settings-config-health-card tone-${configHealth.state}`}>
+              <div className="settings-config-health-copy">
+                <span className="settings-story-kicker">Setup Health</span>
+                <h3>{configHealth.hasBlockingIssues ? "先补全关键配置，再开始处理视频" : configHealth.isConfigured ? "当前配置状态良好" : "建议补全增强能力配置"}</h3>
+                <p>{configHealth.summary}</p>
+              </div>
+              {!configHealth.isConfigured ? (
+                <div className="settings-config-health-list">
+                  {configHealth.issues.map((issue) => (
+                    <button
+                      className="settings-config-health-item"
+                      key={issue.key}
+                      type="button"
+                      onClick={() => handleConfigIssueClick(issue.key)}
+                    >
+                      <strong>{issue.title}</strong>
+                      <span>{issue.description}</span>
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+            </section>
+          ) : null}
 
           {activeCategory === "overview" && (
             <section className="settings-category-section">
@@ -644,7 +766,12 @@ export function SettingsPage({
               <div className="settings-form-group">
                 <label className="settings-input-group">
                   <span className="settings-input-label">转写方式</span>
-                  <select className="settings-select-field" value={form.transcription_provider} onChange={(e) => updateForm({ ...form, transcription_provider: e.target.value })}>
+                  <select
+                    className="settings-select-field"
+                    ref={registerFocusTarget("transcription_provider") as (node: HTMLSelectElement | null) => void}
+                    value={form.transcription_provider}
+                    onChange={(e) => updateForm({ ...form, transcription_provider: e.target.value })}
+                  >
                     <option value="siliconflow">硅基流动 API</option>
                     <option value="local" disabled={!localAsrInstalled}>本地 ASR（需先安装）</option>
                   </select>
@@ -657,7 +784,10 @@ export function SettingsPage({
                       <input className="settings-input-field" value={form.siliconflow_asr_base_url} onChange={(e) => updateForm({ ...form, siliconflow_asr_base_url: e.target.value })} placeholder="https://api.siliconflow.cn/v1" />
                       <span className="settings-input-caption">默认保持 `https://api.siliconflow.cn/v1` 即可。</span>
                     </label>
-                    <label className="settings-input-group">
+                    <label
+                      className={`settings-input-group settings-focus-target ${activeFocusTarget === "siliconflow_asr_api_key" ? "is-highlighted" : ""}`}
+                      ref={registerFocusTarget("siliconflow_asr_api_key") as (node: HTMLLabelElement | null) => void}
+                    >
                       <span className="settings-input-label">SiliconFlow API Key</span>
                       <input className="settings-input-field" type="password" value={form.siliconflow_asr_api_key} onChange={(e) => updateForm({ ...form, siliconflow_asr_api_key: e.target.value })} placeholder="sk-..." />
                       <SiliconFlowApiKeyHelp />
@@ -707,7 +837,12 @@ export function SettingsPage({
               <div className="settings-form-group">
                 <label className="settings-input-group">
                   <span className="settings-input-label">启用 LLM 摘要</span>
-                  <select className="settings-select-field" value={form.llm_enabled ? "true" : "false"} onChange={(e) => updateForm({ ...form, llm_enabled: e.target.value === "true" })}>
+                  <select
+                    className="settings-select-field"
+                    ref={registerFocusTarget("llm_enabled") as (node: HTMLSelectElement | null) => void}
+                    value={form.llm_enabled ? "true" : "false"}
+                    onChange={(e) => updateForm({ ...form, llm_enabled: e.target.value === "true" })}
+                  >
                     <option value="false">关闭</option>
                     <option value="true">开启</option>
                   </select>
@@ -732,17 +867,26 @@ export function SettingsPage({
                         <option value="custom">自定义</option>
                       </select>
                     </label>
-                    <label className="settings-input-group">
+                    <label
+                      className={`settings-input-group settings-focus-target ${activeFocusTarget === "llm_base_url" ? "is-highlighted" : ""}`}
+                      ref={registerFocusTarget("llm_base_url") as (node: HTMLLabelElement | null) => void}
+                    >
                       <span className="settings-input-label">API Base URL</span>
                       <input className="settings-input-field" value={form.llm_base_url} onChange={(e) => updateForm({ ...form, llm_base_url: e.target.value })} placeholder="https://api.openai.com/v1" />
                       <span className="settings-input-caption">LLM API 的基础 URL 地址</span>
                     </label>
-                    <label className="settings-input-group">
+                    <label
+                      className={`settings-input-group settings-focus-target ${activeFocusTarget === "llm_api_key" ? "is-highlighted" : ""}`}
+                      ref={registerFocusTarget("llm_api_key") as (node: HTMLLabelElement | null) => void}
+                    >
                       <span className="settings-input-label">API Key</span>
                       <input className="settings-input-field" type="password" value={form.llm_api_key} onChange={(e) => updateForm({ ...form, llm_api_key: e.target.value })} placeholder="sk-..." />
                       <span className="settings-input-caption">LLM 服务的 API 密钥</span>
                     </label>
-                    <label className="settings-input-group">
+                    <label
+                      className={`settings-input-group settings-focus-target ${activeFocusTarget === "llm_model" ? "is-highlighted" : ""}`}
+                      ref={registerFocusTarget("llm_model") as (node: HTMLLabelElement | null) => void}
+                    >
                       <span className="settings-input-label">模型名称</span>
                       <input className="settings-input-field" value={form.llm_model} onChange={(e) => updateForm({ ...form, llm_model: e.target.value })} placeholder="gpt-4o-mini / claude-3-haiku" />
                       <span className="settings-input-caption">要使用的 LLM 模型名称</span>
@@ -975,7 +1119,10 @@ export function SettingsPage({
               <div className="settings-form-group">
                 <div className="settings-input-group">
                   <span className="settings-input-label">本地 ASR 运行时</span>
-                  <div className="settings-actions">
+                  <div
+                    className={`settings-actions settings-focus-target ${activeFocusTarget === "local_asr_runtime" ? "is-highlighted" : ""}`}
+                    ref={registerFocusTarget("local_asr_runtime") as (node: HTMLDivElement | null) => void}
+                  >
                     <button className="secondary-button" type="button" disabled={localAsrInstalling} onClick={() => void installLocalAsr()}>
                       {localAsrInstalling ? "安装中..." : localAsrInstalled ? "重新安装本地 ASR" : "安装本地 ASR"}
                     </button>

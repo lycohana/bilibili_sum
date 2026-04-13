@@ -65,6 +65,10 @@ class SettingsManager:
     def current(self) -> ServiceSettings:
         return self._settings
 
+    @property
+    def has_persisted_settings(self) -> bool:
+        return self._settings_path.exists()
+
     def load(self) -> ServiceSettings:
         if self._settings_path.exists():
             stored = json.loads(self._settings_path.read_text(encoding="utf-8"))

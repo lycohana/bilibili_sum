@@ -185,6 +185,7 @@ export type ServiceSettings = {
   summary_chunk_overlap_segments: number;
   summary_chunk_concurrency: number;
   summary_chunk_retry_count: number;
+  settings_file_exists?: boolean;
 };
 
 export type SystemInfo = {

@@ -8,7 +8,7 @@ from video_sum_core.pipeline.real import PipelineSettings, RealPipelineRunner
 from video_sum_core.pipeline.base import PipelineContext
 from video_sum_infra.config import ServiceSettings, normalize_transcription_provider
 from video_sum_infra.runtime import default_data_dir
-from video_sum_service.settings_manager import SettingsManager
+from video_sum_service.settings_manager import SettingsManager, SettingsUpdatePayload
 
 
 def test_task_input_defaults() -> None:
@@ -91,6 +91,21 @@ def test_settings_manager_preserves_existing_local_provider(tmp_path: Path) -> N
 
     assert loaded.transcription_provider == "local"
     assert loaded.fixed_model == "tiny"
+
+
+def test_settings_manager_reports_persisted_file_state(tmp_path: Path) -> None:
+    base_settings = ServiceSettings(
+        data_dir=tmp_path / "data",
+        cache_dir=tmp_path / "cache",
+        tasks_dir=tmp_path / "tasks",
+    )
+    manager = SettingsManager(base_settings)
+
+    assert manager.has_persisted_settings is False
+
+    manager.save(SettingsUpdatePayload(llm_enabled=True))
+
+    assert manager.has_persisted_settings is True
 
 
 def test_service_settings_default_to_managed_user_data_dir() -> None:

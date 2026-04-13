@@ -527,6 +527,7 @@ def serialize_settings(
         "summary_chunk_overlap_segments": current_settings.summary_chunk_overlap_segments,
         "summary_chunk_concurrency": current_settings.summary_chunk_concurrency,
         "summary_chunk_retry_count": current_settings.summary_chunk_retry_count,
+        "settings_file_exists": settings_manager.has_persisted_settings,
     }
 
 

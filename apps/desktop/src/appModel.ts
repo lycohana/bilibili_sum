@@ -35,6 +35,23 @@ export type LibraryFilter = "all" | "completed" | "running" | "with-result";
 export type MetricTone = "default" | "accent" | "success" | "info";
 export type DevicePreference = "auto" | "cpu" | "cuda";
 export type SelectOption = { value: string; label: string };
+export type ConfigIssueSeverity = "critical" | "warning";
+export type ConfigIssue = {
+  key: string;
+  title: string;
+  description: string;
+  severity: ConfigIssueSeverity;
+};
+export type ConfigHealth = {
+  checked: boolean;
+  state: "ready" | "warning" | "critical";
+  isConfigured: boolean;
+  hasBlockingIssues: boolean;
+  issues: ConfigIssue[];
+  blockingIssues: ConfigIssue[];
+  summary: string;
+  actionText: string;
+};
 
 export const emptySnapshot: Snapshot = { serviceOnline: false, systemInfo: null, environment: null, settings: null, videos: [], error: "" };
 
@@ -89,6 +106,103 @@ export function deriveRuntimeDeviceLabel({
     return "GPU";
   }
   return "CPU";
+}
+
+export function getConfigHealth(
+  settings?: ServiceSettings | null,
+  environment?: EnvironmentInfo | null,
+): ConfigHealth {
+  if (!settings) {
+    return {
+      checked: false,
+      state: "ready",
+      isConfigured: true,
+      hasBlockingIssues: false,
+      issues: [],
+      blockingIssues: [],
+      summary: "正在读取当前配置。",
+      actionText: "前往设置",
+    };
+  }
+
+  const issues: ConfigIssue[] = [];
+  const transcriptionProvider = String(settings.transcription_provider || "").trim().toLowerCase();
+
+  if (transcriptionProvider === "siliconflow" && !settings.siliconflow_asr_api_key_configured) {
+    issues.push({
+      key: "siliconflow_asr_api_key",
+      title: "缺少语音识别 API Key",
+      description: "当前使用 SiliconFlow 转写，但还没有填写 API Key，无法开始视频转写。",
+      severity: "critical",
+    });
+  }
+
+  if (transcriptionProvider === "local" && environment?.localAsrAvailable === false) {
+    issues.push({
+      key: "local_asr_runtime",
+      title: "本地 ASR 运行时未就绪",
+      description: "当前使用本地转写，但本地 ASR 尚未安装或当前运行时不可用，请先安装本地 ASR 或切回云端转写。",
+      severity: "critical",
+    });
+  }
+
+  const llmMissingParts: string[] = [];
+  if (settings.llm_enabled) {
+    if (!settings.llm_api_key_configured) {
+      llmMissingParts.push("API Key");
+    }
+    if (!String(settings.llm_base_url || "").trim()) {
+      llmMissingParts.push("Base URL");
+    }
+    if (!String(settings.llm_model || "").trim()) {
+      llmMissingParts.push("模型名");
+    }
+  }
+
+  if (llmMissingParts.length > 0) {
+    issues.push({
+      key: "llm_configuration",
+      title: "LLM 配置未补全",
+      description: `当前已启用 LLM，但以下项目仍为空：${llmMissingParts.join("、")}。摘要会回退为本地规则模式。`,
+      severity: "warning",
+    });
+  }
+
+  if (settings.auto_generate_mindmap && !settings.llm_enabled) {
+    issues.push({
+      key: "auto_mindmap_requires_llm",
+      title: "自动导图依赖 LLM",
+      description: "你已开启自动生成思维导图，但当前 LLM 处于关闭状态，导图不会自动生成。",
+      severity: "warning",
+    });
+  }
+
+  const blockingIssues = issues.filter((issue) => issue.severity === "critical");
+  const hasBlockingIssues = blockingIssues.length > 0;
+  const state = hasBlockingIssues ? "critical" : issues.length > 0 ? "warning" : "ready";
+  const summary = hasBlockingIssues
+    ? `当前有 ${blockingIssues.length} 项关键配置缺失，开始总结前需要先补全。`
+    : issues.length > 0
+      ? `当前有 ${issues.length} 项增强能力待补全，不影响基础流程但会影响体验。`
+      : "当前运行配置完整，可以直接开始总结。";
+
+  return {
+    checked: true,
+    state,
+    isConfigured: issues.length === 0,
+    hasBlockingIssues,
+    issues,
+    blockingIssues,
+    summary,
+    actionText: hasBlockingIssues ? "前往设置补全配置" : "前往设置优化配置",
+  };
+}
+
+export function shouldShowSetupAssistant(configHealth: ConfigHealth, settings?: ServiceSettings | null): boolean {
+  if (!configHealth.checked || !settings) {
+    return false;
+  }
+  return settings.settings_file_exists === false && configHealth.issues.length > 0;
 }
 
 export function toUpdateState(info: UpdateInfo): UpdateState {

@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import { type KeyboardEvent, useEffect, useRef, useState } from "react";
 
-import type { UpdateState } from "../appModel";
+import type { ConfigHealth, UpdateState } from "../appModel";
 
 export function TitleBar({
   darkMode,
@@ -10,6 +10,8 @@ export function TitleBar({
   runtimeDeviceLabel,
   version,
   updateState,
+  configHealth,
+  onOpenSettings,
 }: {
   darkMode: boolean;
   onToggleTheme(): void;
@@ -18,6 +20,8 @@ export function TitleBar({
   runtimeDeviceLabel: string;
   version: string;
   updateState: UpdateState;
+  configHealth: ConfigHealth;
+  onOpenSettings(issueKey?: string): void;
 }) {
   const [isMaximized, setIsMaximized] = useState(false);
   const [statusPopoverOpen, setStatusPopoverOpen] = useState(false);
@@ -44,6 +48,13 @@ export function TitleBar({
     return () => window.removeEventListener("mousedown", handlePointerDown);
   }, []);
 
+  function handleStatusPopoverKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    if (event.key !== "Escape") {
+      return;
+    }
+    setStatusPopoverOpen(false);
+  }
+
   const handleMaximize = async () => {
     if (window.desktop) {
       await window.desktop.window.maximize();
@@ -66,7 +77,8 @@ export function TitleBar({
 
   const serviceStatusText = serviceOnline ? "在线" : backendRunning ? "启动中" : "离线";
   const hasNewVersion = ["available", "downloading", "downloaded", "installing"].includes(updateState.status);
-  const statusPillText = hasNewVersion ? "有新版本" : "运行状态";
+  const hasConfigProblem = configHealth.checked && !configHealth.isConfigured;
+  const statusPillText = hasConfigProblem ? "配置缺失" : hasNewVersion ? "有新版本" : "运行状态";
   const updateStatusText = hasNewVersion
     ? `v${updateState.version || "-"}`
     : updateState.status === "checking"
@@ -74,6 +86,13 @@ export function TitleBar({
       : updateState.status === "error"
         ? "检查失败"
         : "已是最新";
+  const configStatusText = !configHealth.checked
+    ? "检测中"
+    : configHealth.hasBlockingIssues
+      ? "需立即补全"
+      : configHealth.isConfigured
+        ? "已就绪"
+        : "建议补全";
 
   return (
     <div className="title-bar">
@@ -88,22 +107,34 @@ export function TitleBar({
         <div
           className={`title-bar-status-wrap ${statusPopoverOpen ? "is-open" : ""}`}
           ref={statusPopoverRef}
-          onMouseEnter={() => setStatusPopoverOpen(true)}
-          onMouseLeave={() => setStatusPopoverOpen(false)}
+          onKeyDown={handleStatusPopoverKeyDown}
         >
           <button
-            className={`title-bar-status-pill ${hasNewVersion ? "is-update" : serviceOnline ? "is-success" : ""}`}
+            className={`title-bar-status-pill ${
+              hasConfigProblem ? "is-danger" : hasNewVersion ? "is-update" : serviceOnline ? "is-success" : ""
+            }`}
             type="button"
-            onClick={() => setStatusPopoverOpen((current) => !current)}
+            onClick={() => {
+              setStatusPopoverOpen((current) => !current);
+            }}
             aria-label="查看运行状态"
             aria-expanded={statusPopoverOpen}
+            aria-haspopup="dialog"
             title="运行状态"
           >
-            <span className={`title-bar-status-dot ${hasNewVersion ? "is-update" : serviceOnline ? "is-success" : backendRunning ? "is-pending" : ""}`} />
+            <span
+              className={`title-bar-status-dot ${
+                hasConfigProblem ? "is-danger" : hasNewVersion ? "is-update" : serviceOnline ? "is-success" : backendRunning ? "is-pending" : ""
+              }`}
+            />
             <span>{statusPillText}</span>
           </button>
 
-          <div className={`title-bar-status-popover ${statusPopoverOpen ? "is-visible" : ""}`} role="dialog" aria-label="运行状态详情">
+          <div
+            className={`title-bar-status-popover ${statusPopoverOpen ? "is-visible" : ""}`}
+            role="dialog"
+            aria-label="运行状态详情"
+          >
             <div className="title-bar-status-header">
               <h2>运行状态</h2>
             </div>
@@ -111,6 +142,10 @@ export function TitleBar({
               <div className={`sidebar-status-item ${serviceOnline ? "is-success" : ""}`}>
                 <span>服务</span>
                 <strong>{serviceStatusText}</strong>
+              </div>
+              <div className={`sidebar-status-item ${configHealth.hasBlockingIssues ? "is-danger" : !configHealth.isConfigured ? "is-warning" : "is-success"}`}>
+                <span>配置</span>
+                <strong>{configStatusText}</strong>
               </div>
               <div className={`sidebar-status-item ${hasNewVersion ? "is-update" : ""}`}>
                 <span>更新</span>
@@ -125,6 +160,21 @@ export function TitleBar({
                 <strong>{version || "-"}</strong>
               </div>
             </div>
+            {hasConfigProblem ? (
+              <div className="title-bar-status-actions">
+                <p>{configHealth.summary}</p>
+                <button
+                  className="secondary-button title-bar-status-action"
+                  type="button"
+                  onClick={() => {
+                    setStatusPopoverOpen(false);
+                    onOpenSettings(configHealth.blockingIssues[0]?.key || configHealth.issues[0]?.key);
+                  }}
+                >
+                  {configHealth.actionText}
+                </button>
+              </div>
+            ) : null}
           </div>
         </div>
         <button

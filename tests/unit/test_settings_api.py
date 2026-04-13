@@ -4,7 +4,7 @@ from pathlib import Path
 
 import video_sum_service.app as service_app
 from video_sum_infra.config import ServiceSettings
-from video_sum_service.app import app, install_local_asr, settings_manager, update_settings
+from video_sum_service.app import app, install_local_asr, serialize_settings, settings_manager, update_settings
 from video_sum_service.settings_manager import SettingsUpdatePayload
 
 
@@ -48,6 +48,28 @@ def test_update_settings_reuses_environment_probe(monkeypatch, tmp_path: Path) -
     assert response["saved"] is True
     assert response["settings"]["runtime_channel"] == "base"
     assert detect_calls == ["base"]
+
+
+def test_serialize_settings_includes_persisted_file_flag(monkeypatch, tmp_path: Path) -> None:
+    current = ServiceSettings(
+        data_dir=tmp_path / "data",
+        cache_dir=tmp_path / "cache",
+        tasks_dir=tmp_path / "tasks",
+        runtime_channel="base",
+    )
+    settings_manager._settings = current
+    monkeypatch.setattr(settings_manager, "_settings_path", tmp_path / "data" / "settings.json")
+
+    payload = serialize_settings(current, environment_info={"cudaAvailable": False, "runtimeChannel": "base"})
+
+    assert payload["settings_file_exists"] is False
+
+    settings_manager._settings_path.parent.mkdir(parents=True, exist_ok=True)
+    settings_manager._settings_path.write_text("{}", encoding="utf-8")
+
+    payload = serialize_settings(current, environment_info={"cudaAvailable": False, "runtimeChannel": "base"})
+
+    assert payload["settings_file_exists"] is True
 
 
 def test_install_local_asr_refreshes_environment(monkeypatch, tmp_path: Path) -> None:

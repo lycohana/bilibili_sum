@@ -1,10 +1,22 @@
 import { type FormEvent, useEffect, useMemo, useState } from "react";
 import { Link, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 
-import { deriveRuntimeDeviceLabel, emptySnapshot, isUpdateUnsupported, toUpdateState, type DesktopState, type LibraryFilter, type Snapshot, type UpdateState } from "./appModel";
+import {
+  deriveRuntimeDeviceLabel,
+  emptySnapshot,
+  getConfigHealth,
+  isUpdateUnsupported,
+  shouldShowSetupAssistant,
+  toUpdateState,
+  type DesktopState,
+  type LibraryFilter,
+  type Snapshot,
+  type UpdateState,
+} from "./appModel";
 import { api } from "./api";
 import { HomeIcon, LibraryIcon, SettingsIcon } from "./components/AppIcons";
 import { MultiPageSelectDialog } from "./components/MultiPageSelectDialog";
+import { SetupAssistantDialog } from "./components/SetupAssistantDialog";
 import { TitleBar } from "./components/TitleBar";
 import { UpdateDialog, type UpdateInfo } from "./components/UpdateDialog";
 import { HomePage } from "./pages/HomePage";
@@ -27,6 +39,7 @@ export function App() {
   const [multiPageProbeVideo, setMultiPageProbeVideo] = useState<VideoAssetSummary | null>(null);
   const [multiPageOptions, setMultiPageOptions] = useState<VideoPageOption[]>([]);
   const [refreshSeed, setRefreshSeed] = useState(0);
+  const [settingsFocusRequest, setSettingsFocusRequest] = useState<{ issueKey: string; nonce: number } | null>(null);
   const [darkMode, setDarkMode] = useState<boolean>(() => {
     if (typeof window === "undefined") {
       return false;
@@ -48,6 +61,8 @@ export function App() {
   });
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [updateDialogOpen, setUpdateDialogOpen] = useState(false);
+  const [setupAssistantOpen, setSetupAssistantOpen] = useState(false);
+  const [setupAssistantDismissed, setSetupAssistantDismissed] = useState(false);
   const [updateState, setUpdateState] = useState<UpdateState>({
     status: "idle",
     version: "",
@@ -209,13 +224,71 @@ export function App() {
       hasSettings: Boolean(snapshot.settings),
     });
   }, [snapshot.environment?.cudaAvailable, snapshot.settings]);
+  const configHealth = useMemo(() => getConfigHealth(snapshot.settings, snapshot.environment), [snapshot.environment, snapshot.settings]);
 
   const runtimeVersionLabel = desktop.version || snapshot.systemInfo?.application?.version || "";
+
+  useEffect(() => {
+    const shouldOpen = shouldShowSetupAssistant(configHealth, snapshot.settings);
+    if (!shouldOpen) {
+      setSetupAssistantOpen(false);
+      setSetupAssistantDismissed(false);
+      return;
+    }
+    if (!setupAssistantDismissed) {
+      setSetupAssistantOpen(true);
+    }
+  }, [configHealth, setupAssistantDismissed, snapshot.settings]);
+
+  function navigateToConfigIssue(issueKey: string) {
+    setSetupAssistantOpen(false);
+    setSetupAssistantDismissed(true);
+    setSettingsFocusRequest({ issueKey, nonce: Date.now() });
+    navigate("/settings");
+  }
+
+  function openConfigAssist(issueKey?: string) {
+    if (issueKey) {
+      navigateToConfigIssue(issueKey);
+      return;
+    }
+    if (shouldShowSetupAssistant(configHealth, snapshot.settings)) {
+      setSetupAssistantDismissed(false);
+      setSetupAssistantOpen(true);
+      return;
+    }
+    navigate("/settings");
+  }
+
+  function closeSetupAssistant() {
+    setSetupAssistantOpen(false);
+    setSetupAssistantDismissed(true);
+  }
+
+  function openSettingsFromAssistant() {
+    setSetupAssistantOpen(false);
+    const targetIssueKey = configHealth.blockingIssues[0]?.key || configHealth.issues[0]?.key;
+    if (targetIssueKey) {
+      navigateToConfigIssue(targetIssueKey);
+      return;
+    }
+    navigate("/settings");
+  }
 
   async function handleProbe(event: FormEvent) {
     event.preventDefault();
     if (!probeUrl.trim()) {
       setSubmitStatus("请输入视频链接");
+      return;
+    }
+    if (configHealth.hasBlockingIssues) {
+      setSubmitStatus(`当前缺少必需配置：${configHealth.blockingIssues.map((item) => item.title).join("、")}。请先完成设置。`);
+      if (shouldShowSetupAssistant(configHealth, snapshot.settings)) {
+        setSetupAssistantDismissed(false);
+        setSetupAssistantOpen(true);
+      } else {
+        navigate("/settings");
+      }
       return;
     }
     setSubmitStatus("正在抓取视频信息并准备开始总结...");
@@ -283,6 +356,8 @@ export function App() {
         runtimeDeviceLabel={runtimeDeviceLabel}
         version={runtimeVersionLabel}
         updateState={updateState}
+        configHealth={configHealth}
+        onOpenSettings={openConfigAssist}
       />
       <aside className="sidebar">
         <nav className="nav">
@@ -380,11 +455,14 @@ export function App() {
                 path="/"
                 element={(
                   <HomePage
+                    configHealth={configHealth}
                     probePreview={probePreview}
                     probeUrl={probeUrl}
                     setProbeUrl={setProbeUrl}
                     submitStatus={submitStatus}
                     onProbe={handleProbe}
+                    onOpenSetupAssistant={openConfigAssist}
+                    onOpenConfigIssue={navigateToConfigIssue}
                     recentVideos={recentVideos}
                   />
                 )}
@@ -432,6 +510,7 @@ export function App() {
                       }));
                     }}
                     snapshot={snapshot}
+                    focusIssueRequest={settingsFocusRequest}
                     updateInfo={updateState}
                     updateSupported={updateSupported}
                   />
@@ -457,6 +536,13 @@ export function App() {
         pages={multiPageOptions}
         onClose={handleCloseMultiPageDialog}
         onConfirm={handleConfirmMultiPage}
+      />
+      <SetupAssistantDialog
+        isOpen={setupAssistantOpen}
+        configHealth={configHealth}
+        onClose={closeSetupAssistant}
+        onOpenSettings={openSettingsFromAssistant}
+        onNavigateToIssue={navigateToConfigIssue}
       />
     </div>
   );
