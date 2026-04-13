@@ -188,7 +188,7 @@ export function renderSettingsView(state) {
             ])}
             ${renderInput("siliconflow_asr_base_url", "SiliconFlow Base URL", settings.siliconflow_asr_base_url || "https://api.siliconflow.cn/v1", "text", "https://api.siliconflow.cn/v1")}
             ${renderInput("siliconflow_asr_model", "SiliconFlow ASR 模型", settings.siliconflow_asr_model || "TeleAI/TeleSpeechASR", "text", "TeleAI/TeleSpeechASR")}
-            ${renderInput("siliconflow_asr_api_key", "SiliconFlow API Key", settings.siliconflow_asr_api_key || "", "password", "sk-...", "current-password")}
+            ${renderSiliconFlowApiKeyInput(settings.siliconflow_asr_api_key || "")}
             ${renderInput("language", "语言", settings.language || "", "text", "zh")}
           </section>
 
@@ -397,6 +397,43 @@ function renderInput(id, label, value, type = "text", placeholder = "", autocomp
         class="input-field"
       />
     </label>
+  `;
+}
+
+function renderSiliconFlowApiKeyInput(value) {
+  return `
+    <div class="input-row api-key-help-row">
+      <label class="input-row" for="siliconflow_asr_api_key">
+        <span class="input-label">SiliconFlow API Key</span>
+        <input
+          id="siliconflow_asr_api_key"
+          type="password"
+          value="${escapeHtml(value)}"
+          placeholder="sk-..."
+          autocomplete="current-password"
+          class="input-field"
+        />
+      </label>
+      <div class="api-key-help-inline">
+        <span class="api-key-help-copy">调用云端语音识别必须提供 API Key。</span>
+        <div class="api-key-help-popover">
+          <span class="api-key-help-link" role="button" tabindex="0">如何获得 API？</span>
+          <div class="api-key-help-popover-card" id="siliconflow-api-help">
+            <strong>获取步骤</strong>
+            <ol>
+              <li>
+                注册 SiliconFlow 账号：
+                <a href="https://cloud.siliconflow.cn/i/d8SF8w5Z" target="_blank" rel="noreferrer">点此注册</a>
+              </li>
+              <li>
+                新建 API Key：
+                <a href="https://cloud.siliconflow.cn/me/account/ak" target="_blank" rel="noreferrer">前往创建</a>
+              </li>
+            </ol>
+          </div>
+        </div>
+      </div>
+    </div>
   `;
 }
 

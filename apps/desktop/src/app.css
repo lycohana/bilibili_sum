@@ -946,12 +946,18 @@ textarea {
 
 .select-field {
   appearance: none;
-  background-image: linear-gradient(45deg, var(--text-tertiary) 50%, transparent 50%), linear-gradient(135deg, transparent 50%, var(--text-tertiary) 50%);
-  background-position: calc(100% - 16px) calc(50% - 2px), calc(100% - 11px) calc(50% - 2px);
-  background-size: 4px 4px, 4px 4px;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16' fill='none'%3E%3Cpath d='M4 6l4 4 4-4' stroke='%236a6a70' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-position: right 14px center;
+  background-size: 16px 16px;
   background-repeat: no-repeat;
-  padding-right: 36px;
+  padding-right: 42px;
   cursor: pointer;
+}
+
+.select-field::-ms-expand {
+  display: none;
 }
 
 .textarea-field {
@@ -2221,18 +2227,107 @@ textarea {
 
 .settings-select-field {
   appearance: none;
-  background-image: linear-gradient(45deg, var(--text-tertiary) 50%, transparent 50%), linear-gradient(135deg, transparent 50%, var(--text-tertiary) 50%);
-  background-position: calc(100% - 16px) calc(50% - 2px), calc(100% - 11px) calc(50% - 2px);
-  background-size: 4px 4px, 4px 4px;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16' fill='none'%3E%3Cpath d='M4 6l4 4 4-4' stroke='%236a6a70' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-position: right 14px center;
+  background-size: 16px 16px;
   background-repeat: no-repeat;
-  padding-right: 36px;
+  padding-right: 42px;
   cursor: pointer;
+}
+
+.settings-select-field::-ms-expand {
+  display: none;
 }
 
 .settings-input-caption {
   font-size: 0.8rem;
   line-height: 1.55;
   color: var(--settings-text-soft);
+}
+
+.settings-input-help {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+}
+
+.settings-help-popover {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  padding-bottom: 12px;
+  margin-bottom: -12px;
+}
+
+.settings-help-link {
+  cursor: pointer;
+  font-size: 0.8rem;
+  line-height: 1.55;
+  color: var(--brand-500);
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 3px;
+}
+
+.settings-help-popover:hover .settings-help-link,
+.settings-help-popover:focus-within .settings-help-link {
+  color: var(--brand-600);
+}
+
+.settings-help-popover-card {
+  position: absolute;
+  top: calc(100% + 2px);
+  left: 0;
+  z-index: 20;
+  width: min(360px, calc(100vw - 64px));
+  padding: 14px 16px;
+  display: grid;
+  gap: 10px;
+  background: rgba(255, 255, 255, 0.98);
+  border: 1px solid rgba(251, 114, 153, 0.18);
+  border-radius: 16px;
+  box-shadow: 0 24px 48px rgba(15, 23, 42, 0.14);
+  color: var(--text-primary);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 120ms ease, visibility 120ms ease;
+}
+
+.settings-help-popover:hover .settings-help-popover-card,
+.settings-help-popover:focus-within .settings-help-popover-card {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+}
+
+.settings-help-popover-card strong {
+  font-size: 0.84rem;
+  color: var(--settings-text-strong);
+}
+
+.settings-help-popover-card ol {
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 8px;
+  font-size: 0.82rem;
+  line-height: 1.6;
+  color: var(--settings-text-soft);
+}
+
+.settings-help-popover-card a {
+  color: var(--brand-500);
+  word-break: break-all;
+}
+
+[data-theme="dark"] .settings-help-popover-card {
+  background: rgba(24, 24, 27, 0.98);
+  border-color: rgba(251, 114, 153, 0.24);
+  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.32);
 }
 
 .settings-env-grid {

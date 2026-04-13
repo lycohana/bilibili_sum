@@ -619,6 +619,92 @@ body {
   border-color: var(--border-default);
 }
 
+.api-key-help-row {
+  gap: var(--space-2);
+}
+
+.api-key-help-inline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+}
+
+.api-key-help-copy {
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+  color: var(--text-muted);
+}
+
+.api-key-help-popover {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  padding-bottom: 12px;
+  margin-bottom: -12px;
+}
+
+.api-key-help-link {
+  cursor: pointer;
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+  color: var(--primary);
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 3px;
+}
+
+.api-key-help-popover:hover .api-key-help-link,
+.api-key-help-popover:focus-within .api-key-help-link {
+  color: var(--primary-hover);
+}
+
+.api-key-help-popover-card {
+  position: absolute;
+  top: calc(100% + 2px);
+  left: 0;
+  z-index: 20;
+  width: min(360px, calc(100vw - 48px));
+  padding: 14px 16px;
+  display: grid;
+  gap: 10px;
+  background: rgba(255, 255, 255, 0.98);
+  border: 1px solid rgba(251, 114, 153, 0.18);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 20px 40px rgba(15, 23, 42, 0.12);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 120ms ease, visibility 120ms ease;
+}
+
+.api-key-help-popover:hover .api-key-help-popover-card,
+.api-key-help-popover:focus-within .api-key-help-popover-card {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+}
+
+.api-key-help-popover-card strong {
+  font-size: var(--text-sm);
+  color: var(--text-primary);
+}
+
+.api-key-help-popover-card ol {
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 8px;
+  font-size: var(--text-sm);
+  line-height: var(--leading-relaxed);
+  color: var(--text-secondary);
+}
+
+.api-key-help-popover-card a {
+  color: var(--primary);
+  word-break: break-all;
+}
+
 .toggle-row span {
   font-size: var(--text-sm);
   font-weight: 500;

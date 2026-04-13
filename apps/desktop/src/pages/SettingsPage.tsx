@@ -17,6 +17,38 @@ import { FloatingNoticeStack } from "../components/FloatingNoticeStack";
 import type { EnvironmentInfo, ServiceSettings } from "../types";
 import { settingsCategories, type SettingsCategory } from "./settingsConfig";
 
+function SiliconFlowApiKeyHelp() {
+  return (
+    <div className="settings-input-help">
+      <span className="settings-input-caption">调用云端语音识别必须提供 API Key。</span>
+      <div className="settings-help-popover">
+        <span className="settings-help-link" role="button" tabIndex={0}>
+          如何获得 API？
+        </span>
+        <div className="settings-help-popover-card" id="siliconflow-api-help">
+          <strong>获取步骤</strong>
+          <ol>
+            <li>
+              注册 SiliconFlow 账号：
+              {" "}
+              <a href="https://cloud.siliconflow.cn/i/d8SF8w5Z" target="_blank" rel="noreferrer">
+                点此注册
+              </a>
+            </li>
+            <li>
+              新建 API Key：
+              {" "}
+              <a href="https://cloud.siliconflow.cn/me/account/ak" target="_blank" rel="noreferrer">
+                前往创建
+              </a>
+            </li>
+          </ol>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 type SettingsPageProps = {
   snapshot: Snapshot;
   desktop: DesktopState;
@@ -611,7 +643,7 @@ export function SettingsPage({
                     <label className="settings-input-group">
                       <span className="settings-input-label">SiliconFlow API Key</span>
                       <input className="settings-input-field" type="password" value={form.siliconflow_asr_api_key} onChange={(e) => updateForm({ ...form, siliconflow_asr_api_key: e.target.value })} placeholder="sk-..." />
-                      <span className="settings-input-caption">调用云端语音识别必须提供 API Key。</span>
+                      <SiliconFlowApiKeyHelp />
                     </label>
                     <label className="settings-input-group">
                       <span className="settings-input-label">ASR 模型</span>
