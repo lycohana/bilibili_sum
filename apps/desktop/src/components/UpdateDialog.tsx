@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 
+import { MarkdownContent } from "./MarkdownContent";
+
 export type UpdateStatus = "idle" | "checking" | "available" | "not-available" | "downloading" | "downloaded" | "installing" | "error";
 
 export type UpdateInfo = {
@@ -186,28 +188,14 @@ export function UpdateDialog({
       return <p className="release-notes-empty">暂无更新日志</p>;
     }
 
-    const notes = updateInfo.releaseNotes;
-    const lines = notes.split("\n");
-    const formattedLines = lines.map((line: string, index: number) => {
-      if (line.startsWith("### ")) {
-        return <h4 key={index}>{line.slice(4)}</h4>;
-      }
-      if (line.startsWith("## ")) {
-        return <h3 key={index}>{line.slice(3)}</h3>;
-      }
-      if (line.startsWith("# ")) {
-        return <h2 key={index}>{line.slice(2)}</h2>;
-      }
-      if (line.startsWith("- ") || line.startsWith("* ")) {
-        return <li key={index}>{line.slice(2)}</li>;
-      }
-      if (line.trim() === "") {
-        return <br key={index} />;
-      }
-      return <p key={index}>{line}</p>;
-    });
+    const notes = updateInfo.releaseNotes.trim();
+    const looksLikeHtml = /<\/?[a-z][\s\S]*>/i.test(notes);
 
-    return <div className="release-notes-content">{formattedLines}</div>;
+    if (looksLikeHtml) {
+      return <div className="release-notes-content" dangerouslySetInnerHTML={{ __html: notes }} />;
+    }
+
+    return <MarkdownContent className="release-notes-content" content={notes} />;
   };
 
   return (

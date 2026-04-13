@@ -6208,6 +6208,16 @@ textarea {
   color: var(--text-secondary);
 }
 
+.release-notes a {
+  color: var(--brand-600);
+  text-decoration: none;
+}
+
+.release-notes a:hover {
+  color: var(--brand-700);
+  text-decoration: underline;
+}
+
 @keyframes fade-up {
   from {
     opacity: 0;
