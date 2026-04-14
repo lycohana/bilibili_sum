@@ -77,8 +77,8 @@ def test_probe_video_asset_requires_page_selection_for_multi_page(monkeypatch) -
         ],
     }
 
-    monkeypatch.setattr(service_app, "YoutubeDL", lambda options: _FakeYoutubeDL(payload))
-    monkeypatch.setattr(service_app, "cache_cover_image", lambda source_url, canonical_id, referer_url=None: source_url)
+    monkeypatch.setattr(service_app.video_assets, "YoutubeDL", lambda options: _FakeYoutubeDL(payload))
+    monkeypatch.setattr(service_app.video_assets, "cache_cover_image", lambda source_url, canonical_id, referer_url=None: source_url)
 
     asset, pages, requires_selection = service_app.probe_video_asset("https://www.bilibili.com/video/BV1xx411c7mD")
 
@@ -102,8 +102,8 @@ def test_probe_video_asset_returns_selected_page_when_page_is_explicit(monkeypat
         ],
     }
 
-    monkeypatch.setattr(service_app, "YoutubeDL", lambda options: _FakeYoutubeDL(payload))
-    monkeypatch.setattr(service_app, "cache_cover_image", lambda source_url, canonical_id, referer_url=None: source_url)
+    monkeypatch.setattr(service_app.video_assets, "YoutubeDL", lambda options: _FakeYoutubeDL(payload))
+    monkeypatch.setattr(service_app.video_assets, "cache_cover_image", lambda source_url, canonical_id, referer_url=None: source_url)
 
     asset, pages, requires_selection = service_app.probe_video_asset("https://www.bilibili.com/video/BV1xx411c7mD?p=2")
 
@@ -124,8 +124,8 @@ def test_probe_video_asset_returns_youtube_single_video(monkeypatch) -> None:
         "extractor_key": "Youtube",
     }
 
-    monkeypatch.setattr(service_app, "YoutubeDL", lambda options: _FakeYoutubeDL(payload))
-    monkeypatch.setattr(service_app, "cache_cover_image", lambda source_url, canonical_id, referer_url=None: source_url)
+    monkeypatch.setattr(service_app.video_assets, "YoutubeDL", lambda options: _FakeYoutubeDL(payload))
+    monkeypatch.setattr(service_app.video_assets, "cache_cover_image", lambda source_url, canonical_id, referer_url=None: source_url)
 
     asset, pages, requires_selection = service_app.probe_video_asset("https://youtu.be/dQw4w9WgXcQ")
 
