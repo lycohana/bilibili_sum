@@ -161,6 +161,14 @@
     height: 32px;
   }
 
+  .home-carousel-nav-row {
+    flex-wrap: wrap;
+  }
+
+  .home-carousel-nav-group {
+    margin-left: auto;
+  }
+
   .task-form-row {
     grid-template-columns: 1fr;
   }

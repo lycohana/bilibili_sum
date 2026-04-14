@@ -137,14 +137,23 @@ function VideoSection({
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const [canScrollLeft, setCanScrollLeft] = useState(false);
   const [canScrollRight, setCanScrollRight] = useState(videos.length > 1);
+  const [isScrollable, setIsScrollable] = useState(false);
   const [cardsPerView, setCardsPerView] = useState(() => getCardsPerView(typeof window === "undefined" ? 1180 : window.innerWidth));
   const [cardWidth, setCardWidth] = useState(0);
+  const pageStep = Math.max(1, cardsPerView * (cardWidth + 16));
+  const totalPages = Math.max(1, Math.ceil(videos.length / Math.max(1, cardsPerView)));
+  const currentPage = isScrollable && cardWidth > 0
+    ? Math.min(totalPages, Math.max(1, Math.round((viewportRef.current?.scrollLeft ?? 0) / pageStep) + 1))
+    : 1;
 
   function getCardsPerView(width: number) {
-    if (width >= 1180) {
+    if (width >= 1240) {
+      return 4;
+    }
+    if (width >= 820) {
       return 3;
     }
-    if (width >= 760) {
+    if (width >= 560) {
       return 2;
     }
     return 1;
@@ -154,19 +163,22 @@ function VideoSection({
     const viewport = viewportRef.current;
     if (!viewport) {
       setCardsPerView(getCardsPerView(typeof window === "undefined" ? 1180 : window.innerWidth));
+      setIsScrollable(videos.length > 1);
       setCanScrollLeft(false);
       setCanScrollRight(videos.length > 1);
       return;
     }
 
     const nextCardsPerView = getCardsPerView(viewport.clientWidth);
-    const gap = 20;
+    const gap = 16;
     setCardsPerView(nextCardsPerView);
-    setCardWidth((viewport.clientWidth - gap * (nextCardsPerView - 1)) / nextCardsPerView);
+    setCardWidth(Math.max(176, (viewport.clientWidth - gap * (nextCardsPerView - 1)) / nextCardsPerView));
 
     const maxScrollLeft = Math.max(0, viewport.scrollWidth - viewport.clientWidth);
+    const nextScrollable = maxScrollLeft > 8;
+    setIsScrollable(nextScrollable);
     setCanScrollLeft(viewport.scrollLeft > 8);
-    setCanScrollRight(viewport.scrollLeft < maxScrollLeft - 8);
+    setCanScrollRight(nextScrollable && viewport.scrollLeft < maxScrollLeft - 8);
   }
 
   useEffect(() => {
@@ -178,13 +190,18 @@ function VideoSection({
 
     const handleScroll = () => updateLayout();
     const handleResize = () => updateLayout();
+    const resizeObserver = typeof ResizeObserver !== "undefined"
+      ? new ResizeObserver(() => updateLayout())
+      : null;
 
     viewport.addEventListener("scroll", handleScroll, { passive: true });
     window.addEventListener("resize", handleResize);
+    resizeObserver?.observe(viewport);
 
     return () => {
       viewport.removeEventListener("scroll", handleScroll);
       window.removeEventListener("resize", handleResize);
+      resizeObserver?.disconnect();
     };
   }, [videos.length]);
 
@@ -196,7 +213,7 @@ function VideoSection({
 
     const firstCard = viewport.querySelector<HTMLElement>(".home-carousel-item");
     const cardWidth = firstCard?.offsetWidth ?? viewport.clientWidth;
-    const gap = 20;
+    const gap = 16;
     const nextOffset = (cardWidth + gap) * cardsPerView * (direction === "left" ? -1 : 1);
 
     viewport.scrollBy({
@@ -216,17 +233,6 @@ function VideoSection({
 
       {videos.length > 0 ? (
         <div className="home-carousel-shell">
-          <div className="home-carousel-nav-zone home-carousel-nav-zone-left">
-            <button
-              className="home-carousel-button home-carousel-button-left"
-              type="button"
-              onClick={() => scrollByPage("left")}
-              disabled={!canScrollLeft}
-              aria-label={`${title}上一页`}
-            >
-              <IconChevron direction="left" />
-            </button>
-          </div>
           <div className="home-carousel-stage" ref={viewportRef}>
             <div className="home-carousel-track">
               {videos.map((video) => (
@@ -243,17 +249,35 @@ function VideoSection({
               ))}
             </div>
           </div>
-          <div className="home-carousel-nav-zone home-carousel-nav-zone-right">
-            <button
-              className="home-carousel-button home-carousel-button-right"
-              type="button"
-              onClick={() => scrollByPage("right")}
-              disabled={!canScrollRight}
-              aria-label={`${title}下一页`}
-            >
-              <IconChevron direction="right" />
-            </button>
-          </div>
+          {isScrollable ? (
+            <div className="home-carousel-footer">
+              <div className="home-carousel-nav-row">
+                <span className="home-carousel-page-indicator">
+                  {currentPage} / {totalPages}
+                </span>
+                <div className="home-carousel-nav-group">
+                  <button
+                    className="home-carousel-button home-carousel-button-left"
+                    type="button"
+                    onClick={() => scrollByPage("left")}
+                    disabled={!canScrollLeft}
+                    aria-label={`${title}上一页`}
+                  >
+                    <IconChevron direction="left" />
+                  </button>
+                  <button
+                    className="home-carousel-button home-carousel-button-right"
+                    type="button"
+                    onClick={() => scrollByPage("right")}
+                    disabled={!canScrollRight}
+                    aria-label={`${title}下一页`}
+                  >
+                    <IconChevron direction="right" />
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : null}
         </div>
       ) : null}
     </>

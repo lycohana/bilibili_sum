@@ -43,84 +43,43 @@
 }
 
 .home-carousel-shell {
-  position: relative;
+  display: grid;
+  gap: 14px;
   padding: 0;
-}
-
-.home-carousel-nav-zone {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  z-index: 4;
-  width: 76px;
-  display: flex;
-  align-items: center;
-  pointer-events: auto;
-}
-
-.home-carousel-nav-zone-left {
-  left: -76px;
-  justify-content: flex-start;
-}
-
-.home-carousel-nav-zone-right {
-  right: -76px;
-  justify-content: flex-end;
 }
 
 .home-carousel-button {
   position: relative;
-  z-index: 1;
-  width: 38px;
-  height: 38px;
+  width: 34px;
+  height: 34px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   border-radius: 999px;
   border: 1px solid var(--border-subtle);
-  background: var(--bg-canvas);
+  background: rgba(255, 255, 255, 0.94);
   color: var(--text-primary);
-  box-shadow: var(--shadow-md);
-  pointer-events: none;
-  visibility: hidden;
-  transform: scale(0.94);
+  box-shadow: 0 12px 24px rgba(15, 23, 42, 0.08);
+  backdrop-filter: blur(14px);
+  pointer-events: auto;
   transition:
     transform var(--transition-fast),
     border-color var(--transition-fast),
     background-color var(--transition-fast),
     color var(--transition-fast),
-    opacity var(--transition-base),
-    visibility var(--transition-base);
-  opacity: 0;
-}
-
-.home-carousel-nav-zone:hover .home-carousel-button,
-.home-carousel-nav-zone:focus-within .home-carousel-button {
-  opacity: 1;
-  visibility: visible;
-  pointer-events: auto;
-  transform: scale(1);
-}
-
-.home-carousel-button-left {
-  left: 0;
-}
-
-.home-carousel-button-right {
-  right: 0;
+    opacity var(--transition-base);
 }
 
 .home-carousel-button:hover:not(:disabled) {
-  transform: translateY(-1px) scale(1);
+  transform: translateY(-1px);
   border-color: var(--border-default);
   background: var(--bg-card);
 }
 
 .home-carousel-button:disabled {
-  opacity: 0;
-  visibility: hidden;
-  pointer-events: none;
+  opacity: 0.28;
   cursor: not-allowed;
+  box-shadow: none;
 }
 
 .home-carousel-button svg {
@@ -143,7 +102,7 @@
 
 .home-carousel-track {
   display: flex;
-  gap: 20px;
+  gap: 16px;
   width: max-content;
   padding-bottom: 4px;
   align-items: stretch;
@@ -151,14 +110,78 @@
 }
 
 .home-carousel-item {
-  flex: 0 0 260px;
+  flex: 0 0 200px;
   display: flex;
   scroll-snap-align: start;
+}
+
+[data-theme="dark"] .home-carousel-button {
+  background: rgba(24, 24, 27, 0.9);
+  box-shadow: 0 12px 24px rgba(0, 0, 0, 0.28);
 }
 
 .home-carousel-item .video-card {
   width: 100%;
   height: 100%;
+  border-radius: 20px;
+}
+
+.home-carousel-item .video-card-body {
+  gap: 8px;
+  padding: 13px 13px 14px;
+}
+
+.home-carousel-item .video-card h3 {
+  min-height: calc(0.88rem * 1.4 * 2);
+  font-size: 0.88rem;
+}
+
+.home-carousel-item .video-card-caption {
+  font-size: 0.8rem;
+}
+
+.home-carousel-item .video-card-meta {
+  font-size: 0.74rem;
+}
+
+.home-carousel-item .video-page-badge {
+  padding: 2px 7px;
+  font-size: 0.66rem;
+}
+
+.home-carousel-footer {
+  display: grid;
+}
+
+.home-carousel-nav-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.home-carousel-page-indicator {
+  font-size: 0.76rem;
+  font-weight: 700;
+  color: var(--text-tertiary);
+  letter-spacing: 0.04em;
+}
+
+.home-carousel-nav-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px;
+  border-radius: 999px;
+  border: 1px solid var(--border-subtle);
+  background: rgba(255, 255, 255, 0.78);
+  box-shadow: 0 12px 24px rgba(15, 23, 42, 0.06);
+  backdrop-filter: blur(14px);
+}
+
+[data-theme="dark"] .home-carousel-nav-group {
+  background: rgba(24, 24, 27, 0.78);
+  box-shadow: 0 12px 24px rgba(0, 0, 0, 0.22);
 }
 
 .input-row {
