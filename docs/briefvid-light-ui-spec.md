@@ -1,6 +1,6 @@
 # BriefVid Light UI Spec
 
-> 说明：本文件保留为浅色模式视觉提案。当前开发与实现请优先参考 `docs/briefvid-ui-spec.md`。
+> 说明：本文件保留为浅色模式视觉提案。当前开发与实现请优先参考 `docs/briefvid-ui-spec.md`。若与当前代码不一致，以 `apps/desktop/src/app.css` 和主规范为准，尤其是深色模式与平台标签实现。
 
 ## 1. 白天模式重设计说明
 
