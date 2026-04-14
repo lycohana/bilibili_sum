@@ -3188,6 +3188,19 @@ textarea {
   font-size: 0.72rem;
 }
 
+.detail-mindmap-inspector-tag.is-action {
+  cursor: pointer;
+  transition: transform var(--transition-fast), border-color var(--transition-fast), background var(--transition-fast), color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.detail-mindmap-inspector-tag.is-action:hover {
+  transform: translateY(-1px);
+  border-color: var(--accent-border);
+  background: color-mix(in srgb, var(--bg-card) 82%, var(--bg-accent) 18%);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-xs);
+}
+
 .detail-mindmap-seek-button {
   display: inline-flex;
   align-items: center;

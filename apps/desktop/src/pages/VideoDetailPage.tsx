@@ -1678,12 +1678,30 @@ export function VideoDetailPage({ onRefresh }: { onRefresh(): void }) {
                             ) : null}
                             {selectedMindMapNode.source_chapter_titles.length ? (
                               <div className="detail-mindmap-inspector-tags">
-                                {selectedMindMapNode.source_chapter_titles.slice(0, 3).map((title: string, index: number) => (
-                                  <span className="detail-mindmap-inspector-tag" key={`${title}-${index}`}>
-                                    {title}
-                                    {shouldDisplayMindMapTimestamp(selectedMindMapNode.source_chapter_starts[index]) ? ` · ${formatDuration(selectedMindMapNode.source_chapter_starts[index]!)}` : ""}
-                                  </span>
-                                ))}
+                                {selectedMindMapNode.source_chapter_titles.slice(0, 3).map((title: string, index: number) => {
+                                  const timestamp = selectedMindMapNode.source_chapter_starts[index] ?? null;
+                                  const canSeek = shouldDisplayMindMapTimestamp(timestamp) && Boolean(bilibiliEmbedBaseUrl);
+                                  const label = `${title}${shouldDisplayMindMapTimestamp(timestamp) ? ` · ${formatDuration(timestamp!)}` : ""}`;
+
+                                  if (canSeek) {
+                                    return (
+                                      <button
+                                        className="detail-mindmap-inspector-tag is-action"
+                                        key={`${title}-${index}`}
+                                        type="button"
+                                        onClick={() => handleSeekToChapter(timestamp)}
+                                      >
+                                        {label}
+                                      </button>
+                                    );
+                                  }
+
+                                  return (
+                                    <span className="detail-mindmap-inspector-tag" key={`${title}-${index}`}>
+                                      {label}
+                                    </span>
+                                  );
+                                })}
                               </div>
                             ) : null}
                           </article>
