@@ -14,6 +14,29 @@ $winCodeSignUrl = "https://github.com/electron-userland/electron-builder-binarie
 $winCodeSignCacheDir = "$env:LOCALAPPDATA\electron-builder\Cache\winCodeSign"
 $localRceditDir = Join-Path $winCodeSignCacheDir "briefvid-rcedit"
 
+function Ensure-PythonPip {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$PythonExe
+    )
+
+    & $PythonExe -m pip --version *> $null
+    if ($LASTEXITCODE -eq 0) {
+        return
+    }
+
+    Write-Host "pip is missing in the selected Python environment; bootstrapping with ensurepip..."
+    & $PythonExe -m ensurepip --upgrade
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to bootstrap pip for $PythonExe"
+    }
+
+    & $PythonExe -m pip --version *> $null
+    if ($LASTEXITCODE -ne 0) {
+        throw "pip is still unavailable after ensurepip for $PythonExe"
+    }
+}
+
 function Ensure-LocalRcedit {
     $rceditX64 = Join-Path $localRceditDir "rcedit-x64.exe"
     $rceditIa32 = Join-Path $localRceditDir "rcedit-ia32.exe"
@@ -56,6 +79,7 @@ if (-not $python312) {
 }
 
 Write-Host "Using Python 3.12:" $python312
+Ensure-PythonPip -PythonExe $python312
 
 # Clean entire electron-builder cache to avoid symlink issues on Windows
 $cacheDir = "$env:LOCALAPPDATA\electron-builder\Cache"
