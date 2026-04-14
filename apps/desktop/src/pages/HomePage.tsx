@@ -43,10 +43,10 @@ export function HomePage({
                 <span className="input-icon" aria-hidden="true"><LinkIcon /></span>
                 <input
                   className="input-field input-field-hero"
-                  type="url"
+                  type="text"
                   value={probeUrl}
                   onChange={(event) => setProbeUrl(event.target.value)}
-                  placeholder="粘贴视频链接，例如 https://www.bilibili.com/video/..."
+                  placeholder="粘贴视频链接或直接输入 BV 号，例如 BV1xx411c7mD"
                   required
                 />
               </div>

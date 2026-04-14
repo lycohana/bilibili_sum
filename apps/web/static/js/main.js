@@ -295,7 +295,7 @@ async function handleProbeSubmit(event) {
   event.preventDefault();
   const url = document.getElementById("probe-url-input")?.value.trim();
   if (!url) {
-    setTransientStatus("submitStatus", "请输入视频链接");
+    setTransientStatus("submitStatus", "请输入视频链接或 BV 号");
     return;
   }
   setTransientStatus("submitStatus", "正在抓取视频信息并准备开始总结...");

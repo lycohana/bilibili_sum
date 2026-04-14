@@ -25,6 +25,20 @@ def test_normalize_video_url_preserves_requested_page() -> None:
     assert canonical == "BV1xx411c7mD"
 
 
+def test_normalize_video_url_accepts_raw_bvid() -> None:
+    normalized, canonical = normalize_video_url("BV1xx411c7mD")
+
+    assert normalized == "https://www.bilibili.com/video/BV1xx411c7mD"
+    assert canonical == "BV1xx411c7mD"
+
+
+def test_normalize_video_url_accepts_raw_bvid_with_page() -> None:
+    normalized, canonical = normalize_video_url("BV1xx411c7mD?p=2")
+
+    assert normalized == "https://www.bilibili.com/video/BV1xx411c7mD?p=2"
+    assert canonical == "BV1xx411c7mD"
+
+
 def test_probe_video_asset_requires_page_selection_for_multi_page(monkeypatch) -> None:
     payload = {
         "id": "BV1xx411c7mD",

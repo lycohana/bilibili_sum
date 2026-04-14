@@ -278,7 +278,7 @@ export function App() {
   async function handleProbe(event: FormEvent) {
     event.preventDefault();
     if (!probeUrl.trim()) {
-      setSubmitStatus("请输入视频链接");
+      setSubmitStatus("请输入视频链接或 BV 号");
       return;
     }
     if (configHealth.hasBlockingIssues) {

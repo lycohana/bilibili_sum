@@ -155,12 +155,12 @@ function renderLibraryRegions(state) {
             </svg>
             开始总结
           </h2>
-          <p>输入视频链接后，系统会抓取封面和标题，并立即开始本地总结。</p>
+          <p>输入视频链接或直接填写 BV 号后，系统会抓取封面和标题，并立即开始本地总结。</p>
         </div>
         <form id="probe-form" class="task-form">
           <label class="input-row">
             <span class="input-label">视频链接</span>
-            <input id="probe-url-input" type="url" class="input-field" placeholder="https://www.bilibili.com/video/..." required autocomplete="url" />
+            <input id="probe-url-input" type="text" class="input-field" placeholder="https://www.bilibili.com/video/... 或 BV1xx411c7mD" required autocomplete="off" />
           </label>
           <div class="hero-actions">
             <button class="primary-button" type="submit">
