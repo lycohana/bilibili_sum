@@ -1132,6 +1132,21 @@ textarea {
   background: var(--bg-subtle);
 }
 
+.video-platform-badge {
+  border: none;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.66);
+}
+
+.video-platform-badge.is-youtube {
+  color: rgb(255, 0, 51);
+  background: color-mix(in srgb, var(--bg-subtle) 82%, rgb(255, 0, 51) 18%);
+}
+
+.video-platform-badge.is-bilibili {
+  color: rgb(250, 107, 152);
+  background: color-mix(in srgb, var(--bg-subtle) 82%, rgb(250, 107, 152) 18%);
+}
+
 .task-status {
   border: 1px solid transparent;
 }
@@ -6008,6 +6023,20 @@ textarea {
 
 [data-theme="dark"] .filter-pill.active {
   border-color: rgba(251, 114, 153, 0.14);
+}
+
+[data-theme="dark"] .video-platform-badge {
+  box-shadow: none;
+}
+
+[data-theme="dark"] .video-platform-badge.is-youtube {
+  color: rgb(255, 82, 117);
+  background: rgba(255, 0, 51, 0.16);
+}
+
+[data-theme="dark"] .video-platform-badge.is-bilibili {
+  color: rgb(255, 140, 179);
+  background: rgba(250, 107, 152, 0.16);
 }
 
 .bullet-list {

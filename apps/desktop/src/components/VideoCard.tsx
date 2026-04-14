@@ -7,6 +7,7 @@ import { formatDateTime, formatDuration, taskStatusLabel } from "../utils";
 export function VideoCard({ video }: { video: VideoAssetSummary }) {
   const badgeClass = taskStatusClass(video.latest_status);
   const isMultiPageVideo = video.pages.length > 1;
+  const platformClass = video.platform ? `is-${video.platform.toLowerCase()}` : "";
 
   return (
     <Link className="video-card" to={`/videos/${video.video_id}`}>
@@ -17,7 +18,7 @@ export function VideoCard({ video }: { video: VideoAssetSummary }) {
       <div className="video-card-body">
         <div className="video-card-topline">
           <div className="video-card-badges">
-            <span className="video-platform-badge">{platformLabel(video.platform)}</span>
+            <span className={`video-platform-badge ${platformClass}`.trim()}>{platformLabel(video.platform)}</span>
             {isMultiPageVideo ? <span className="video-page-badge">{video.pages.length}P</span> : null}
           </div>
           <span className={`task-status ${badgeClass}`}>{taskStatusLabel(video.latest_status)}</span>
