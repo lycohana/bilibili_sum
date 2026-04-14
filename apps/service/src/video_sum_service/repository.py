@@ -1,6 +1,6 @@
 import json
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from threading import Lock
 
@@ -505,6 +505,20 @@ class SqliteTaskRepository:
         event = TaskEventRecord(task_id=task_id, stage=stage, progress=progress, message=message, payload=payload or {})
         updated_at = datetime.now(timezone.utc).isoformat()
         with self._lock, sqlite_cursor(self._connection) as cursor:
+            latest_row = cursor.execute(
+                """
+                SELECT created_at
+                FROM task_events
+                WHERE task_id = ?
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                (task_id,),
+            ).fetchone()
+            if latest_row is not None:
+                latest_created_at = datetime.fromisoformat(latest_row["created_at"])
+                if event.created_at <= latest_created_at:
+                    event.created_at = latest_created_at + timedelta(microseconds=1)
             cursor.execute(
                 """
                 INSERT INTO task_events (event_id, task_id, stage, progress, message, payload_json, created_at)

@@ -9,10 +9,10 @@ from video_sum_infra.config import ServiceSettings
 from video_sum_service.app import (
     app,
     install_local_asr,
+    probe_asr_connection,
+    probe_llm_connection,
     serialize_settings,
     settings_manager,
-    test_asr_connection,
-    test_llm_connection,
     update_settings,
 )
 from video_sum_service.settings_manager import SettingsUpdatePayload
@@ -205,7 +205,7 @@ def test_llm_connection_uses_unsaved_payload(monkeypatch, tmp_path: Path) -> Non
 
     monkeypatch.setattr(service_app.httpx, "Client", FakeClient)
 
-    response = test_llm_connection(
+    response = probe_llm_connection(
         SettingsUpdatePayload(
             llm_base_url="https://api.example.com/v1",
             llm_api_key="new-key",
@@ -236,7 +236,7 @@ def test_llm_connection_requires_base_url(tmp_path: Path) -> None:
     settings_manager._settings = current
 
     try:
-        test_llm_connection()
+        probe_llm_connection()
     except HTTPException as exc:
         assert exc.status_code == 400
         assert exc.detail == "请先填写 API Base URL。"
@@ -280,7 +280,7 @@ def test_llm_connection_rejects_invalid_json_response(monkeypatch, tmp_path: Pat
     monkeypatch.setattr(service_app.httpx, "Client", FakeClient)
 
     try:
-        test_llm_connection()
+        probe_llm_connection()
     except HTTPException as exc:
         assert exc.status_code == 502
         assert "未返回合法 JSON" in str(exc.detail)
@@ -325,7 +325,7 @@ def test_asr_connection_uses_unsaved_payload(monkeypatch, tmp_path: Path) -> Non
 
     monkeypatch.setattr(service_app.httpx, "Client", FakeClient)
 
-    response = test_asr_connection(
+    response = probe_asr_connection(
         SettingsUpdatePayload(
             siliconflow_asr_base_url="https://api.example.com/v1",
             siliconflow_asr_api_key="new-key",
@@ -354,7 +354,7 @@ def test_asr_connection_requires_api_key(tmp_path: Path) -> None:
     settings_manager._settings = current
 
     try:
-        test_asr_connection()
+        probe_asr_connection()
     except HTTPException as exc:
         assert exc.status_code == 400
         assert exc.detail == "请先填写 SiliconFlow API Key。"
@@ -396,7 +396,7 @@ def test_asr_connection_accepts_empty_transcript_when_endpoint_responds(monkeypa
 
     monkeypatch.setattr(service_app.httpx, "Client", FakeClient)
 
-    response = test_asr_connection()
+    response = probe_asr_connection()
 
     assert response["ok"] is True
     assert "接口已响应，但测试音频未返回文本" in str(response["message"])

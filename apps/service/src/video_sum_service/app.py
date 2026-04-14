@@ -610,7 +610,7 @@ def _build_test_wav_bytes(duration_ms: int = 250, sample_rate: int = 16000) -> b
     return buffer.getvalue()
 
 
-def test_llm_connection(payload: SettingsUpdatePayload | None = None) -> dict[str, object]:
+def probe_llm_connection(payload: SettingsUpdatePayload | None = None) -> dict[str, object]:
     current_settings = settings_manager.current
     updates = payload.model_dump(exclude_none=True) if payload is not None else {}
     effective_settings = ServiceSettings.model_validate(
@@ -697,7 +697,7 @@ def test_llm_connection(payload: SettingsUpdatePayload | None = None) -> dict[st
     }
 
 
-def test_asr_connection(payload: SettingsUpdatePayload | None = None) -> dict[str, object]:
+def probe_asr_connection(payload: SettingsUpdatePayload | None = None) -> dict[str, object]:
     current_settings = settings_manager.current
     updates = payload.model_dump(exclude_none=True) if payload is not None else {}
     effective_settings = ServiceSettings.model_validate(
@@ -1313,12 +1313,12 @@ def update_settings(payload: SettingsUpdatePayload) -> dict[str, object]:
 
 @app.post("/api/v1/llm/test")
 def post_llm_test(payload: SettingsUpdatePayload | None = None) -> dict[str, object]:
-    return test_llm_connection(payload)
+    return probe_llm_connection(payload)
 
 
 @app.post("/api/v1/asr/test")
 def post_asr_test(payload: SettingsUpdatePayload | None = None) -> dict[str, object]:
-    return test_asr_connection(payload)
+    return probe_asr_connection(payload)
 
 
 @app.get("/api/v1/environment")
