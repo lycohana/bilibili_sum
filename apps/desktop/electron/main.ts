@@ -701,6 +701,22 @@ function createWindow() {
     return { action: "deny" };
   });
 
+  // 拦截页面内导航，外部链接在系统浏览器中打开
+  mainWindow.webContents.on("will-navigate", (event, url) => {
+    if (!mainWindow) {
+      return;
+    }
+    const parsedUrl = new URL(url);
+    const currentUrl = new URL(mainWindow.webContents.getURL());
+    
+    // 如果是跨域导航（外链），在系统浏览器中打开
+    if (parsedUrl.origin !== currentUrl.origin) {
+      event.preventDefault();
+      shell.openExternal(url);
+    }
+    // 同域导航允许正常进行
+  });
+
   mainWindow.on("close", async (event) => {
     if (forceQuit) {
       return;
