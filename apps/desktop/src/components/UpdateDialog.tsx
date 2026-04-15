@@ -184,6 +184,19 @@ export function UpdateDialog({
   };
 
   const renderReleaseNotes = () => {
+    // 当已是最新版本时，如果有更新日志则显示，否则显示提示
+    if (updateInfo?.status === "not-available") {
+      if (updateInfo.releaseNotes) {
+        const notes = updateInfo.releaseNotes.trim();
+        const looksLikeHtml = /<\/?[a-z][\s\S]*>/i.test(notes);
+        if (looksLikeHtml) {
+          return <div className="release-notes-content" dangerouslySetInnerHTML={{ __html: notes }} />;
+        }
+        return <MarkdownContent className="release-notes-content" content={notes} />;
+      }
+      return <p className="release-notes-empty">当前已是最新版本，暂无更新日志</p>;
+    }
+    
     if (!updateInfo?.releaseNotes) {
       return <p className="release-notes-empty">暂无更新日志</p>;
     }
@@ -254,6 +267,8 @@ export function UpdateDialog({
             <div className="release-notes">
               {updateInfo?.status === "checking" ? (
                 <p className="release-notes-loading">正在加载更新日志...</p>
+              ) : updateInfo?.status === "idle" ? (
+                <p className="release-notes-empty">点击"检查更新"按钮查看更新日志</p>
               ) : (
                 renderReleaseNotes()
               )}

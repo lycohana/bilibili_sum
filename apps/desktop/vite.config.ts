@@ -11,7 +11,7 @@ export default defineConfig(({ command }) => ({
   plugins: [react()],
   server: {
     host: "127.0.0.1",
-    port: 5173,
+    port: 3000,
     strictPort: true,
     fs: {
       allow: [root, path.resolve(root, "..")],

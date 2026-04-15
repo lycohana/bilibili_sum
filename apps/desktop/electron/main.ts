@@ -825,19 +825,57 @@ function initializeUpdater() {
       const alreadyDownloaded = downloadedUpdateVersion === info.version
         || (updateStatus.status === "downloaded" && updateStatus.version === info.version)
         || (updateStatus.status === "installing" && updateStatus.version === info.version);
+      
+      // 处理 releaseNotes：electron-updater 可能返回数组或字符串
+      let releaseNotes: string | null = null;
+      if (info.releaseNotes) {
+        if (Array.isArray(info.releaseNotes)) {
+          // 如果是数组，提取所有 note 内容并合并
+          releaseNotes = info.releaseNotes
+            .map((note) => (typeof note === "string" ? note : note.note || ""))
+            .filter(Boolean)
+            .join("\n\n");
+        } else if (typeof info.releaseNotes === "string") {
+          releaseNotes = info.releaseNotes;
+        } else if (typeof info.releaseNotes === "object" && info.releaseNotes !== null) {
+          // 如果是对象，尝试获取 note 属性
+          releaseNotes = (info.releaseNotes as { note?: string }).note || null;
+        }
+      }
+      
       updateUpdateStatus({
         ...getUpdateSnapshot(info),
+        releaseNotes,
         status: alreadyDownloaded ? updateStatus.status : "available",
         downloadProgress: alreadyDownloaded ? 100 : 0,
         errorMessage: null,
       });
     });
 
-    autoUpdater.on("update-not-available", () => {
+    autoUpdater.on("update-not-available", (info: ElectronUpdateInfo) => {
       if (updateStatus.status === "downloaded" || updateStatus.status === "installing") {
         return;
       }
-      updateUpdateStatus({ status: "not-available" });
+      // 当已是最新版本时，获取当前版本的更新日志
+      let releaseNotes: string | null = null;
+      if (info.releaseNotes) {
+        if (Array.isArray(info.releaseNotes)) {
+          releaseNotes = info.releaseNotes
+            .map((note) => (typeof note === "string" ? note : note.note || ""))
+            .filter(Boolean)
+            .join("\n\n");
+        } else if (typeof info.releaseNotes === "string") {
+          releaseNotes = info.releaseNotes;
+        } else if (typeof info.releaseNotes === "object" && info.releaseNotes !== null) {
+          releaseNotes = (info.releaseNotes as { note?: string }).note || null;
+        }
+      }
+      updateUpdateStatus({
+        ...getUpdateSnapshot(info),
+        status: "not-available",
+        releaseNotes,
+        errorMessage: null,
+      });
     });
 
     autoUpdater.on("download-progress", (progress: ProgressInfo) => {
@@ -884,7 +922,11 @@ function initializeUpdater() {
 
 function checkForUpdates(): Promise<UpdateInfo> {
   if (isDev) {
-    updateUpdateStatus({ status: "not-available", errorMessage: getAutoUpdaterDisabledMessage() });
+    updateUpdateStatus({
+      status: "not-available",
+      errorMessage: getAutoUpdaterDisabledMessage(),
+      releaseNotes: null,
+    });
     return Promise.resolve(updateStatus);
   }
 
@@ -892,6 +934,7 @@ function checkForUpdates(): Promise<UpdateInfo> {
     updateUpdateStatus({
       status: "not-available",
       errorMessage: getUpdaterUnavailableMessage(),
+      releaseNotes: null,
     });
     return Promise.resolve(updateStatus);
   }

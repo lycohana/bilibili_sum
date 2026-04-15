@@ -10,7 +10,7 @@
   "scripts": {
     "dev": "concurrently -k \"npm:dev:renderer\" \"npm:dev:electron\"",
     "dev:renderer": "vite --config vite.config.ts",
-    "dev:electron": "wait-on tcp:5173 && npm run build:electron && cross-env BRIEFVID_RENDERER_URL=http://127.0.0.1:5173 electron ./dist-electron/main.js",
+    "dev:electron": "wait-on tcp:3000 && npm run build:electron && cross-env BRIEFVID_RENDERER_URL=http://127.0.0.1:3000 electron ./dist-electron/main.js",
     "test": "node --experimental-strip-types test/run.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "build:renderer": "vite build --config vite.config.ts",
