@@ -518,6 +518,14 @@
   border-color: rgba(251, 114, 153, 0.14);
 }
 
+[data-theme="dark"] .library-pagination-button {
+  border-color: rgba(255, 255, 255, 0.06);
+}
+
+[data-theme="dark"] .library-pagination-button.is-active {
+  border-color: rgba(251, 114, 153, 0.14);
+}
+
 [data-theme="dark"] .video-platform-badge {
   box-shadow: none;
 }

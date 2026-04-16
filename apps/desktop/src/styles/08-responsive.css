@@ -152,6 +152,15 @@
     grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
   }
 
+  .library-pagination {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .library-pagination-actions {
+    justify-content: flex-start;
+  }
+
   .home-carousel-shell {
     padding: 0;
   }
@@ -194,6 +203,12 @@
 @media (max-width: 640px) {
   .grid-card {
     padding: 18px;
+  }
+
+  .library-pagination-button {
+    min-width: 38px;
+    height: 38px;
+    padding: 0 12px;
   }
 
   .detail-hero-actions .primary-button,

@@ -1,8 +1,28 @@
+import { useEffect, useState } from "react";
+
 import type { LibraryFilter, Snapshot } from "../appModel";
 import { SearchIcon } from "../components/AppIcons";
 import { Metric } from "../components/AppPrimitives";
 import { VideoCard } from "../components/VideoCard";
 import type { VideoAssetSummary } from "../types";
+
+const VIDEOS_PER_PAGE = 16;
+
+function buildPaginationItems(currentPage: number, totalPages: number): Array<number | "ellipsis"> {
+  if (totalPages <= 7) {
+    return Array.from({ length: totalPages }, (_item, index) => index + 1);
+  }
+
+  if (currentPage <= 3) {
+    return [1, 2, 3, 4, "ellipsis", totalPages];
+  }
+
+  if (currentPage >= totalPages - 2) {
+    return [1, "ellipsis", totalPages - 3, totalPages - 2, totalPages - 1, totalPages];
+  }
+
+  return [1, "ellipsis", currentPage - 1, currentPage, currentPage + 1, "ellipsis", totalPages];
+}
 
 type LibraryPageProps = {
   snapshot: Snapshot;
@@ -31,18 +51,34 @@ export function LibraryPage({
   runtimeDeviceLabel,
   onToggleFavorite,
 }: LibraryPageProps) {
+  const [currentPage, setCurrentPage] = useState(1);
   const showWithResultMetric = libraryCounts.withResult !== libraryCounts.completed;
   const filters: Array<{ id: LibraryFilter; label: string; count: number }> = [
     { id: "all", label: "全部", count: libraryCounts.total },
     { id: "favorite", label: "收藏", count: libraryCounts.favorite },
     { id: "completed", label: "已完成", count: libraryCounts.completed },
     { id: "running", label: "处理中", count: libraryCounts.running },
-    { id: "with-result", label: "有结果", count: libraryCounts.withResult },
+    ...(showWithResultMetric ? [{ id: "with-result" as const, label: "有结果", count: libraryCounts.withResult }] : []),
   ];
   const activeFilterLabel = filters.find((filter) => filter.id === activeFilter)?.label || "全部";
   const summaryText = latestVideo
     ? `最近更新：${latestVideo.title}`
     : "输入链接后，视频会自动进入这里统一管理。";
+  const totalPages = Math.max(1, Math.ceil(filteredVideos.length / VIDEOS_PER_PAGE));
+  const safeCurrentPage = Math.min(currentPage, totalPages);
+  const pageStartIndex = (safeCurrentPage - 1) * VIDEOS_PER_PAGE;
+  const pagedVideos = filteredVideos.slice(pageStartIndex, pageStartIndex + VIDEOS_PER_PAGE);
+  const paginationItems = buildPaginationItems(safeCurrentPage, totalPages);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [activeFilter, query]);
+
+  useEffect(() => {
+    if (currentPage > totalPages) {
+      setCurrentPage(totalPages);
+    }
+  }, [currentPage, totalPages]);
 
   return (
     <section className="library-page">
@@ -75,7 +111,7 @@ export function LibraryPage({
         <div className="library-toolbar">
           <div className="library-toolbar-copy">
             <h3>视频库</h3>
-            <p>{filteredVideos.length} / {snapshot.videos.length} 个视频资产</p>
+            <p>共 {snapshot.videos.length} 个视频资产，当前第 {safeCurrentPage} / {totalPages} 页</p>
           </div>
           <label className="search-field library-search-field">
             <span className="search-icon" aria-hidden="true"><SearchIcon /></span>
@@ -104,15 +140,64 @@ export function LibraryPage({
         </div>
 
         {filteredVideos.length ? (
-          <div className="video-grid">
-            {filteredVideos.map((video) => (
-              <VideoCard
-                key={video.video_id}
-                video={video}
-                onToggleFavorite={onToggleFavorite}
-              />
-            ))}
-          </div>
+          <>
+            <div className="video-grid">
+              {pagedVideos.map((video) => (
+                <VideoCard
+                  key={video.video_id}
+                  video={video}
+                  onToggleFavorite={onToggleFavorite}
+                />
+              ))}
+            </div>
+
+            {totalPages > 1 ? (
+              <div className="library-pagination" aria-label="视频库分页">
+                <div className="library-pagination-summary">
+                  显示第 {pageStartIndex + 1}-{Math.min(pageStartIndex + pagedVideos.length, filteredVideos.length)} 条，共 {filteredVideos.length} 条
+                </div>
+                <div className="library-pagination-actions">
+                  <button
+                    className="library-pagination-button"
+                    type="button"
+                    disabled={safeCurrentPage === 1}
+                    onClick={() => setCurrentPage((page) => Math.max(1, page - 1))}
+                  >
+                    上一页
+                  </button>
+
+                  {paginationItems.map((item, index) => {
+                    if (item === "ellipsis") {
+                      return <span key={`ellipsis-${index}`} className="library-pagination-ellipsis">...</span>;
+                    }
+
+                    const pageNumber = item;
+                    return (
+                      <span key={pageNumber} className="library-pagination-slot">
+                        <button
+                          className={`library-pagination-button ${pageNumber === safeCurrentPage ? "is-active" : ""}`}
+                          type="button"
+                          onClick={() => setCurrentPage(pageNumber)}
+                          aria-current={pageNumber === safeCurrentPage ? "page" : undefined}
+                        >
+                          {pageNumber}
+                        </button>
+                      </span>
+                    );
+                  })}
+
+                  <button
+                    className="library-pagination-button"
+                    type="button"
+                    disabled={safeCurrentPage === totalPages}
+                    onClick={() => setCurrentPage((page) => Math.min(totalPages, page + 1))}
+                  >
+                    下一页
+                  </button>
+                </div>
+              </div>
+            ) : null}
+          </>
         ) : (
           <div className="library-empty-state">
             <div className="library-empty-visual" aria-hidden="true">
