@@ -135,3 +135,25 @@ def test_probe_video_asset_returns_youtube_single_video(monkeypatch) -> None:
     assert asset.source_url == "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
     assert asset.title == "示例 YouTube 视频"
     assert pages == []
+
+
+def test_probe_video_asset_returns_local_video_from_file_path(monkeypatch, tmp_path) -> None:
+    local_file = tmp_path / "本地演示视频.mp4"
+    local_file.write_bytes(b"fake-video")
+
+    monkeypatch.setattr(service_app.video_assets, "probe_local_media_duration", lambda path: 93.5)
+    monkeypatch.setattr(
+        service_app.video_assets,
+        "extract_local_video_cover",
+        lambda path, canonical_id, duration, force_refresh=False: f"/media/covers/{canonical_id}.jpg",
+    )
+
+    asset, pages, requires_selection = service_app.probe_video_asset(str(local_file))
+
+    assert requires_selection is False
+    assert pages == []
+    assert asset.platform == "local"
+    assert asset.title == "本地演示视频"
+    assert asset.source_url == str(local_file.resolve())
+    assert asset.cover_url.startswith("/media/covers/local-")
+    assert asset.duration == 93.5

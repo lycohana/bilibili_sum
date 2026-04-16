@@ -969,6 +969,20 @@ export function VideoDetailPage({ onRefresh }: { onRefresh(): void }) {
     return <section className="grid-card empty-state-card">正在加载视频详情...</section>;
   }
 
+  const heroSourceTarget = currentPage?.source_url || video.source_url;
+  const isLocalVideo = String(video.platform || "").toLowerCase() === "local";
+  const canOpenLocalSource = isLocalVideo && Boolean(window.desktop?.shell) && Boolean(heroSourceTarget);
+
+  async function handleOpenLocalSource() {
+    if (!window.desktop?.shell || !heroSourceTarget) {
+      return;
+    }
+    const result = await window.desktop.shell.openPath(heroSourceTarget);
+    if (result) {
+      throw new Error(result);
+    }
+  }
+
   return (
     <section className="video-detail-page">
       <FloatingNoticeStack notices={[{ id: "video-detail-status", message: status }]} />
@@ -981,13 +995,34 @@ export function VideoDetailPage({ onRefresh }: { onRefresh(): void }) {
         </div>
 
         <article className="video-detail-hero">
-          <a className="video-detail-cover" href={currentPage?.source_url || video.source_url} target="_blank" rel="noreferrer">
-            {video.cover_url ? <img src={video.cover_url} alt={video.title} loading="lazy" /> : <div className="video-detail-cover-placeholder">VIDEO</div>}
-            <div className="video-detail-cover-overlay">
-              <IconPlayCircle className="video-detail-play-icon" />
+          {canOpenLocalSource ? (
+            <button
+              className="video-detail-cover video-detail-cover-button"
+              type="button"
+              onClick={() => void handleOpenLocalSource().catch((error) => {
+                setStatus(error instanceof Error ? error.message : "打开本地视频失败");
+              })}
+            >
+              {video.cover_url ? <img src={video.cover_url} alt={video.title} loading="lazy" /> : <div className="video-detail-cover-placeholder">VIDEO</div>}
+              <div className="video-detail-cover-overlay">
+                <IconPlayCircle className="video-detail-play-icon" />
+              </div>
+              <div className="detail-duration-badge">{formatDuration(video.duration)}</div>
+            </button>
+          ) : isLocalVideo ? (
+            <div className="video-detail-cover">
+              {video.cover_url ? <img src={video.cover_url} alt={video.title} loading="lazy" /> : <div className="video-detail-cover-placeholder">VIDEO</div>}
+              <div className="detail-duration-badge">{formatDuration(video.duration)}</div>
             </div>
-            <div className="detail-duration-badge">{formatDuration(video.duration)}</div>
-          </a>
+          ) : (
+            <a className="video-detail-cover" href={heroSourceTarget} target="_blank" rel="noreferrer">
+              {video.cover_url ? <img src={video.cover_url} alt={video.title} loading="lazy" /> : <div className="video-detail-cover-placeholder">VIDEO</div>}
+              <div className="video-detail-cover-overlay">
+                <IconPlayCircle className="video-detail-play-icon" />
+              </div>
+              <div className="detail-duration-badge">{formatDuration(video.duration)}</div>
+            </a>
+          )}
 
           <div className="video-detail-copy">
             <div className="detail-hero-meta-row">
@@ -1775,7 +1810,7 @@ export function VideoDetailPage({ onRefresh }: { onRefresh(): void }) {
               </section>
             ) : null}
 
-            {playerEmbedUrl && playerDescriptor && (activeTab === "summary" || activeTab === "mindmap") ? (
+            {playerEmbedUrl && playerDescriptor && activeTab === "mindmap" ? (
               <FloatingVideoPlayer
                 embedUrl={playerEmbedUrl}
                 openLabel={playerDescriptor.openLabel}

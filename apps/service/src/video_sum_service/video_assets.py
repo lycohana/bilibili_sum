@@ -1,19 +1,52 @@
+from __future__ import annotations
+
+import hashlib
 import json
 import logging
 import re
-from urllib.parse import urlencode, urlparse
+import shutil
+import subprocess
+from pathlib import Path
+from urllib.parse import unquote, urlencode, urlparse
 
 import httpx
 from fastapi import HTTPException
 from yt_dlp import YoutubeDL
 
+from video_sum_core.models.tasks import InputType
 from video_sum_core.utils import extract_bilibili_page, normalize_video_url
+from video_sum_infra.runtime import ffmpeg_location
 
+from video_sum_service.context import COVER_CACHE_DIR
 from video_sum_service.integrations import cache_cover_image
 from video_sum_service.repository import SqliteTaskRepository
 from video_sum_service.schemas import VideoAssetRecord, VideoPageOptionResponse
 
 logger = logging.getLogger("video_sum_service.app")
+
+LOCAL_VIDEO_SUFFIXES = {
+    ".mp4",
+    ".mov",
+    ".mkv",
+    ".avi",
+    ".wmv",
+    ".webm",
+    ".flv",
+    ".m4v",
+    ".ts",
+    ".mpeg",
+    ".mpg",
+}
+LOCAL_AUDIO_SUFFIXES = {
+    ".mp3",
+    ".wav",
+    ".m4a",
+    ".aac",
+    ".flac",
+    ".ogg",
+    ".opus",
+    ".wma",
+}
 
 
 def with_bilibili_page(url: str, page: int) -> str:
@@ -124,6 +157,186 @@ def build_base_video_asset(
     )
 
 
+def resolve_local_media_path(value: str) -> Path | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+
+    candidate_text = raw
+    parsed = urlparse(raw)
+    if parsed.scheme.lower() == "file":
+        candidate_text = unquote(parsed.path or "")
+        if re.match(r"^/[A-Za-z]:/", candidate_text):
+            candidate_text = candidate_text.lstrip("/")
+
+    candidate = Path(candidate_text).expanduser()
+    try:
+        resolved = candidate.resolve()
+    except OSError:
+        resolved = candidate
+    if not resolved.exists() or not resolved.is_file():
+        return None
+    return resolved
+
+
+def is_supported_local_media_file(path: Path) -> bool:
+    return path.suffix.lower() in LOCAL_VIDEO_SUFFIXES | LOCAL_AUDIO_SUFFIXES
+
+
+def infer_local_input_type(source: str | Path) -> InputType:
+    path = source if isinstance(source, Path) else Path(str(source))
+    return InputType.AUDIO_FILE if path.suffix.lower() in LOCAL_AUDIO_SUFFIXES else InputType.VIDEO_FILE
+
+
+def build_local_media_canonical_id(file_path: Path) -> str:
+    try:
+        stats = file_path.stat()
+        mtime_ns = getattr(stats, "st_mtime_ns", int(stats.st_mtime * 1_000_000_000))
+        fingerprint = f"{str(file_path).lower()}|{stats.st_size}|{mtime_ns}"
+    except OSError:
+        fingerprint = str(file_path).lower()
+    digest = hashlib.sha1(fingerprint.encode("utf-8")).hexdigest()[:24]
+    return f"local-{digest}"
+
+
+def resolve_ffprobe_executable() -> Path | None:
+    ffmpeg_exe = ffmpeg_location()
+    if ffmpeg_exe is not None:
+        candidate = ffmpeg_exe.with_name("ffprobe.exe" if ffmpeg_exe.suffix.lower() == ".exe" else "ffprobe")
+        if candidate.exists():
+            return candidate
+
+    ffprobe_path = shutil.which("ffprobe")
+    if ffprobe_path:
+        return Path(ffprobe_path).resolve()
+    return None
+
+
+def probe_local_media_duration(file_path: Path) -> float | None:
+    ffprobe_exe = resolve_ffprobe_executable()
+    if ffprobe_exe is None:
+        return None
+
+    try:
+        result = subprocess.run(
+            [
+                str(ffprobe_exe),
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "default=noprint_wrappers=1:nokey=1",
+                str(file_path),
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        logger.warning("failed to probe local media duration: %s", file_path, exc_info=True)
+        return None
+
+    if result.returncode != 0:
+        logger.warning("ffprobe duration failed path=%s stderr=%s", file_path, result.stderr.strip())
+        return None
+
+    try:
+        duration = float((result.stdout or "").strip())
+    except (TypeError, ValueError):
+        return None
+    return duration if duration >= 0 else None
+
+
+def extract_local_video_cover(
+    file_path: Path,
+    canonical_id: str,
+    duration: float | None,
+    *,
+    force_refresh: bool = False,
+) -> str:
+    if file_path.suffix.lower() not in LOCAL_VIDEO_SUFFIXES:
+        return ""
+
+    ffmpeg_exe = ffmpeg_location()
+    if ffmpeg_exe is None:
+        return ""
+
+    COVER_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    target = COVER_CACHE_DIR / f"{canonical_id}.jpg"
+    if target.exists() and not force_refresh:
+        return f"/media/covers/{target.name}"
+    if force_refresh and target.exists():
+        try:
+            target.unlink()
+        except OSError:
+            logger.warning("failed to remove stale local cover: %s", target, exc_info=True)
+
+    timestamp_seconds = 0.0
+    if duration and duration > 1:
+        timestamp_seconds = min(max(duration * 0.25, 0.2), max(duration - 0.2, 0.0))
+
+    command = [str(ffmpeg_exe), "-y"]
+    if timestamp_seconds > 0:
+        command.extend(["-ss", f"{timestamp_seconds:.3f}"])
+    command.extend(["-i", str(file_path), "-frames:v", "1", "-q:v", "2", str(target)])
+
+    try:
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=45,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        logger.warning("failed to extract local video cover: %s", file_path, exc_info=True)
+        return ""
+
+    if result.returncode != 0 or not target.exists():
+        logger.warning(
+            "ffmpeg cover extraction failed path=%s returncode=%s stderr=%s",
+            file_path,
+            result.returncode,
+            result.stderr.strip(),
+        )
+        return ""
+
+    return f"/media/covers/{target.name}"
+
+
+def probe_local_video_asset(
+    file_path: Path,
+    *,
+    force_refresh: bool = False,
+    title_override: str | None = None,
+    canonical_id_override: str | None = None,
+) -> VideoAssetRecord:
+    canonical_id = canonical_id_override or build_local_media_canonical_id(file_path)
+    duration = probe_local_media_duration(file_path)
+    cover_url = extract_local_video_cover(
+        file_path,
+        canonical_id,
+        duration,
+        force_refresh=force_refresh,
+    )
+    title = str(title_override or "").strip() or file_path.stem.strip() or file_path.name
+    return build_base_video_asset(
+        canonical_id=canonical_id,
+        platform="local",
+        title=title,
+        source_url=str(file_path),
+        cover_url=cover_url,
+        duration=duration,
+        pages=[],
+    )
+
+
 def resolve_video_page(video: VideoAssetRecord, page_number: int | None) -> VideoPageOptionResponse | None:
     if not video.pages:
         return None
@@ -135,7 +348,11 @@ def probe_video_asset(
     url: str,
     force_refresh: bool = False,
 ) -> tuple[VideoAssetRecord, list[VideoPageOptionResponse], bool]:
-    del force_refresh
+    local_media_path = resolve_local_media_path(url)
+    if local_media_path is not None:
+        if not is_supported_local_media_file(local_media_path):
+            raise HTTPException(status_code=400, detail="当前仅支持导入常见本地视频或音频文件。")
+        return probe_local_video_asset(local_media_path, force_refresh=force_refresh), [], False
 
     normalized = normalize_video_url(url)
     normalized_url = normalized.normalized_url

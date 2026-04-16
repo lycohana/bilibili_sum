@@ -15,8 +15,10 @@ app_info = AppInfo.load()
 WEB_STATIC_DIR = web_static_dir()
 CACHE_STATIC_DIR = settings.cache_dir
 COVER_CACHE_DIR = CACHE_STATIC_DIR / "covers"
+LOCAL_MEDIA_UPLOAD_DIR = CACHE_STATIC_DIR / "uploads"
 
 settings.data_dir.mkdir(parents=True, exist_ok=True)
 settings.cache_dir.mkdir(parents=True, exist_ok=True)
 settings.tasks_dir.mkdir(parents=True, exist_ok=True)
+LOCAL_MEDIA_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 log_dir().mkdir(parents=True, exist_ok=True)

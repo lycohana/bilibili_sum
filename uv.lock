@@ -43,7 +43,7 @@ wheels = [
 
 [[package]]
 name = "briefvid-workspace"
-version = "1.9.0"
+version = "1.9.3"
 source = { virtual = "." }
 
 [[package]]
@@ -418,7 +418,7 @@ wheels = [
 
 [[package]]
 name = "video-sum-core"
-version = "1.9.0"
+version = "1.9.3"
 source = { editable = "packages/core" }
 dependencies = [
     { name = "httpx" },
@@ -437,7 +437,7 @@ requires-dist = [
 
 [[package]]
 name = "video-sum-infra"
-version = "1.9.0"
+version = "1.9.3"
 source = { editable = "packages/infra" }
 dependencies = [
     { name = "pydantic" },
@@ -452,7 +452,7 @@ requires-dist = [
 
 [[package]]
 name = "video-sum-service"
-version = "1.9.0"
+version = "1.9.3"
 source = { editable = "apps/service" }
 dependencies = [
     { name = "fastapi" },

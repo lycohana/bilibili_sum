@@ -5,6 +5,7 @@ import logging
 import math
 import os
 import re
+import shutil
 import subprocess
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -174,7 +175,12 @@ class RealPipelineRunner(PipelineRunner):
         if not (self._settings.llm_enabled and str(self._settings.llm_api_key or "").strip()):
             return
 
-        if task_input.input_type not in {InputType.URL, InputType.TRANSCRIPT_TEXT}:
+        if task_input.input_type not in {
+            InputType.URL,
+            InputType.VIDEO_FILE,
+            InputType.AUDIO_FILE,
+            InputType.TRANSCRIPT_TEXT,
+        }:
             return
 
         emit("preflight", 2, "正在检查 LLM API 是否可用")
@@ -213,6 +219,8 @@ class RealPipelineRunner(PipelineRunner):
 
         if task_input.input_type is InputType.URL:
             result = self._run_from_url(context, emit)
+        elif task_input.input_type in {InputType.VIDEO_FILE, InputType.AUDIO_FILE}:
+            result = self._run_from_local_media(context, emit)
         elif task_input.input_type is InputType.TRANSCRIPT_TEXT:
             result = self._run_from_transcript_text(context, emit)
         else:
@@ -296,6 +304,122 @@ class RealPipelineRunner(PipelineRunner):
             task_dir,
         )
         return result
+
+    def _run_from_local_media(
+        self,
+        context: PipelineContext,
+        emit: Callable[[str, int, str, dict[str, object] | None], None],
+    ) -> TaskResult:
+        task_input = context.task_input
+        source_path = Path(str(task_input.source or "")).expanduser()
+        if not source_path.exists() or not source_path.is_file():
+            raise VideoSumError(f"Local media file does not exist: {source_path}")
+
+        task_dir = ensure_directory(self._settings.tasks_dir / context.task_id)
+        title = task_input.title or source_path.stem or source_path.name or "local_media"
+        safe_title = sanitize_filename(title)
+        is_video_file = task_input.input_type is InputType.VIDEO_FILE
+        emit(
+            "preparing",
+            8,
+            "正在读取本地视频文件" if is_video_file else "正在读取本地音频文件",
+            {"path": str(source_path)},
+        )
+        audio_path = self._prepare_local_audio_source(
+            source_path=source_path,
+            task_dir=task_dir,
+            safe_title=safe_title,
+            input_type=task_input.input_type,
+            emit=emit,
+        )
+        transcript, segments = self._transcribe(audio_path, None, emit)
+        transcript_result = self._export_transcript_snapshot(task_dir, title, transcript, segments)
+        emit(
+            "transcribing",
+            86,
+            "转写完成，已保存可复用文本",
+            {
+                "result": transcript_result.model_dump(mode="json"),
+                "result_scope": "transcript",
+            },
+        )
+        summary = self._summarize(transcript, segments, title, emit)
+        emit("exporting", 97, "正在导出任务结果")
+        result = self._export_result(task_dir, title, transcript, segments, summary)
+        emit("exporting", 99, "结果文件已写入本地目录")
+        logger.info(
+            "pipeline local media run finish task_id=%s input_type=%s source=%s segments=%d transcript_chars=%d output_dir=%s",
+            context.task_id,
+            task_input.input_type.value,
+            source_path,
+            len(segments),
+            len(transcript),
+            task_dir,
+        )
+        return result
+
+    def _prepare_local_audio_source(
+        self,
+        source_path: Path,
+        task_dir: Path,
+        safe_title: str,
+        input_type: InputType,
+        emit: Callable[[str, int, str, dict[str, object] | None], None],
+    ) -> Path:
+        target_path = task_dir / f"{safe_title}.mp3"
+        if input_type is InputType.AUDIO_FILE and source_path.suffix.lower() == ".mp3":
+            emit("downloading", 20, "正在复制本地音频文件")
+            shutil.copy2(source_path, target_path)
+            emit("downloading", 48, "音频文件已就绪")
+            return target_path
+
+        ffmpeg_exe = ffmpeg_location()
+        if ffmpeg_exe is None:
+            raise VideoSumError("FFmpeg is unavailable, cannot process local media files.")
+
+        emit(
+            "downloading",
+            20,
+            "正在提取本地视频音轨" if input_type is InputType.VIDEO_FILE else "正在转换本地音频格式",
+            {"path": str(source_path)},
+        )
+        emit("downloading", 34, "正在写入可转写音频文件")
+        try:
+            result = subprocess.run(
+                [
+                    str(ffmpeg_exe),
+                    "-y",
+                    "-i",
+                    str(source_path),
+                    "-vn",
+                    "-acodec",
+                    "libmp3lame",
+                    "-ab",
+                    "192k",
+                    str(target_path),
+                ],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=15 * 60,
+                check=False,
+                **_windows_hidden_subprocess_kwargs(),
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise VideoSumError("Failed to extract audio from local media file.") from exc
+        if result.returncode != 0 or not target_path.exists():
+            logger.error(
+                "local media audio extraction failed source=%s returncode=%s stdout=%s stderr=%s",
+                source_path,
+                result.returncode,
+                result.stdout.strip(),
+                result.stderr.strip(),
+            )
+            raise VideoSumError("Failed to extract audio from local media file.")
+
+        emit("downloading", 48, "音频文件已就绪")
+        return target_path
 
     def _parse_transcript_payload(
         self,

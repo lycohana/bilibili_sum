@@ -365,6 +365,67 @@ def test_run_from_url_accepts_youtube_url(monkeypatch: pytest.MonkeyPatch, tmp_p
     assert emitted[0][0] == "preparing" or result_events[0].stage == "preparing"
 
 
+def test_run_from_local_video_file_uses_local_media_pipeline(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    runner = RealPipelineRunner(PipelineSettings(tasks_dir=tmp_path))
+    local_video = tmp_path / "sample.mp4"
+    local_video.write_bytes(b"fake-video")
+    emitted: list[tuple[str, int, str, dict[str, object] | None]] = []
+
+    monkeypatch.setattr(runner, "_prepare_local_audio_source", lambda *_args, **_kwargs: tmp_path / "sample.mp3")
+    monkeypatch.setattr(
+        runner,
+        "_transcribe",
+        lambda *_args, **_kwargs: ("[00:00] 本地示例", [{"start": 0.0, "end": 3.0, "text": "本地示例"}]),
+    )
+    monkeypatch.setattr(
+        runner,
+        "_export_transcript_snapshot",
+        lambda *_args, **_kwargs: type(
+            "SnapshotResult",
+            (),
+            {
+                "artifacts": {
+                    "transcript_path": str(tmp_path / "transcript.txt"),
+                    "summary_path": str(tmp_path / "summary.json"),
+                },
+                "model_dump": lambda self, mode="json": self.artifacts,
+            },
+        )(),
+    )
+    monkeypatch.setattr(
+        runner,
+        "_summarize",
+        lambda *_args, **_kwargs: {
+            "overview": "本地概览",
+            "knowledgeNoteMarkdown": "# 本地笔记",
+            "bulletPoints": [],
+            "chapters": [],
+            "chapterGroups": [],
+        },
+    )
+    monkeypatch.setattr(
+        runner,
+        "_export_result",
+        lambda *_args, **_kwargs: runner._build_task_result("transcript", {"overview": "本地概览", "knowledgeNoteMarkdown": "# 本地笔记"}),
+    )
+
+    result_events, result = runner.run(
+        PipelineContext(
+            task_id="task-local-video",
+            task_input={
+                "input_type": InputType.VIDEO_FILE,
+                "source": str(local_video),
+                "title": "本地示例视频",
+            },
+        ),
+        on_event=lambda event: emitted.append((event.stage, event.progress, event.message, event.payload)),
+    )
+
+    assert result.overview == "本地概览"
+    assert emitted[0][0] == "preparing" or result_events[0].stage == "preparing"
+    assert any("本地视频文件" in message for _, _, message, _ in emitted)
+
+
 def test_run_from_url_rejects_unsupported_url(tmp_path: Path) -> None:
     runner = RealPipelineRunner(PipelineSettings(tasks_dir=tmp_path))
 

@@ -306,7 +306,7 @@ export function platformLabel(platform?: string | null) {
   const labels: Record<string, string> = {
     bilibili: "Bilibili",
     youtube: "YouTube",
-    local: "Local",
+    local: "本地",
   };
   return (platform && labels[platform.toLowerCase()]) || "Video";
 }

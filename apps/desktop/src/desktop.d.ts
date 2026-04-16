@@ -41,6 +41,9 @@ type DesktopBridge = {
   clipboard: {
     writeImage(dataUrl: string): Promise<void>;
   };
+  media: {
+    pickVideoFile(): Promise<string | null>;
+  };
   shell: {
     openPath(targetPath: string): Promise<string>;
   };

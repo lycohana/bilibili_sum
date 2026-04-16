@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type CSSProperties, type FormEvent } from 
 
 import type { ConfigHealth } from "../appModel";
 import { platformLabel } from "../appModel";
-import { LinkIcon } from "../components/AppIcons";
+import { LinkIcon, LocalVideoIcon } from "../components/AppIcons";
 import { FloatingNoticeStack } from "../components/FloatingNoticeStack";
 import { VideoCard } from "../components/VideoCard";
 import type { VideoAssetSummary } from "../types";
@@ -15,6 +15,8 @@ type HomePageProps = {
   setProbeUrl(value: string): void;
   submitStatus: string;
   onProbe(event: FormEvent): Promise<void>;
+  onImportLocalVideo(): Promise<void>;
+  canImportLocalVideo: boolean;
   onOpenSetupAssistant(issueKey?: string): void;
   onOpenConfigIssue(issueKey: string): void;
   favoriteVideos: VideoAssetSummary[];
@@ -29,6 +31,8 @@ export function HomePage({
   setProbeUrl,
   submitStatus,
   onProbe,
+  onImportLocalVideo,
+  canImportLocalVideo,
   onOpenSetupAssistant,
   onOpenConfigIssue,
   favoriteVideos,
@@ -46,13 +50,24 @@ export function HomePage({
               <div className="input-with-icon" style={{ flex: 1 }}>
                 <span className="input-icon" aria-hidden="true"><LinkIcon /></span>
                 <input
-                  className="input-field input-field-hero"
+                  className={`input-field input-field-hero ${canImportLocalVideo ? "input-field-with-action" : ""}`.trim()}
                   type="text"
                   value={probeUrl}
                   onChange={(event) => setProbeUrl(event.target.value)}
                   placeholder="粘贴 Bilibili / YouTube 视频链接，或直接输入 BV 号"
                   required
                 />
+                {canImportLocalVideo ? (
+                  <button
+                    className="input-inline-action"
+                    type="button"
+                    aria-label="导入本地视频"
+                    title="导入本地视频"
+                    onClick={() => void onImportLocalVideo()}
+                  >
+                    <LocalVideoIcon />
+                  </button>
+                ) : null}
               </div>
             </label>
             <button className="primary-button primary-button-hero" type="submit">开始总结</button>

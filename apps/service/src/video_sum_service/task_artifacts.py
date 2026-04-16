@@ -36,6 +36,20 @@ def video_cover_paths(video: VideoAssetRecord, cache_dir: Path) -> list[Path]:
     return sorted(cover_paths)
 
 
+def video_source_paths(video: VideoAssetRecord, cache_dir: Path) -> list[Path]:
+    source_paths: set[Path] = set()
+    if str(video.platform or "").lower() != "local":
+        return []
+    try:
+        source_path = Path(str(video.source_url or "")).resolve()
+        uploads_dir = (cache_dir / "uploads").resolve()
+        if uploads_dir in source_path.parents:
+            source_paths.add(source_path)
+    except (OSError, RuntimeError, ValueError):
+        return []
+    return sorted(source_paths)
+
+
 def cleanup_video_files(video: VideoAssetRecord, tasks: list[TaskRecord], current_settings: ServiceSettings) -> None:
     for directory in task_artifact_directories(tasks, current_settings.tasks_dir):
         try:
@@ -50,6 +64,13 @@ def cleanup_video_files(video: VideoAssetRecord, tasks: list[TaskRecord], curren
                 cover_path.unlink()
         except OSError:
             logger.warning("failed to remove cached cover: %s", cover_path, exc_info=True)
+
+    for source_path in video_source_paths(video, current_settings.cache_dir):
+        try:
+            if source_path.exists():
+                source_path.unlink()
+        except OSError:
+            logger.warning("failed to remove cached local media source: %s", source_path, exc_info=True)
 
 
 def load_task_segments(summary_path: str) -> list[dict[str, object]]:

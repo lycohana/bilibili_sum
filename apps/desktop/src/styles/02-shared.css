@@ -205,6 +205,44 @@
   position: relative;
 }
 
+.input-field-with-action {
+  padding-right: 54px;
+}
+
+.input-inline-action {
+  position: absolute;
+  top: 50%;
+  right: 10px;
+  z-index: 1;
+  width: 34px;
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--text-tertiary);
+  transform: translateY(-50%);
+  transition: background-color var(--transition-fast), color var(--transition-fast), transform var(--transition-fast);
+}
+
+.input-inline-action:hover,
+.input-inline-action:focus-visible {
+  background: var(--bg-subtle);
+  color: var(--text-primary);
+  outline: none;
+}
+
+.input-inline-action:active {
+  transform: translateY(-50%) scale(0.98);
+}
+
+.input-inline-action svg {
+  width: 18px;
+  height: 18px;
+}
+
 .input-icon {
   position: absolute;
   top: 50%;
@@ -416,6 +454,11 @@
 .video-platform-badge.is-bilibili {
   color: rgb(250, 107, 152);
   background: color-mix(in srgb, var(--bg-subtle) 82%, rgb(250, 107, 152) 18%);
+}
+
+.video-platform-badge.is-local {
+  color: var(--text-tertiary);
+  background: color-mix(in srgb, var(--bg-subtle) 94%, rgba(107, 114, 128, 0.18) 6%);
 }
 
 .task-status {

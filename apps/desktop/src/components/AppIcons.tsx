@@ -129,6 +129,16 @@ export function LinkIcon(props: SVGProps<SVGSVGElement>) {
   );
 }
 
+export function LocalVideoIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" {...props}>
+      <path d="M3.75 7.25A2.25 2.25 0 0 1 6 5h12a2.25 2.25 0 0 1 2.25 2.25v9.5A2.25 2.25 0 0 1 18 19H6a2.25 2.25 0 0 1-2.25-2.25Z" />
+      <path d="m10 9 5 3-5 3z" />
+      <path d="M7.5 3.75h9" />
+    </svg>
+  );
+}
+
 export function SearchIcon(props: SVGProps<SVGSVGElement>) {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" {...props}>

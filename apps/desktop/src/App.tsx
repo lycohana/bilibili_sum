@@ -1,4 +1,4 @@
-import { type FormEvent, useEffect, useMemo, useState } from "react";
+import { type ChangeEvent, type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { Link, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 
 import {
@@ -72,6 +72,7 @@ export function App() {
     downloadProgress: 0,
     errorMessage: null,
   });
+  const localVideoInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", darkMode ? "dark" : "light");
@@ -365,6 +366,63 @@ export function App() {
     }
   }
 
+  async function handleImportLocalVideo() {
+    if (configHealth.hasBlockingIssues) {
+      setSubmitStatus(`当前缺少必需配置：${configHealth.blockingIssues.map((item) => item.title).join("、")}。请先完成设置。`);
+      if (shouldShowSetupAssistant(configHealth, snapshot.settings)) {
+        setSetupAssistantDismissed(false);
+        setSetupAssistantOpen(true);
+      } else {
+        navigate("/settings");
+      }
+      return;
+    }
+
+    if (window.desktop?.media) {
+      const filePath = await window.desktop.media.pickVideoFile();
+      if (!filePath) {
+        return;
+      }
+
+      setSubmitStatus("正在读取本地视频信息并准备开始总结...");
+      try {
+        const response = await api.probeVideo({ url: filePath, force_refresh: false });
+        setProbePreview(response.video);
+        await api.createVideoTask(response.video.video_id);
+        setProbeUrl("");
+        setSubmitStatus(response.cached ? "已从本地视频库读取并开始总结" : "本地视频已加入视频库并开始总结");
+        setRefreshSeed((value) => value + 1);
+        navigate(`/videos/${response.video.video_id}`);
+      } catch (error) {
+        setSubmitStatus(error instanceof Error ? error.message : "导入本地视频失败");
+      }
+      return;
+    }
+
+    localVideoInputRef.current?.click();
+  }
+
+  async function handleWebLocalVideoPicked(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) {
+      return;
+    }
+
+    setSubmitStatus("正在上传本地视频并准备开始总结...");
+    try {
+      const response = await api.uploadLocalVideo(file);
+      setProbePreview(response.video);
+      await api.createVideoTask(response.video.video_id);
+      setProbeUrl("");
+      setSubmitStatus(response.cached ? "已从本地视频库读取并开始总结" : "本地视频已加入视频库并开始总结");
+      setRefreshSeed((value) => value + 1);
+      navigate(`/videos/${response.video.video_id}`);
+    } catch (error) {
+      setSubmitStatus(error instanceof Error ? error.message : "导入本地视频失败");
+    }
+  }
+
   async function handleConfirmMultiPage(page: VideoPageOption) {
     setSubmitStatus(`已选择 P${page.page}，正在创建任务...`);
     if (!multiPageProbeVideo) {
@@ -398,9 +456,17 @@ export function App() {
   const isSettingsRoute = location.pathname.startsWith("/settings");
   const isLibraryRoute = location.pathname.startsWith("/library");
   const updateSupported = Boolean(window.desktop?.update) && !isUpdateUnsupported(updateState);
+  const canImportLocalVideo = Boolean(window.desktop?.media) || typeof window !== "undefined";
 
   return (
     <div className={`app-shell ${sidebarCollapsed ? "sidebar-collapsed" : ""} ${mobileSidebarOpen ? "mobile-sidebar-open" : ""}`}>
+      <input
+        ref={localVideoInputRef}
+        type="file"
+        accept="video/mp4,video/quicktime,video/x-matroska,video/x-msvideo,video/x-ms-wmv,video/webm,video/x-flv,video/mp2t,video/mpeg,.mp4,.mov,.mkv,.avi,.wmv,.webm,.flv,.m4v,.ts,.mpeg,.mpg"
+        style={{ display: "none" }}
+        onChange={(event) => void handleWebLocalVideoPicked(event)}
+      />
       <TitleBar
         darkMode={darkMode}
         onToggleTheme={() => setDarkMode((current) => !current)}
@@ -515,6 +581,8 @@ export function App() {
                     setProbeUrl={setProbeUrl}
                     submitStatus={submitStatus}
                     onProbe={handleProbe}
+                    onImportLocalVideo={handleImportLocalVideo}
+                    canImportLocalVideo={canImportLocalVideo}
                     onOpenSetupAssistant={openConfigAssist}
                     onOpenConfigIssue={navigateToConfigIssue}
                     favoriteVideos={favoriteVideos}

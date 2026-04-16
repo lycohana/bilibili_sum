@@ -1060,6 +1060,19 @@ function registerIpcHandlers() {
     }
     clipboard.writeImage(image);
   });
+  ipcMain.handle("desktop:media:pick-video-file", async () => {
+    const result = await dialog.showOpenDialog(mainWindow ?? undefined, {
+      title: "选择本地视频",
+      properties: ["openFile"],
+      filters: [
+        {
+          name: "视频文件",
+          extensions: ["mp4", "mov", "mkv", "avi", "wmv", "webm", "flv", "m4v", "ts", "mpeg", "mpg"],
+        },
+      ],
+    });
+    return result.canceled ? null : result.filePaths[0] ?? null;
+  });
   ipcMain.handle("desktop:shell:open-path", (_event, targetPath: string) => shell.openPath(targetPath));
   ipcMain.handle("desktop:logs:get-service-log-path", () => getServiceLogPath());
   ipcMain.handle("desktop:logs:read-service-log-tail", (_event, lines = 200) => readServiceLogTail(lines));

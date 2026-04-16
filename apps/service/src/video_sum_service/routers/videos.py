@@ -1,10 +1,13 @@
+import hashlib
 import json
+from pathlib import Path
+from uuid import uuid4
 
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, HTTPException, Query, Request, status
 
 from video_sum_core.models.tasks import InputType, TaskInput
 
-from video_sum_service.context import logger, settings_manager
+from video_sum_service.context import LOCAL_MEDIA_UPLOAD_DIR, logger, settings_manager
 from video_sum_service.repository import SqliteTaskRepository
 from video_sum_service.schemas import (
     ResummaryRequest,
@@ -17,10 +20,69 @@ from video_sum_service.schemas import (
     VideoTaskCreateRequest,
 )
 from video_sum_service.task_artifacts import cleanup_video_files, load_task_segments
-from video_sum_service.video_assets import localize_video_cover, probe_video_asset, resolve_video_page
+from video_sum_service.video_assets import (
+    infer_local_input_type,
+    is_supported_local_media_file,
+    localize_video_cover,
+    probe_local_video_asset,
+    probe_video_asset,
+    resolve_video_page,
+)
 from video_sum_service.worker import TaskWorker
 
 router = APIRouter(prefix="/api/v1/videos")
+
+
+def normalize_uploaded_media_filename(filename: str) -> tuple[str, str]:
+    raw_name = Path(str(filename or "").strip()).name
+    if not raw_name:
+        raise HTTPException(status_code=400, detail="缺少有效文件名。")
+    suffix = Path(raw_name).suffix.lower()
+    if not suffix or not is_supported_local_media_file(Path(raw_name)):
+        raise HTTPException(status_code=400, detail="当前仅支持导入常见本地视频或音频文件。")
+    title = Path(raw_name).stem.strip() or "本地媒体"
+    return title, suffix
+
+
+async def cache_uploaded_media_file(request: Request, filename: str) -> tuple[Path, str, str]:
+    title, suffix = normalize_uploaded_media_filename(filename)
+    LOCAL_MEDIA_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    temp_path = LOCAL_MEDIA_UPLOAD_DIR / f"{uuid4().hex}.upload"
+    digest = hashlib.sha1()
+    total_bytes = 0
+    try:
+        with temp_path.open("wb") as handle:
+            async for chunk in request.stream():
+                if not chunk:
+                    continue
+                if isinstance(chunk, str):
+                    chunk = chunk.encode("utf-8")
+                handle.write(chunk)
+                digest.update(chunk)
+                total_bytes += len(chunk)
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail="保存上传视频时失败。") from exc
+
+    if total_bytes <= 0:
+        try:
+            temp_path.unlink(missing_ok=True)
+        except OSError:
+            logger.warning("failed to remove empty upload temp file: %s", temp_path, exc_info=True)
+        raise HTTPException(status_code=400, detail="上传文件为空。")
+
+    content_hash = digest.hexdigest()
+    final_path = LOCAL_MEDIA_UPLOAD_DIR / f"{content_hash}{suffix}"
+    if final_path.exists():
+        try:
+            temp_path.unlink()
+        except OSError:
+            logger.warning("failed to remove duplicate upload temp file: %s", temp_path, exc_info=True)
+    else:
+        try:
+            temp_path.replace(final_path)
+        except OSError as exc:
+            raise HTTPException(status_code=500, detail="整理上传视频文件时失败。") from exc
+    return final_path.resolve(), title, content_hash
 
 
 @router.post("/{video_id}/favorite", response_model=VideoAssetDetailResponse)
@@ -46,6 +108,31 @@ def probe_video(request: VideoProbeRequest, app_request: Request) -> VideoProbeR
         cached=cached,
         requires_selection=requires_selection,
         pages=asset.pages or pages,
+    )
+
+
+@router.post("/upload", response_model=VideoProbeResponse)
+async def upload_local_video(
+    request: Request,
+    filename: str = Query(..., min_length=1),
+) -> VideoProbeResponse:
+    task_store: SqliteTaskRepository = request.app.state.task_repository
+    saved_path, title, content_hash = await cache_uploaded_media_file(request, filename)
+    logger.info("upload local media filename=%s saved_path=%s", filename, saved_path)
+    probed = probe_local_video_asset(
+        saved_path,
+        title_override=title,
+        canonical_id_override=f"local-upload-{content_hash[:24]}",
+    )
+    existing = task_store.get_video_asset_by_canonical_id(probed.canonical_id)
+    cached = existing is not None
+    asset = existing if cached else task_store.upsert_video_asset(probed)
+    asset = localize_video_cover(task_store, asset)
+    return VideoProbeResponse(
+        video=asset.to_summary(),
+        cached=cached,
+        requires_selection=False,
+        pages=[],
     )
 
 
@@ -123,8 +210,11 @@ def create_video_task(
         title,
         source_url,
     )
+    input_type = InputType.URL
+    if str(video.platform or "").lower() == "local":
+        input_type = infer_local_input_type(source_url)
     record = task_store.create_task(
-        TaskInput(input_type=InputType.URL, source=source_url, title=title),
+        TaskInput(input_type=input_type, source=source_url, title=title, platform_hint=video.platform),
         video_id=video.video_id,
         page_number=page.page if page else None,
         page_title=title,

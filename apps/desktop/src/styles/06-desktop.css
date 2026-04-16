@@ -532,6 +532,11 @@
   background: rgba(250, 107, 152, 0.16);
 }
 
+[data-theme="dark"] .video-platform-badge.is-local {
+  color: color-mix(in srgb, var(--text-secondary) 86%, #d1d5db 14%);
+  background: rgba(148, 163, 184, 0.16);
+}
+
 .bullet-list {
   display: grid;
   gap: 10px;

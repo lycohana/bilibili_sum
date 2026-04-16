@@ -112,6 +112,17 @@ export const api = {
       body: JSON.stringify(payload),
     });
   },
+  uploadLocalVideo(file: File) {
+    const url = new URL("/api/v1/videos/upload", window.location.origin);
+    url.searchParams.set("filename", file.name);
+    return fetchJson<VideoProbeResult>(url.toString(), {
+      method: "POST",
+      headers: {
+        "Content-Type": file.type || "application/octet-stream",
+      },
+      body: file,
+    });
+  },
   getVideoTasks(videoId: string) {
     return fetchJson<TaskSummary[]>(`/api/v1/videos/${videoId}/tasks`);
   },
