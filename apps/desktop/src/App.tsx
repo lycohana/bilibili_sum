@@ -167,7 +167,9 @@ export function App() {
 
   async function handleCheckForUpdates() {
     if (!window.desktop?.update) {
-      throw new Error("当前环境不支持桌面自动更新。");
+      const result = await api.getAppUpdate();
+      setUpdateState(toUpdateState(result));
+      return result;
     }
     const result = await window.desktop.update.check();
     setUpdateState(toUpdateState(result));
@@ -280,7 +282,7 @@ export function App() {
   }, [snapshot.environment?.cudaAvailable, snapshot.settings]);
   const configHealth = useMemo(() => getConfigHealth(snapshot.settings, snapshot.environment), [snapshot.environment, snapshot.settings]);
 
-  const runtimeVersionLabel = desktop.version || snapshot.systemInfo?.application?.version || "";
+  const runtimeVersionLabel = desktop.version || snapshot.systemInfo?.application?.version || "-";
 
   useEffect(() => {
     const shouldOpen = shouldShowSetupAssistant(configHealth, snapshot.settings);
@@ -455,7 +457,8 @@ export function App() {
 
   const isSettingsRoute = location.pathname.startsWith("/settings");
   const isLibraryRoute = location.pathname.startsWith("/library");
-  const updateSupported = Boolean(window.desktop?.update) && !isUpdateUnsupported(updateState);
+  const canCheckUpdates = true;
+  const canInstallUpdates = Boolean(window.desktop?.update) && !isUpdateUnsupported(updateState);
   const canImportLocalVideo = Boolean(window.desktop?.media) || typeof window !== "undefined";
 
   return (
@@ -637,7 +640,8 @@ export function App() {
                     snapshot={snapshot}
                     focusIssueRequest={settingsFocusRequest}
                     updateInfo={updateState}
-                    updateSupported={updateSupported}
+                    canCheckUpdate={canCheckUpdates}
+                    canInstallUpdate={canInstallUpdates}
                   />
                 )}
               />
@@ -649,7 +653,8 @@ export function App() {
       <UpdateDialog
         isOpen={updateDialogOpen}
         updateInfo={updateState as UpdateInfo}
-        currentVersion={desktop.version}
+        currentVersion={runtimeVersionLabel}
+        canInstallUpdate={canInstallUpdates}
         onClose={closeUpdateDialog}
         onCheck={handleCheckForUpdates}
         onDownload={handleDownloadUpdate}

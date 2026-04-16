@@ -19,6 +19,15 @@ export type UpdateSettingsResponse = {
   message: string;
 };
 
+export type AppUpdateInfo = {
+  status: "idle" | "checking" | "available" | "not-available" | "downloading" | "downloaded" | "installing" | "error";
+  version: string;
+  releaseDate: string;
+  releaseNotes: string | null;
+  downloadProgress: number;
+  errorMessage: string | null;
+};
+
 async function fetchJson<T>(url: string, options?: RequestInit): Promise<T> {
   const response = await fetch(url, options);
   if (!response.ok) {
@@ -61,6 +70,9 @@ export const api = {
   },
   getSettings() {
     return fetchJson<ServiceSettings>("/api/v1/settings");
+  },
+  getAppUpdate() {
+    return fetchJson<AppUpdateInfo>("/api/v1/app/update");
   },
   updateSettings(payload: Partial<ServiceSettings>) {
     return fetchJson<UpdateSettingsResponse>("/api/v1/settings", {

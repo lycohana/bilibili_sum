@@ -17,6 +17,7 @@ type UpdateDialogProps = {
   isOpen: boolean;
   updateInfo: UpdateInfo | null;
   currentVersion: string;
+  canInstallUpdate: boolean;
   onClose: () => void;
   onCheck: () => void;
   onDownload: () => void;
@@ -27,6 +28,7 @@ export function UpdateDialog({
   isOpen,
   updateInfo,
   currentVersion,
+  canInstallUpdate,
   onClose,
   onCheck,
   onDownload,
@@ -234,6 +236,12 @@ export function UpdateDialog({
             <span className="status-text">{getStatusText()}</span>
           </div>
 
+          {!canInstallUpdate ? (
+            <div className="update-status">
+              <span className="status-text">当前环境仅支持查看最新版本信息和更新日志，不支持自动下载或安装。</span>
+            </div>
+          ) : null}
+
           {updateInfo?.status === "error" && renderErrorAlert()}
 
           {updateInfo?.status === "downloading" && (
@@ -277,19 +285,25 @@ export function UpdateDialog({
         </div>
 
         <div className="update-dialog-footer">
-          {updateInfo?.status === "idle" || updateInfo?.status === "not-available" ? (
+          {!canInstallUpdate ? (
+            <button className="primary-button" onClick={handleCheck} disabled={isChecking || updateInfo?.status === "checking"}>
+              {isChecking || updateInfo?.status === "checking" ? "检查中..." : "检查更新"}
+            </button>
+          ) : null}
+
+          {canInstallUpdate && (updateInfo?.status === "idle" || updateInfo?.status === "not-available") ? (
             <button className="primary-button" onClick={handleCheck} disabled={isChecking}>
               {isChecking ? "检查中..." : "检查更新"}
             </button>
           ) : null}
 
-          {updateInfo?.status === "error" ? (
+          {canInstallUpdate && updateInfo?.status === "error" ? (
             <button className="primary-button" onClick={handleCheck} disabled={isChecking}>
               {isChecking ? "检查中..." : "重试"}
             </button>
           ) : null}
 
-          {updateInfo?.status === "available" ? (
+          {canInstallUpdate && updateInfo?.status === "available" ? (
             <>
               <button className="secondary-button" onClick={onClose}>
                 稍后提醒
@@ -300,7 +314,7 @@ export function UpdateDialog({
             </>
           ) : null}
 
-          {updateInfo?.status === "downloaded" ? (
+          {canInstallUpdate && updateInfo?.status === "downloaded" ? (
             <>
               <button className="secondary-button" onClick={onClose}>
                 稍后安装
@@ -311,19 +325,19 @@ export function UpdateDialog({
             </>
           ) : null}
 
-          {updateInfo?.status === "downloading" ? (
+          {canInstallUpdate && updateInfo?.status === "downloading" ? (
             <button className="secondary-button" onClick={onClose} disabled>
               下载中...
             </button>
           ) : null}
 
-          {updateInfo?.status === "checking" ? (
+          {canInstallUpdate && updateInfo?.status === "checking" ? (
             <button className="secondary-button" onClick={onClose} disabled>
               检查中...
             </button>
           ) : null}
 
-          {updateInfo?.status === "installing" ? (
+          {canInstallUpdate && updateInfo?.status === "installing" ? (
             <button className="secondary-button" onClick={onClose} disabled>
               安装中...
             </button>

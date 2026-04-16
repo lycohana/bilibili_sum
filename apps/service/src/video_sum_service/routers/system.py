@@ -1,13 +1,20 @@
 import os
+import re
 import threading
 
-from fastapi import APIRouter, Request
+import httpx
+from fastapi import APIRouter, HTTPException, Request
 
 from video_sum_core.models.tasks import TaskStatus
 from video_sum_infra.runtime import bootstrap_managed_runtime, log_dir, prepend_runtime_path, service_log_path
 
 from video_sum_service.context import app_info, settings_manager
-from video_sum_service.integrations import probe_asr_connection, probe_llm_connection, read_log_tail
+from video_sum_service.integrations import (
+    extract_http_error_detail,
+    probe_asr_connection,
+    probe_llm_connection,
+    read_log_tail,
+)
 from video_sum_service.runtime_support import (
     build_worker,
     clear_environment_probe_cache,
@@ -19,6 +26,24 @@ from video_sum_service.runtime_support import (
 from video_sum_service.settings_manager import SettingsUpdatePayload
 
 router = APIRouter(prefix="/api/v1")
+LATEST_RELEASE_URL = "https://api.github.com/repos/lycohana/BriefVid/releases/latest"
+
+
+def _normalize_version(value: str | None) -> str:
+    return str(value or "").strip().removeprefix("v").removeprefix("V")
+
+
+def _version_key(value: str | None) -> tuple[int | str, ...]:
+    normalized = _normalize_version(value)
+    if not normalized:
+        return (0,)
+
+    parts: list[int | str] = []
+    for chunk in re.split(r"[.\-+_]", normalized):
+        if not chunk:
+            continue
+        parts.append(int(chunk) if chunk.isdigit() else chunk.lower())
+    return tuple(parts) or (0,)
 
 
 @router.get("/system/info")
@@ -59,6 +84,47 @@ def system_info(runtime_channel: str | None = None, refresh: bool = False) -> di
 @router.get("/settings")
 def get_settings() -> dict[str, object]:
     return serialize_settings(settings_manager.current)
+
+
+@router.get("/app/update")
+def get_app_update() -> dict[str, object]:
+    current_version = app_info.version
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "User-Agent": f"{app_info.name}/{current_version}",
+    }
+
+    try:
+        with httpx.Client(timeout=20, follow_redirects=True, headers=headers) as client:
+            response = client.get(LATEST_RELEASE_URL)
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail=f"获取最新版本信息失败：{exc}") from exc
+
+    if response.status_code >= 400:
+        detail = extract_http_error_detail(response)
+        raise HTTPException(status_code=response.status_code, detail=f"获取最新版本信息失败：{detail}")
+
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        raise HTTPException(status_code=502, detail="获取最新版本信息失败：响应格式无效。") from exc
+
+    latest_version = _normalize_version(payload.get("tag_name") or payload.get("name") or current_version)
+    if not latest_version:
+        raise HTTPException(status_code=502, detail="获取最新版本信息失败：缺少版本号。")
+
+    current_key = _version_key(current_version)
+    latest_key = _version_key(latest_version)
+    is_newer_available = latest_key > current_key
+
+    return {
+        "status": "available" if is_newer_available else "not-available",
+        "version": latest_version if is_newer_available else _normalize_version(current_version),
+        "releaseDate": payload.get("published_at") or payload.get("created_at") or "",
+        "releaseNotes": str(payload.get("body") or "").strip() or None,
+        "downloadProgress": 0,
+        "errorMessage": None,
+    }
 
 
 @router.put("/settings")
