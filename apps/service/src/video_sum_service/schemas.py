@@ -20,6 +20,31 @@ class VideoTaskCreateRequest(BaseModel):
     page_number: int | None = None
 
 
+class VideoTaskBatchRequest(BaseModel):
+    page_numbers: list[int] = Field(default_factory=list)
+    confirm: bool = False
+
+
+class VideoTaskBatchPageResponse(BaseModel):
+    page_number: int
+    page_title: str | None = None
+    action: str
+    reason: str | None = None
+    existing_task_id: str | None = None
+    existing_status: TaskStatus | None = None
+    has_existing_result: bool = False
+    task: "TaskDetailResponse | None" = None
+
+
+class VideoTaskBatchResponse(BaseModel):
+    operation: str
+    requested_page_numbers: list[int] = Field(default_factory=list)
+    requires_confirmation: bool = False
+    created_tasks: list["TaskDetailResponse"] = Field(default_factory=list)
+    skipped_pages: list[VideoTaskBatchPageResponse] = Field(default_factory=list)
+    conflict_pages: list[VideoTaskBatchPageResponse] = Field(default_factory=list)
+
+
 class VideoProbeRequest(BaseModel):
     url: str
     force_refresh: bool = False

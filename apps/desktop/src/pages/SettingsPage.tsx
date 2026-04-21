@@ -67,6 +67,8 @@ type SettingsPageProps = {
   onOpenUpdateDialog(): void;
 };
 
+const TASK_LIST_LIMIT = 60;
+
 function formatStorageSize(sizeBytes: number) {
   if (!Number.isFinite(sizeBytes) || sizeBytes <= 0) {
     return "0 B";
@@ -269,7 +271,7 @@ export function SettingsPage({
       setTaskListLoading(true);
       setTaskListError("");
       const tasks = await api.listTasks();
-      setTaskList(tasks.slice(0, 12));
+      setTaskList(tasks.slice(0, TASK_LIST_LIMIT));
     } catch (error) {
       setTaskListError(error instanceof Error ? error.message : "读取任务列表失败");
     } finally {
@@ -1791,7 +1793,7 @@ export function SettingsPage({
               <div className="settings-tasklist-copy">
                 <span className="settings-nav-brand-kicker">Tasklist</span>
                 <strong>最近任务队列</strong>
-                <span>聚焦最近 12 条任务，方便确认 `queued` 与 `running` 的分布。</span>
+                <span>聚焦最近 {TASK_LIST_LIMIT} 条任务，方便确认 `queued` 与 `running` 的分布。</span>
               </div>
               <div className="settings-tasklist-actions">
                 <button className="secondary-button" type="button" disabled={taskListLoading} onClick={() => void refreshTaskList()}>

@@ -209,6 +209,9 @@ async def stream_task_events(request: Request, task_id: str, after: str | None =
         terminal_statuses = {TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED}
 
         while True:
+            if await request.is_disconnected():
+                return
+
             current_record = task_store.get_task(task_id)
             if current_record is None:
                 yield "event: error\ndata: {\"message\":\"Task not found.\"}\n\n"
@@ -218,6 +221,8 @@ async def stream_task_events(request: Request, task_id: str, after: str | None =
             if events:
                 idle_ticks = 0
                 for event in events:
+                    if await request.is_disconnected():
+                        return
                     last_seen = event.created_at.isoformat()
                     payload = {
                         "event": event.to_response().model_dump(mode="json"),
@@ -235,9 +240,13 @@ async def stream_task_events(request: Request, task_id: str, after: str | None =
                     return
 
             if idle_ticks >= 20:
+                if await request.is_disconnected():
+                    return
                 yield "event: heartbeat\ndata: {}\n\n"
                 idle_ticks = 0
 
+            if await request.is_disconnected():
+                return
             await asyncio.sleep(0.4)
 
     return StreamingResponse(

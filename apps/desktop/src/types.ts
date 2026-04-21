@@ -1,4 +1,5 @@
 export type TaskStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
+export type PageAggregateStatus = "not_started" | "in_progress" | "completed" | "failed";
 
 export type TimelineItem = {
   title?: string;
@@ -78,6 +79,13 @@ export type VideoPageOption = {
   duration?: number | null;
 };
 
+export type VideoPageBatchOption = VideoPageOption & {
+  aggregate_status?: PageAggregateStatus;
+  latest_task_status?: TaskStatus | null;
+  latest_task_updated_at?: string | null;
+  has_completed_result?: boolean;
+};
+
 export type VideoAssetDetail = VideoAssetSummary & {
   latest_result?: TaskResult | null;
   latest_error_message?: string | null;
@@ -109,6 +117,34 @@ export type TaskDetail = TaskSummary & {
   result?: TaskResult | null;
   error_code?: string | null;
   error_message?: string | null;
+};
+
+export type VideoTaskBatchOperation = "create" | "resummary";
+export type VideoTaskBatchPageAction = "skip" | "rerun";
+
+export type VideoTaskBatchPageResult = {
+  page_number: number;
+  page_title?: string | null;
+  action: VideoTaskBatchPageAction;
+  reason?: string | null;
+  existing_task_id?: string | null;
+  existing_status?: TaskStatus | null;
+  has_existing_result: boolean;
+  task?: TaskDetail | null;
+};
+
+export type VideoTaskBatchRequest = {
+  page_numbers: number[];
+  confirm?: boolean;
+};
+
+export type VideoTaskBatchResponse = {
+  operation: VideoTaskBatchOperation;
+  requested_page_numbers: number[];
+  requires_confirmation: boolean;
+  created_tasks: TaskDetail[];
+  skipped_pages: VideoTaskBatchPageResult[];
+  conflict_pages: VideoTaskBatchPageResult[];
 };
 
 export type TaskMindMapResponse = {

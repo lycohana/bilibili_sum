@@ -11,6 +11,8 @@ import type {
   VideoAssetDetail,
   VideoProbeResult,
   VideoAssetSummary,
+  VideoTaskBatchRequest,
+  VideoTaskBatchResponse,
 } from "./types";
 
 export type UpdateSettingsResponse = {
@@ -145,8 +147,22 @@ export const api = {
       body: JSON.stringify(payload ?? {}),
     });
   },
+  createVideoTasksBatch(videoId: string, payload: VideoTaskBatchRequest) {
+    return fetchJson<VideoTaskBatchResponse>(`/api/v1/videos/${videoId}/tasks/batch`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+  },
   resummarizeVideoTask(videoId: string, payload: { task_id?: string | null; page_number?: number | null }) {
     return fetchJson<TaskDetail>(`/api/v1/videos/${videoId}/tasks/resummary`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+  },
+  resummarizeVideoTasksBatch(videoId: string, payload: VideoTaskBatchRequest) {
+    return fetchJson<VideoTaskBatchResponse>(`/api/v1/videos/${videoId}/tasks/resummary/batch`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),

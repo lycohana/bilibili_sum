@@ -24,7 +24,7 @@ import { HomePage } from "./pages/HomePage";
 import { LibraryPage } from "./pages/LibraryPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { VideoDetailPage } from "./pages/VideoDetailPage";
-import type { VideoAssetSummary, VideoPageOption } from "./types";
+import type { VideoAssetSummary, VideoPageBatchOption } from "./types";
 
 export function App() {
   const location = useLocation();
@@ -38,7 +38,7 @@ export function App() {
   const [probePreview, setProbePreview] = useState<VideoAssetSummary | null>(null);
   const [multiPageDialogOpen, setMultiPageDialogOpen] = useState(false);
   const [multiPageProbeVideo, setMultiPageProbeVideo] = useState<VideoAssetSummary | null>(null);
-  const [multiPageOptions, setMultiPageOptions] = useState<VideoPageOption[]>([]);
+  const [multiPageOptions, setMultiPageOptions] = useState<VideoPageBatchOption[]>([]);
   const [refreshSeed, setRefreshSeed] = useState(0);
   const [settingsFocusRequest, setSettingsFocusRequest] = useState<{ issueKey: string; nonce: number } | null>(null);
   const [darkMode, setDarkMode] = useState<boolean>(() => {
@@ -353,9 +353,9 @@ export function App() {
       setProbePreview(response.video);
       if (response.requires_selection && response.pages.length > 0) {
         setMultiPageProbeVideo(response.video);
-        setMultiPageOptions(response.pages);
+        setMultiPageOptions(response.pages.map((page) => ({ ...page, aggregate_status: "not_started", has_completed_result: false })));
         setMultiPageDialogOpen(true);
-        setSubmitStatus(`检测到 ${response.pages.length} 个分 P，请先选择要解析的内容`);
+        setSubmitStatus(`检测到 ${response.pages.length} 个分 P，请先勾选要处理的内容`);
         return;
       }
       await api.createVideoTask(response.video.video_id);
@@ -425,20 +425,34 @@ export function App() {
     }
   }
 
-  async function handleConfirmMultiPage(page: VideoPageOption) {
-    setSubmitStatus(`已选择 P${page.page}，正在创建任务...`);
+  async function handleConfirmMultiPage(input: { pageNumbers: number[]; confirm: boolean }) {
     if (!multiPageProbeVideo) {
       throw new Error("当前视频信息已失效，请重新探测。");
     }
+    setSubmitStatus(input.confirm ? "正在确认批量任务..." : "正在创建批量任务...");
     setProbePreview(multiPageProbeVideo);
-    await api.createVideoTask(multiPageProbeVideo.video_id, { page_number: page.page });
+    const response = await api.createVideoTasksBatch(multiPageProbeVideo.video_id, {
+      page_numbers: input.pageNumbers,
+      confirm: input.confirm,
+    });
+    if (response.requires_confirmation) {
+      setSubmitStatus(`所选内容中有 ${response.conflict_pages.length} 个分 P 已有成功摘要，请确认后继续。`);
+      return response;
+    }
     setMultiPageDialogOpen(false);
     setMultiPageProbeVideo(null);
     setMultiPageOptions([]);
     setProbeUrl("");
-    setSubmitStatus(`P${page.page} 已开始生成摘要`);
+    const createdCount = response.created_tasks.length;
+    const skippedCount = response.skipped_pages.length;
+    setSubmitStatus(
+      createdCount > 0
+        ? `已创建 ${createdCount} 个批量任务${skippedCount ? `，跳过 ${skippedCount} 个已完成分 P` : ""}`
+        : `没有创建新任务${skippedCount ? `，已跳过 ${skippedCount} 个分 P` : ""}`,
+    );
     setRefreshSeed((value) => value + 1);
     navigate(`/videos/${multiPageProbeVideo.video_id}`);
+    return response;
   }
 
   function handleCloseMultiPageDialog() {
@@ -662,10 +676,11 @@ export function App() {
       />
       <MultiPageSelectDialog
         isOpen={multiPageDialogOpen}
+        mode="create"
         video={multiPageProbeVideo}
         pages={multiPageOptions}
         onClose={handleCloseMultiPageDialog}
-        onConfirm={handleConfirmMultiPage}
+        onSubmit={handleConfirmMultiPage}
       />
       <SetupAssistantDialog
         isOpen={setupAssistantOpen}
