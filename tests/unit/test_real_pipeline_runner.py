@@ -41,6 +41,7 @@ def test_summarize_falls_back_to_rules_when_llm_auth_fails(monkeypatch: pytest.M
         segments: list[dict[str, object]],
         title: str,
         emit,
+        source_kind: str | None = None,
     ) -> dict[str, object]:
         raise LLMAuthenticationError("token 已失效")
 
@@ -110,6 +111,7 @@ def test_summarize_emits_partial_result_payloads() -> None:
         segments: list[dict[str, object]],
         title: str,
         emit,
+        source_kind: str | None = None,
     ) -> dict[str, object]:
         return {
             "title": title,
