@@ -7,8 +7,10 @@ from threading import Lock
 from video_sum_core.models.tasks import TaskInput, TaskResult, TaskStatus
 from video_sum_infra.db import sqlite_cursor
 from video_sum_service.schemas import (
+    KnowledgeIndexChunkRecord,
     TaskEventRecord,
     TaskRecord,
+    VideoTagRecord,
     VideoAssetRecord,
     VideoPageOptionResponse,
 )
@@ -90,6 +92,46 @@ class SqliteTaskRepository:
                 )
                 """
             )
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS video_tags (
+                    video_id TEXT NOT NULL,
+                    tag TEXT NOT NULL,
+                    source TEXT NOT NULL DEFAULT 'manual',
+                    confidence REAL NOT NULL DEFAULT 1.0,
+                    created_at TEXT NOT NULL,
+                    PRIMARY KEY (video_id, tag),
+                    FOREIGN KEY(video_id) REFERENCES video_assets(video_id)
+                )
+                """
+            )
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS knowledge_index (
+                    chunk_id TEXT PRIMARY KEY,
+                    video_id TEXT NOT NULL,
+                    embedding_json TEXT NOT NULL,
+                    indexed_content TEXT NOT NULL,
+                    index_type TEXT NOT NULL DEFAULT 'video_summary',
+                    segment_order INTEGER,
+                    anchor_label TEXT,
+                    anchor_seconds REAL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY(video_id) REFERENCES video_assets(video_id)
+                )
+                """
+            )
+            self._ensure_column(cursor, "knowledge_index", "chunk_id", "TEXT")
+            self._ensure_column(cursor, "knowledge_index", "video_id", "TEXT NOT NULL DEFAULT ''")
+            self._ensure_column(cursor, "knowledge_index", "embedding_json", "TEXT NOT NULL DEFAULT '[]'")
+            self._ensure_column(cursor, "knowledge_index", "indexed_content", "TEXT NOT NULL DEFAULT ''")
+            self._ensure_column(cursor, "knowledge_index", "index_type", "TEXT NOT NULL DEFAULT 'video_summary'")
+            self._ensure_column(cursor, "knowledge_index", "segment_order", "INTEGER")
+            self._ensure_column(cursor, "knowledge_index", "anchor_label", "TEXT")
+            self._ensure_column(cursor, "knowledge_index", "anchor_seconds", "REAL")
+            self._ensure_column(cursor, "knowledge_index", "created_at", "TEXT")
+            self._ensure_column(cursor, "knowledge_index", "updated_at", "TEXT")
 
     def _ensure_column(self, cursor: sqlite3.Cursor, table: str, column: str, definition: str) -> None:
         rows = cursor.execute(f"PRAGMA table_info({table})").fetchall()
@@ -435,9 +477,211 @@ class SqliteTaskRepository:
             for task_id in task_ids:
                 cursor.execute("DELETE FROM task_events WHERE task_id = ?", (task_id,))
                 cursor.execute("DELETE FROM task_results WHERE task_id = ?", (task_id,))
+            cursor.execute(f"DELETE FROM video_tags WHERE video_id IN ({placeholders})", tuple(video_ids))
+            cursor.execute(f"DELETE FROM knowledge_index WHERE video_id IN ({placeholders})", tuple(video_ids))
             cursor.execute(f"DELETE FROM tasks WHERE video_id IN ({placeholders})", tuple(video_ids))
             cursor.execute(f"DELETE FROM video_assets WHERE video_id IN ({placeholders})", tuple(video_ids))
         return True
+
+    def add_video_tag(self, video_id: str, tag: str, source: str = "manual", confidence: float = 1.0) -> bool:
+        normalized_tag = str(tag or "").strip()
+        if not normalized_tag:
+            return False
+
+        created_at = datetime.now(timezone.utc).isoformat()
+        with self._lock, sqlite_cursor(self._connection) as cursor:
+            video = cursor.execute("SELECT video_id FROM video_assets WHERE video_id = ?", (video_id,)).fetchone()
+            if video is None:
+                return False
+            cursor.execute(
+                """
+                INSERT INTO video_tags (video_id, tag, source, confidence, created_at)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(video_id, tag) DO UPDATE SET
+                    source = CASE
+                        WHEN excluded.source = 'manual' THEN 'manual'
+                        ELSE video_tags.source
+                    END,
+                    confidence = CASE
+                        WHEN excluded.source = 'manual' THEN 1.0
+                        ELSE excluded.confidence
+                    END,
+                    created_at = CASE
+                        WHEN excluded.source = 'manual' THEN excluded.created_at
+                        ELSE video_tags.created_at
+                    END
+                """,
+                (video_id, normalized_tag, source, float(confidence), created_at),
+            )
+        return True
+
+    def remove_video_tag(self, video_id: str, tag: str) -> bool:
+        normalized_tag = str(tag or "").strip()
+        if not normalized_tag:
+            return False
+        with self._lock, sqlite_cursor(self._connection) as cursor:
+            cursor.execute("DELETE FROM video_tags WHERE video_id = ? AND tag = ?", (video_id, normalized_tag))
+            return cursor.rowcount > 0
+
+    def list_video_tags(self, video_id: str) -> list[VideoTagRecord]:
+        with self._lock, sqlite_cursor(self._connection) as cursor:
+            rows = cursor.execute(
+                """
+                SELECT video_id, tag, source, confidence, created_at
+                FROM video_tags
+                WHERE video_id = ?
+                ORDER BY source = 'manual' DESC, confidence DESC, tag COLLATE NOCASE ASC
+                """,
+                (video_id,),
+            ).fetchall()
+        return [
+            VideoTagRecord(
+                video_id=row["video_id"],
+                tag=row["tag"],
+                source=row["source"],
+                confidence=float(row["confidence"]),
+                created_at=datetime.fromisoformat(row["created_at"]),
+            )
+            for row in rows
+        ]
+
+    def list_all_tags(self) -> list[dict[str, object]]:
+        with self._lock, sqlite_cursor(self._connection) as cursor:
+            rows = cursor.execute(
+                """
+                SELECT tag, COUNT(*) AS count
+                FROM video_tags
+                GROUP BY tag
+                ORDER BY count DESC, tag COLLATE NOCASE ASC
+                """
+            ).fetchall()
+            videos_by_tag_rows = cursor.execute(
+                """
+                SELECT tag, video_id
+                FROM video_tags
+                ORDER BY tag COLLATE NOCASE ASC, video_id ASC
+                """
+            ).fetchall()
+        videos_by_tag: dict[str, list[str]] = {}
+        for row in videos_by_tag_rows:
+            videos_by_tag.setdefault(row["tag"], []).append(row["video_id"])
+        return [
+            {"tag": row["tag"], "count": int(row["count"]), "videos": videos_by_tag.get(row["tag"], [])}
+            for row in rows
+        ]
+
+    def list_all_video_tags(self) -> list[VideoTagRecord]:
+        with self._lock, sqlite_cursor(self._connection) as cursor:
+            rows = cursor.execute(
+                """
+                SELECT video_id, tag, source, confidence, created_at
+                FROM video_tags
+                ORDER BY tag COLLATE NOCASE ASC, confidence DESC, video_id ASC
+                """
+            ).fetchall()
+        return [
+            VideoTagRecord(
+                video_id=row["video_id"],
+                tag=row["tag"],
+                source=row["source"],
+                confidence=float(row["confidence"]),
+                created_at=datetime.fromisoformat(row["created_at"]),
+            )
+            for row in rows
+        ]
+
+    def list_untagged_video_ids(self) -> list[str]:
+        with self._lock, sqlite_cursor(self._connection) as cursor:
+            rows = cursor.execute(
+                """
+                SELECT v.video_id
+                FROM video_assets v
+                LEFT JOIN video_tags t ON t.video_id = v.video_id
+                WHERE t.video_id IS NULL
+                ORDER BY v.updated_at DESC
+                """
+            ).fetchall()
+        return [row["video_id"] for row in rows]
+
+    def replace_knowledge_chunks(self, video_id: str, chunks: list[KnowledgeIndexChunkRecord]) -> int:
+        with self._lock, sqlite_cursor(self._connection) as cursor:
+            cursor.execute("DELETE FROM knowledge_index WHERE video_id = ?", (video_id,))
+            for chunk in chunks:
+                cursor.execute(
+                    """
+                    INSERT INTO knowledge_index (
+                        chunk_id, video_id, embedding_json, indexed_content, index_type,
+                        segment_order, anchor_label, anchor_seconds, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        chunk.chunk_id,
+                        chunk.video_id,
+                        chunk.embedding_json,
+                        chunk.indexed_content,
+                        chunk.index_type,
+                        chunk.segment_order,
+                        chunk.anchor_label,
+                        chunk.anchor_seconds,
+                        chunk.created_at.isoformat(),
+                        chunk.updated_at.isoformat(),
+                    ),
+                )
+        return len(chunks)
+
+    def delete_knowledge_chunks(self, video_id: str) -> bool:
+        with self._lock, sqlite_cursor(self._connection) as cursor:
+            cursor.execute("DELETE FROM knowledge_index WHERE video_id = ?", (video_id,))
+            return cursor.rowcount > 0
+
+    def clear_knowledge_chunks(self) -> None:
+        with self._lock, sqlite_cursor(self._connection) as cursor:
+            cursor.execute("DELETE FROM knowledge_index")
+
+    def list_knowledge_chunks(self, video_id: str | None = None) -> list[KnowledgeIndexChunkRecord]:
+        with self._lock, sqlite_cursor(self._connection) as cursor:
+            if video_id:
+                rows = cursor.execute(
+                    """
+                    SELECT
+                        chunk_id, video_id, embedding_json, indexed_content, index_type,
+                        segment_order, anchor_label, anchor_seconds, created_at, updated_at
+                    FROM knowledge_index
+                    WHERE video_id = ?
+                    ORDER BY segment_order ASC, updated_at DESC
+                    """,
+                    (video_id,),
+                ).fetchall()
+            else:
+                rows = cursor.execute(
+                    """
+                    SELECT
+                        chunk_id, video_id, embedding_json, indexed_content, index_type,
+                        segment_order, anchor_label, anchor_seconds, created_at, updated_at
+                    FROM knowledge_index
+                    ORDER BY updated_at DESC
+                    """
+                ).fetchall()
+        return [
+            KnowledgeIndexChunkRecord(
+                chunk_id=row["chunk_id"],
+                video_id=row["video_id"],
+                embedding_json=row["embedding_json"],
+                indexed_content=row["indexed_content"],
+                index_type=row["index_type"],
+                segment_order=row["segment_order"],
+                anchor_label=row["anchor_label"],
+                anchor_seconds=row["anchor_seconds"],
+                created_at=datetime.fromisoformat(row["created_at"]),
+                updated_at=datetime.fromisoformat(row["updated_at"]),
+            )
+            for row in rows
+        ]
+
+    def get_knowledge_chunk_count(self) -> int:
+        with self._lock, sqlite_cursor(self._connection) as cursor:
+            row = cursor.execute("SELECT COUNT(*) AS count FROM knowledge_index").fetchone()
+        return int(row["count"]) if row is not None else 0
 
     def set_video_favorite(self, video_id: str, is_favorite: bool) -> VideoAssetRecord | None:
         favorite_updated_at = datetime.now(timezone.utc).isoformat() if is_favorite else None

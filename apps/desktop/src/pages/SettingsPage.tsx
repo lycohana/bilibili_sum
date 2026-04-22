@@ -120,6 +120,9 @@ export function SettingsPage({
   const [localAsrStatus, setLocalAsrStatus] = useState("");
   const [localAsrOutput, setLocalAsrOutput] = useState("");
   const [localAsrInstalling, setLocalAsrInstalling] = useState(false);
+  const [knowledgeDepsStatus, setKnowledgeDepsStatus] = useState("");
+  const [knowledgeDepsOutput, setKnowledgeDepsOutput] = useState("");
+  const [knowledgeDepsInstalling, setKnowledgeDepsInstalling] = useState(false);
   const [logOutput, setLogOutput] = useState("");
   const [logPath, setLogPath] = useState(snapshot.systemInfo?.service?.log_file || desktop.logPath || "");
   const [serviceStatus, setServiceStatus] = useState("");
@@ -288,6 +291,10 @@ export function SettingsPage({
   const workspaceCategories = settingsCategories.filter((category) => category.group === "workspace");
   const systemCategories = settingsCategories.filter((category) => category.group === "system");
   const llmReady = Boolean(form?.llm_enabled && form?.llm_api_key_configured);
+  const knowledgeLlmUsesCustom = String(form?.knowledge_llm_mode || "same_as_main").trim().toLowerCase() === "custom";
+  const knowledgeLlmReady = knowledgeLlmUsesCustom
+    ? Boolean(form?.knowledge_llm_enabled && String(form?.knowledge_llm_base_url || "").trim() && String(form?.knowledge_llm_model || "").trim())
+    : Boolean(form?.llm_enabled && String(form?.llm_base_url || "").trim() && String(form?.llm_model || "").trim());
   const autoMindMapReady = Boolean(form?.auto_generate_mindmap);
   const currentVersion = desktop.version || snapshot.systemInfo?.application?.version || "-";
   const asrReady =
@@ -402,6 +409,11 @@ export function SettingsPage({
   const queuedTaskCount = taskList.filter((task) => task.status === "queued").length;
   const runningTaskCount = taskList.filter((task) => task.status === "running").length;
   const localAsrInstalled = Boolean(environment?.localAsrInstalled);
+  const knowledgeDepsReady = Boolean(environment?.knowledgeDependenciesReady);
+  const missingKnowledgeDeps = [
+    environment?.chromadbInstalled ? null : "chromadb",
+    environment?.sentenceTransformersInstalled ? null : "sentence-transformers",
+  ].filter(Boolean) as string[];
   const storageDirectoryMap = new Map((storageOverview?.directories || []).map((entry) => [entry.key, entry]));
   const cacheDirectory = storageDirectoryMap.get("cache") || null;
   const tasksDirectory = storageDirectoryMap.get("tasks") || null;
@@ -518,6 +530,25 @@ export function SettingsPage({
     }
   }
 
+  async function installKnowledgeDependencies() {
+    if (!form) return;
+    try {
+      setKnowledgeDepsInstalling(true);
+      setKnowledgeDepsStatus("正在安装知识库依赖...");
+      setKnowledgeDepsOutput("");
+      const response = await api.installKnowledgeDependencies();
+      setKnowledgeDepsStatus(response.installed ? "知识库依赖已安装并完成检测" : "知识库依赖安装后仍未完全就绪");
+      setKnowledgeDepsOutput(response.stdoutTail || "");
+      const nextEnvironment = response.environment || (await api.getEnvironment({ runtimeChannel: form.runtime_channel, refresh: true }));
+      setEnvironment(nextEnvironment);
+      onRefresh();
+    } catch (error) {
+      setKnowledgeDepsStatus(error instanceof Error ? error.message : "安装知识库依赖失败");
+    } finally {
+      setKnowledgeDepsInstalling(false);
+    }
+  }
+
   async function testLlmConnection() {
     if (!form || llmTestBusy) {
       return;
@@ -537,6 +568,29 @@ export function SettingsPage({
       setLlmTestStatus(`${response.message}${suffix}`);
     } catch (error) {
       setLlmTestStatus(error instanceof Error ? error.message : "LLM 连接测试失败");
+    } finally {
+      setLlmTestBusy(false);
+    }
+  }
+
+  async function testKnowledgeLlmConnection() {
+    if (!form || llmTestBusy) {
+      return;
+    }
+    try {
+      setLlmTestBusy(true);
+      setLlmTestStatus("正在测试知识库 LLM 连接与 JSON 输出...");
+      const response = await api.testLlmConnection({
+        llm_enabled: form.knowledge_llm_enabled,
+        llm_base_url: form.knowledge_llm_base_url,
+        llm_api_key: form.knowledge_llm_api_key,
+        llm_model: form.knowledge_llm_model,
+      });
+      const preview = response.jsonPreview || response.responsePreview;
+      const suffix = preview ? `，示例：${preview}` : "";
+      setLlmTestStatus(`${response.message}${suffix}`);
+    } catch (error) {
+      setLlmTestStatus(error instanceof Error ? error.message : "知识库 LLM 连接测试失败");
     } finally {
       setLlmTestBusy(false);
     }
@@ -610,6 +664,33 @@ export function SettingsPage({
     if (issueKey === "auto_mindmap_requires_llm") {
       return { category: "llm", targetKey: "llm_enabled" };
     }
+    if (issueKey === "knowledge_dependencies") {
+      return { category: "environment", targetKey: "knowledge_dependencies" };
+    }
+    if (issueKey === "knowledge_llm_configuration") {
+      if (String(form.knowledge_llm_mode || "same_as_main").trim().toLowerCase() === "custom") {
+        if (!form.knowledge_llm_enabled) {
+          return { category: "llm", targetKey: "knowledge_llm_enabled" };
+        }
+        if (!String(form.knowledge_llm_base_url || "").trim()) {
+          return { category: "llm", targetKey: "knowledge_llm_base_url" };
+        }
+        if (!String(form.knowledge_llm_model || "").trim()) {
+          return { category: "llm", targetKey: "knowledge_llm_model" };
+        }
+        return { category: "llm", targetKey: "knowledge_llm_base_url" };
+      }
+      if (!form.llm_enabled) {
+        return { category: "llm", targetKey: "llm_enabled" };
+      }
+      if (!String(form.llm_base_url || "").trim()) {
+        return { category: "llm", targetKey: "llm_base_url" };
+      }
+      if (!String(form.llm_model || "").trim()) {
+        return { category: "llm", targetKey: "llm_model" };
+      }
+      return { category: "llm", targetKey: "knowledge_llm_mode" };
+    }
     if (issueKey === "llm_configuration") {
       if (!String(form.llm_base_url || "").trim()) {
         return { category: "llm", targetKey: "llm_base_url" };
@@ -632,6 +713,7 @@ export function SettingsPage({
           { id: "settings-save-status", message: saveStatus },
           { id: "settings-cuda-status", message: cudaStatus },
           { id: "settings-local-asr-status", message: localAsrStatus },
+          { id: "settings-knowledge-deps-status", message: knowledgeDepsStatus },
           { id: "settings-asr-test-status", message: asrTestStatus },
           { id: "settings-llm-test-status", message: llmTestStatus },
           { id: "settings-storage-status", message: storageStatus },
@@ -744,6 +826,9 @@ export function SettingsPage({
               </span>
               <span className={`settings-hero-chip ${llmReady ? "is-success" : ""}`}>
                 {llmReady ? "LLM 已配置" : form.llm_enabled ? "LLM 待补全" : "LLM 关闭"}
+              </span>
+              <span className={`settings-hero-chip ${environment?.knowledgeDependenciesReady ? "is-success" : "is-warning"}`}>
+                {environment?.knowledgeDependenciesReady ? "知识库依赖就绪" : "知识库依赖缺失"}
               </span>
             </div>
           </header>
@@ -1219,7 +1304,7 @@ export function SettingsPage({
             <section className="settings-category-section">
               <header className="settings-category-header">
                 <h2>LLM 设置</h2>
-                <p>大语言模型摘要配置。</p>
+                <p>分别管理主摘要 LLM 与知识库 LLM。</p>
               </header>
               <div className="settings-form-group">
                 <label className="settings-input-group">
@@ -1260,7 +1345,7 @@ export function SettingsPage({
                     >
                       <span className="settings-input-label">API Base URL</span>
                       <input className="settings-input-field" value={form.llm_base_url} onChange={(e) => updateForm({ ...form, llm_base_url: e.target.value })} placeholder="https://api.openai.com/v1" />
-                      <span className="settings-input-caption">LLM API 的基础 URL 地址</span>
+                      <span className="settings-input-caption">主摘要 LLM API 的基础 URL 地址。</span>
                     </label>
                     <label
                       className={`settings-input-group settings-focus-target ${activeFocusTarget === "llm_api_key" ? "is-highlighted" : ""}`}
@@ -1292,6 +1377,95 @@ export function SettingsPage({
                       </span>
                     </div>
                   </>
+                )}
+                <div className="settings-inline-alert info">
+                  <strong>知识库 LLM</strong>
+                  <span>自动打标和知识库问答可以跟随主 LLM，也可以使用独立配置；不再限制为本地地址。</span>
+                </div>
+                <label
+                  className={`settings-input-group settings-focus-target ${activeFocusTarget === "knowledge_llm_mode" ? "is-highlighted" : ""}`}
+                  ref={registerFocusTarget("knowledge_llm_mode") as (node: HTMLLabelElement | null) => void}
+                >
+                  <span className="settings-input-label">知识库 LLM 来源</span>
+                  <select
+                    className="settings-select-field"
+                    value={form.knowledge_llm_mode || "same_as_main"}
+                    onChange={(e) => updateForm({ ...form, knowledge_llm_mode: e.target.value })}
+                  >
+                    <option value="same_as_main">跟随主 LLM</option>
+                    <option value="custom">使用独立配置</option>
+                  </select>
+                  <span className="settings-input-caption">“跟随主 LLM”会直接复用上方的 Base URL、API Key 与模型名。</span>
+                </label>
+                {knowledgeLlmUsesCustom ? (
+                  <>
+                    <label
+                      className={`settings-input-group settings-focus-target ${activeFocusTarget === "knowledge_llm_enabled" ? "is-highlighted" : ""}`}
+                      ref={registerFocusTarget("knowledge_llm_enabled") as (node: HTMLLabelElement | null) => void}
+                    >
+                      <span className="settings-input-label">启用知识库 LLM</span>
+                      <select
+                        className="settings-select-field"
+                        value={form.knowledge_llm_enabled ? "true" : "false"}
+                        onChange={(e) => updateForm({ ...form, knowledge_llm_enabled: e.target.value === "true" })}
+                      >
+                        <option value="false">关闭</option>
+                        <option value="true">开启</option>
+                      </select>
+                    </label>
+                    {form.knowledge_llm_enabled ? (
+                      <>
+                        <label
+                          className={`settings-input-group settings-focus-target ${activeFocusTarget === "knowledge_llm_base_url" ? "is-highlighted" : ""}`}
+                          ref={registerFocusTarget("knowledge_llm_base_url") as (node: HTMLLabelElement | null) => void}
+                        >
+                          <span className="settings-input-label">知识库 API Base URL</span>
+                          <input
+                            className="settings-input-field"
+                            value={form.knowledge_llm_base_url}
+                            onChange={(e) => updateForm({ ...form, knowledge_llm_base_url: e.target.value })}
+                            placeholder="https://api.openai.com/v1"
+                          />
+                        </label>
+                        <label
+                          className={`settings-input-group settings-focus-target ${activeFocusTarget === "knowledge_llm_api_key" ? "is-highlighted" : ""}`}
+                          ref={registerFocusTarget("knowledge_llm_api_key") as (node: HTMLLabelElement | null) => void}
+                        >
+                          <span className="settings-input-label">知识库 API Key</span>
+                          <input
+                            className="settings-input-field"
+                            type="password"
+                            value={form.knowledge_llm_api_key}
+                            onChange={(e) => updateForm({ ...form, knowledge_llm_api_key: e.target.value })}
+                            placeholder="sk-..."
+                          />
+                        </label>
+                        <label
+                          className={`settings-input-group settings-focus-target ${activeFocusTarget === "knowledge_llm_model" ? "is-highlighted" : ""}`}
+                          ref={registerFocusTarget("knowledge_llm_model") as (node: HTMLLabelElement | null) => void}
+                        >
+                          <span className="settings-input-label">知识库模型名称</span>
+                          <input
+                            className="settings-input-field"
+                            value={form.knowledge_llm_model}
+                            onChange={(e) => updateForm({ ...form, knowledge_llm_model: e.target.value })}
+                            placeholder="gpt-4o-mini / qwen-plus"
+                          />
+                        </label>
+                        <div className="settings-inline-actions">
+                          <button className="secondary-button" type="button" disabled={llmTestBusy} onClick={() => void testKnowledgeLlmConnection()}>
+                            {llmTestBusy ? "测试中..." : "测试知识库 LLM"}
+                          </button>
+                          <span className="settings-input-caption">使用当前独立知识库配置发起一次临时测试，不会保存设置。</span>
+                        </div>
+                      </>
+                    ) : null}
+                  </>
+                ) : (
+                  <div className={`settings-inline-alert ${knowledgeLlmReady ? "success" : "warning"}`}>
+                    <strong>{knowledgeLlmReady ? "知识库当前跟随主 LLM" : "知识库当前跟随主 LLM，但主 LLM 还未补全"}</strong>
+                    <span>{knowledgeLlmReady ? "自动打标和问答会直接复用主 LLM 配置。" : "请先启用主 LLM，并补全 Base URL 与模型名，或切换为独立配置。"}</span>
+                  </div>
                 )}
               </div>
             </section>
@@ -1553,6 +1727,36 @@ export function SettingsPage({
                 </div>
               </div>
               <div className="settings-form-group">
+                <div
+                  className={`settings-inline-alert ${knowledgeDepsReady ? "success" : "warning"} settings-focus-target ${activeFocusTarget === "knowledge_dependencies" ? "is-highlighted" : ""}`}
+                  ref={registerFocusTarget("knowledge_dependencies_alert") as (node: HTMLDivElement | null) => void}
+                >
+                  <strong>{knowledgeDepsReady ? "知识库依赖已就绪" : "知识库依赖未就绪"}</strong>
+                  <span>
+                    {knowledgeDepsReady
+                      ? `chromadb${environment?.chromadbVersion ? ` ${environment.chromadbVersion}` : ""} 与 sentence-transformers${environment?.sentenceTransformersVersion ? ` ${environment.sentenceTransformersVersion}` : ""} 已可用。`
+                      : `当前运行时缺少 ${missingKnowledgeDeps.join("、") || "知识库依赖"}，知识库索引暂时无法构建。若刚更新依赖，请点击“重新检测”确认运行时状态。`}
+                  </span>
+                </div>
+                <div className="settings-input-group">
+                  <span className="settings-input-label">知识库运行时依赖</span>
+                  <div
+                    className={`settings-actions settings-focus-target ${activeFocusTarget === "knowledge_dependencies" ? "is-highlighted" : ""}`}
+                    ref={registerFocusTarget("knowledge_dependencies") as (node: HTMLDivElement | null) => void}
+                  >
+                    <button className="secondary-button" type="button" disabled={knowledgeDepsInstalling} onClick={() => void installKnowledgeDependencies()}>
+                      {knowledgeDepsInstalling ? "安装中..." : knowledgeDepsReady ? "重新安装知识库依赖" : "安装知识库依赖"}
+                    </button>
+                  </div>
+                  <span className="settings-input-caption">
+                    {knowledgeDepsReady
+                      ? "当前运行时已经具备知识库索引所需依赖；如版本异常或刚升级环境，可重新安装后再检测。"
+                      : `将补装 ${missingKnowledgeDeps.join("、") || "chromadb 与 sentence-transformers"} 到当前运行时，不会影响你已有的数据目录。`}
+                  </span>
+                  {knowledgeDepsOutput ? (
+                    <textarea className="textarea-field log-viewer" rows={8} readOnly value={knowledgeDepsOutput}></textarea>
+                  ) : null}
+                </div>
                 <div className="settings-input-group">
                   <span className="settings-input-label">本地 ASR 运行时</span>
                   <div

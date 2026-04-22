@@ -5,6 +5,7 @@ import subprocess
 import sys
 import textwrap
 import venv
+import importlib
 from pathlib import Path
 
 from fastapi import HTTPException
@@ -133,6 +134,31 @@ def run_command(command: list[str], runtime_channel: str, timeout: int = 3600) -
         )
 
 
+def run_host_command(command: list[str], timeout: int = 3600) -> subprocess.CompletedProcess[str]:
+    env = dict(os.environ)
+    for key in ("PYTHONHOME", "PYTHONPATH", "PYTHONEXECUTABLE", "__PYVENV_LAUNCHER__"):
+        env.pop(key, None)
+    env["PYTHONIOENCODING"] = "utf-8"
+    env["PYTHONUTF8"] = "1"
+    with sanitized_subprocess_dll_search():
+        return subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+            check=True,
+            env=env,
+            cwd=repo_root(),
+            **windows_hidden_subprocess_kwargs(),
+        )
+
+
+def uses_current_service_python(runtime_channel: str) -> bool:
+    return not is_frozen() and runtime_channel == "base"
+
+
 def command_error_detail(exc: subprocess.CalledProcessError, fallback: str) -> str:
     parts = [str(exc.stdout or "").strip(), str(exc.stderr or "").strip()]
     merged = "\n".join(part for part in parts if part).strip()
@@ -172,6 +198,7 @@ def pip_install_with_fallbacks(
     runtime_channel: str,
     packages: list[str],
     *,
+    package_label: str = "本地 ASR 依赖",
     reinstall: bool = False,
     timeout: int = 1800,
     runner=run_command,
@@ -198,7 +225,7 @@ def pip_install_with_fallbacks(
         except subprocess.CalledProcessError as exc:
             attempts.append((label, exc))
 
-    raise HTTPException(status_code=500, detail=pip_install_error_detail("本地 ASR 依赖", attempts))
+    raise HTTPException(status_code=500, detail=pip_install_error_detail(package_label, attempts))
 
 
 def torch_install_with_fallbacks(
@@ -330,11 +357,13 @@ def detect_environment(runtime_channel: str | None = None) -> dict[str, object]:
     if cached is not None:
         return dict(cached)
 
-    python_executable = runtime_python_executable(active_channel)
-    if python_executable is None:
-        if active_channel == "base" and not is_frozen():
-            python_executable = Path(sys.executable).resolve()
-        else:
+    if uses_current_service_python(active_channel):
+        python_executable = Path(sys.executable).resolve()
+        probe_runner = lambda command, timeout=120: run_host_command(command, timeout=timeout)
+    else:
+        python_executable = runtime_python_executable(active_channel)
+        probe_runner = lambda command, timeout=120: run_command(command, runtime_channel=active_channel, timeout=timeout)
+        if python_executable is None:
             payload = {
                 "pythonVersion": "",
                 "torchInstalled": False,
@@ -345,6 +374,11 @@ def detect_environment(runtime_channel: str | None = None) -> dict[str, object]:
                 "localAsrInstalled": False,
                 "localAsrAvailable": False,
                 "localAsrVersion": "",
+                "chromadbInstalled": False,
+                "chromadbVersion": "",
+                "sentenceTransformersInstalled": False,
+                "sentenceTransformersVersion": "",
+                "knowledgeDependenciesReady": False,
                 "ffmpegLocation": "",
                 "recommendedModel": "base",
                 "recommendedDevice": "cpu",
@@ -377,6 +411,11 @@ def detect_environment(runtime_channel: str | None = None) -> dict[str, object]:
             "localAsrVersion": "",
             "localAsrInstalled": False,
             "localAsrAvailable": False,
+            "chromadbVersion": "",
+            "chromadbInstalled": False,
+            "sentenceTransformersVersion": "",
+            "sentenceTransformersInstalled": False,
+            "knowledgeDependenciesReady": False,
             "ffmpegLocation": "",
             "recommendedModel": "large-v3-turbo" if cuda_available else "base",
             "recommendedDevice": "cuda" if cuda_available else "cpu",
@@ -387,12 +426,25 @@ def detect_environment(runtime_channel: str | None = None) -> dict[str, object]:
             payload["localAsrAvailable"] = True
         except importlib.metadata.PackageNotFoundError:
             pass
+        try:
+            payload["chromadbVersion"] = importlib.metadata.version("chromadb")
+            payload["chromadbInstalled"] = True
+        except importlib.metadata.PackageNotFoundError:
+            pass
+        try:
+            payload["sentenceTransformersVersion"] = importlib.metadata.version("sentence-transformers")
+            payload["sentenceTransformersInstalled"] = True
+        except importlib.metadata.PackageNotFoundError:
+            pass
+        payload["knowledgeDependenciesReady"] = bool(
+            payload.get("chromadbInstalled") and payload.get("sentenceTransformersInstalled")
+        )
         print(json.dumps(payload, ensure_ascii=False))
         """
     ).strip()
 
     try:
-        result = run_command([str(python_executable), "-c", script], runtime_channel=active_channel, timeout=120)
+        result = probe_runner([str(python_executable), "-c", script], timeout=120)
         payload = json.loads(result.stdout.strip() or "{}")
         payload["ffmpegLocation"] = str(ffmpeg_location() or "")
         _environment_probe_failures.pop(active_channel, None)
@@ -416,6 +468,11 @@ def detect_environment(runtime_channel: str | None = None) -> dict[str, object]:
             "localAsrInstalled": False,
             "localAsrAvailable": False,
             "localAsrVersion": "",
+            "chromadbInstalled": False,
+            "chromadbVersion": "",
+            "sentenceTransformersInstalled": False,
+            "sentenceTransformersVersion": "",
+            "knowledgeDependenciesReady": False,
             "ffmpegLocation": "",
             "recommendedModel": "base",
             "recommendedDevice": "cpu",
@@ -425,7 +482,7 @@ def detect_environment(runtime_channel: str | None = None) -> dict[str, object]:
     payload.update(
         {
             "runtimeChannel": active_channel,
-            "runtimeReady": runtime_python_executable(active_channel) is not None,
+            "runtimeReady": uses_current_service_python(active_channel) or runtime_python_executable(active_channel) is not None,
             "runtimePython": str(python_executable),
             "ffmpegLocation": str(ffmpeg_location() or ""),
         }
@@ -433,6 +490,11 @@ def detect_environment(runtime_channel: str | None = None) -> dict[str, object]:
     payload["localAsrInstalled"] = bool(payload.get("localAsrInstalled"))
     payload["localAsrAvailable"] = bool(payload.get("localAsrAvailable"))
     payload["localAsrVersion"] = str(payload.get("localAsrVersion") or "")
+    payload["chromadbInstalled"] = bool(payload.get("chromadbInstalled"))
+    payload["chromadbVersion"] = str(payload.get("chromadbVersion") or "")
+    payload["sentenceTransformersInstalled"] = bool(payload.get("sentenceTransformersInstalled"))
+    payload["sentenceTransformersVersion"] = str(payload.get("sentenceTransformersVersion") or "")
+    payload["knowledgeDependenciesReady"] = bool(payload.get("knowledgeDependenciesReady"))
     payload["runtimeError"] = str(payload.get("runtimeError") or "")
     _environment_probe_cache[active_channel] = dict(payload)
     return payload
@@ -541,6 +603,12 @@ def serialize_settings(
         "llm_model": current_settings.llm_model,
         "llm_api_key": current_settings.llm_api_key,
         "llm_api_key_configured": bool(current_settings.llm_api_key),
+        "knowledge_llm_mode": current_settings.knowledge_llm_mode,
+        "knowledge_llm_enabled": current_settings.knowledge_llm_enabled,
+        "knowledge_llm_base_url": current_settings.knowledge_llm_base_url,
+        "knowledge_llm_model": current_settings.knowledge_llm_model,
+        "knowledge_llm_api_key": current_settings.knowledge_llm_api_key,
+        "knowledge_llm_api_key_configured": bool(current_settings.knowledge_llm_api_key),
         "summary_system_prompt": current_settings.summary_system_prompt,
         "summary_user_prompt_template": current_settings.summary_user_prompt_template,
         "summary_chunk_target_chars": current_settings.summary_chunk_target_chars,
@@ -611,6 +679,7 @@ def install_local_asr(reinstall: bool, repository: SqliteTaskRepository) -> tupl
             python_executable,
             runtime_channel,
             ["faster-whisper>=1.1.1"],
+            package_label="本地 ASR 依赖",
             reinstall=reinstall,
             timeout=1800,
             runner=run_command,
@@ -636,6 +705,73 @@ def install_local_asr(reinstall: bool, repository: SqliteTaskRepository) -> tupl
     )
     return {
         "installed": bool(environment.get("localAsrInstalled")),
+        "runtimeChannel": runtime_channel,
+        "stdoutTail": ((result.stdout or "") + "\n" + (result.stderr or "")).strip()[-1500:],
+        "environment": environment,
+    }, worker
+
+
+def install_knowledge_dependencies(
+    reinstall: bool,
+    repository: SqliteTaskRepository,
+) -> tuple[dict[str, object], TaskWorker]:
+    current_settings = settings_manager.current
+    runtime_channel = current_settings.runtime_channel
+    use_current_python = uses_current_service_python(runtime_channel)
+    if use_current_python:
+        runtime_dir = repo_root()
+        python_executable = Path(sys.executable).resolve()
+        runner = lambda command, runtime_channel, timeout=1800: run_host_command(command, timeout=timeout)
+    else:
+        runtime_dir = ensure_runtime_channel(runtime_channel)
+        python_executable = runtime_python_executable(runtime_channel)
+        runner = run_command
+    if runtime_dir is None or python_executable is None:
+        raise HTTPException(status_code=500, detail="Managed runtime is unavailable.")
+
+    packages = [
+        "chromadb>=1.0.0",
+        "sentence-transformers>=3.0",
+    ]
+
+    try:
+        if not use_current_python:
+            install_workspace_packages(python_executable, runtime_channel=runtime_channel)
+            ensure_runtime_pip(python_executable, runtime_channel)
+        result = pip_install_with_fallbacks(
+            python_executable,
+            runtime_channel,
+            packages,
+            package_label="知识库依赖",
+            reinstall=reinstall,
+            timeout=1800,
+            runner=runner,
+        )
+    except subprocess.CalledProcessError as exc:
+        clear_environment_probe_cache(runtime_channel)
+        raise HTTPException(status_code=500, detail=((exc.stderr or exc.stdout or str(exc))[-1500:])) from exc
+    except HTTPException:
+        clear_environment_probe_cache(runtime_channel)
+        raise
+
+    importlib.invalidate_caches()
+    clear_environment_probe_cache(runtime_channel)
+    environment = detect_environment(runtime_channel)
+    worker = build_worker(repository, current_settings, environment_info=environment)
+    write_runtime_metadata(
+        runtime_channel,
+        {
+            "runtimeChannel": runtime_channel,
+            "python": str(python_executable),
+            "chromadbInstalled": bool(environment.get("chromadbInstalled")),
+            "chromadbVersion": str(environment.get("chromadbVersion") or ""),
+            "sentenceTransformersInstalled": bool(environment.get("sentenceTransformersInstalled")),
+            "sentenceTransformersVersion": str(environment.get("sentenceTransformersVersion") or ""),
+            "knowledgeDependenciesReady": bool(environment.get("knowledgeDependenciesReady")),
+        },
+    )
+    return {
+        "installed": bool(environment.get("knowledgeDependenciesReady")),
         "runtimeChannel": runtime_channel,
         "stdoutTail": ((result.stdout or "") + "\n" + (result.stderr or "")).strip()[-1500:],
         "environment": environment,

@@ -1,14 +1,23 @@
 import type {
   EnvironmentInfo,
+  KnowledgeAskResponse,
+  KnowledgeAutoTagResponse,
+  KnowledgeNetworkResponse,
+  KnowledgeSearchRequest,
+  KnowledgeSearchResponse,
+  KnowledgeStatsResponse,
+  KnowledgeTagListResponse,
+  KnowledgeToolTrace,
+  LlmTestResponse,
   ServiceSettings,
   SystemLogResponse,
   SystemInfo,
   TaskDetail,
   TaskEvent,
   TaskMarkdownExportResponse,
-  LlmTestResponse,
   TaskMindMapResponse,
   TaskSummary,
+  VideoKnowledgeTagListResponse,
   VideoAssetDetail,
   VideoProbeResult,
   VideoAssetSummary,
@@ -45,6 +54,29 @@ async function fetchJson<T>(url: string, options?: RequestInit): Promise<T> {
     throw new Error(detail);
   }
   return response.json() as Promise<T>;
+}
+
+function parseSseBlock(block: string): { event: string; data: string } | null {
+  const lines = block.split(/\r?\n/);
+  let event = "message";
+  const dataLines: string[] = [];
+  for (const rawLine of lines) {
+    const line = rawLine.trimEnd();
+    if (!line || line.startsWith(":")) {
+      continue;
+    }
+    if (line.startsWith("event:")) {
+      event = line.slice(6).trim() || "message";
+      continue;
+    }
+    if (line.startsWith("data:")) {
+      dataLines.push(line.slice(5).trimStart());
+    }
+  }
+  if (!dataLines.length) {
+    return null;
+  }
+  return { event, data: dataLines.join("\n") };
 }
 
 export const api = {
@@ -231,11 +263,158 @@ export const api = {
       body: JSON.stringify(payload ?? {}),
     });
   },
+  installKnowledgeDependencies(payload?: { reinstall?: boolean }) {
+    return fetchJson<{
+      installed: boolean;
+      runtimeChannel?: string;
+      stdoutTail?: string;
+      environment?: EnvironmentInfo;
+    }>("/api/v1/knowledge/install", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload ?? {}),
+    });
+  },
   createTaskEventSource(taskId: string, after?: string | null) {
     const url = new URL(`/api/v1/tasks/${taskId}/events/stream`, window.location.origin);
     if (after) {
       url.searchParams.set("after", after);
     }
     return new EventSource(url.toString());
+  },
+  getKnowledgeTags(videoId?: string) {
+    const url = new URL("/api/v1/knowledge/tags", window.location.origin);
+    if (videoId) {
+      url.searchParams.set("video_id", videoId);
+    }
+    return fetchJson<KnowledgeTagListResponse | VideoKnowledgeTagListResponse>(url.toString());
+  },
+  addKnowledgeTag(payload: { video_id: string; tag: string }) {
+    return fetchJson<VideoKnowledgeTagListResponse>("/api/v1/knowledge/tags", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+  },
+  deleteKnowledgeTag(videoId: string, tag: string) {
+    return fetchJson<VideoKnowledgeTagListResponse>(`/api/v1/knowledge/tags/${encodeURIComponent(videoId)}/${encodeURIComponent(tag)}`, {
+      method: "DELETE",
+    });
+  },
+  autoTagKnowledge(payload?: { video_ids?: string[] }) {
+    return fetchJson<KnowledgeAutoTagResponse>("/api/v1/knowledge/auto-tag", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload ?? {}),
+    });
+  },
+  getKnowledgeNetwork(options?: { selectedTags?: string[]; maxTags?: number; maxVideos?: number }) {
+    const url = new URL("/api/v1/knowledge/network", window.location.origin);
+    for (const tag of options?.selectedTags || []) {
+      if (tag) {
+        url.searchParams.append("selected_tag", tag);
+      }
+    }
+    if (options?.maxTags) {
+      url.searchParams.set("max_tags", String(options.maxTags));
+    }
+    if (options?.maxVideos) {
+      url.searchParams.set("max_videos", String(options.maxVideos));
+    }
+    return fetchJson<KnowledgeNetworkResponse>(url.toString());
+  },
+  searchKnowledge(payload: KnowledgeSearchRequest) {
+    return fetchJson<KnowledgeSearchResponse>("/api/v1/knowledge/search", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+  },
+  askKnowledge(payload: { query: string; context_limit?: number }) {
+    return fetchJson<KnowledgeAskResponse>("/api/v1/knowledge/ask", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+  },
+  async streamKnowledgeAsk(
+    payload: { query: string; context_limit?: number },
+    handlers: {
+      onTool?(tool: KnowledgeToolTrace): void;
+      onTextDelta?(delta: string): void;
+      onSources?(sources: KnowledgeAskResponse["sources"]): void;
+      onDone?(result: KnowledgeAskResponse): void;
+      onError?(message: string): void;
+    },
+    options?: { signal?: AbortSignal },
+  ) {
+    const response = await fetch("/api/v1/knowledge/ask/stream", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
+      body: JSON.stringify(payload),
+      signal: options?.signal,
+    });
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(text || `Request failed: ${response.status}`);
+    }
+    if (!response.body) {
+      throw new Error("浏览器不支持流式响应。");
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      buffer += decoder.decode(value, { stream: !done });
+      const blocks = buffer.split("\n\n");
+      buffer = blocks.pop() ?? "";
+
+      for (const block of blocks) {
+        const parsed = parseSseBlock(block);
+        if (!parsed) {
+          continue;
+        }
+        let data: unknown = parsed.data;
+        try {
+          data = JSON.parse(parsed.data);
+        } catch {
+          data = parsed.data;
+        }
+        switch (parsed.event) {
+          case "tool":
+            handlers.onTool?.(data as KnowledgeToolTrace);
+            break;
+          case "text_delta":
+            handlers.onTextDelta?.(String((data as { delta?: string }).delta || ""));
+            break;
+          case "sources":
+            handlers.onSources?.(((data as { sources?: KnowledgeAskResponse["sources"] }).sources || []));
+            break;
+          case "done":
+            handlers.onDone?.(data as KnowledgeAskResponse);
+            break;
+          case "error":
+            handlers.onError?.(String((data as { message?: string }).message || "流式问答失败"));
+            break;
+          default:
+            break;
+        }
+      }
+
+      if (done) {
+        break;
+      }
+    }
+  },
+  getKnowledgeStats() {
+    return fetchJson<KnowledgeStatsResponse>("/api/v1/knowledge/stats");
+  },
+  rebuildKnowledgeIndex() {
+    return fetchJson<{ indexed_videos: number }>("/api/v1/knowledge/rebuild-index", {
+      method: "POST",
+    });
   },
 };

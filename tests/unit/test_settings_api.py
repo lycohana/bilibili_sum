@@ -11,6 +11,7 @@ from video_sum_core.models.tasks import InputType, TaskInput, TaskStatus
 from video_sum_infra.config import ServiceSettings
 from video_sum_service.app import (
     app,
+    install_knowledge_dependencies,
     install_local_asr,
     probe_asr_connection,
     probe_llm_connection,
@@ -191,6 +192,55 @@ def test_install_local_asr_retries_with_mirror_when_official_index_fails(monkeyp
     assert "--index-url" in commands[1]
     index_flag = commands[1].index("--index-url")
     assert commands[1][index_flag + 1] == "https://pypi.tuna.tsinghua.edu.cn/simple"
+
+
+def test_install_knowledge_dependencies_refreshes_environment(monkeypatch, tmp_path: Path) -> None:
+    current = ServiceSettings(
+        data_dir=tmp_path / "data",
+        cache_dir=tmp_path / "cache",
+        tasks_dir=tmp_path / "tasks",
+        runtime_channel="base",
+    )
+    settings_manager._settings = current
+    app.state.task_repository = object()
+    app.state.task_worker = object()
+
+    monkeypatch.setattr("video_sum_service.app._uses_current_service_python", lambda runtime_channel: False)
+    monkeypatch.setattr("video_sum_service.app.ensure_runtime_channel", lambda runtime_channel: tmp_path / runtime_channel)
+    monkeypatch.setattr("video_sum_service.app.runtime_python_executable", lambda runtime_channel: tmp_path / "python.exe")
+    monkeypatch.setattr("video_sum_service.app._install_workspace_packages", lambda python_executable, runtime_channel: None)
+    monkeypatch.setattr("video_sum_service.app._ensure_runtime_pip", lambda python_executable, runtime_channel: None)
+    monkeypatch.setattr(
+        "video_sum_service.app._run_command",
+        lambda command, runtime_channel, timeout=1800: type("Result", (), {"stdout": "ok", "stderr": ""})(),
+    )
+    monkeypatch.setattr("video_sum_service.app.clear_environment_probe_cache", lambda runtime_channel=None: None)
+    monkeypatch.setattr(
+        "video_sum_service.app.detect_environment",
+        lambda runtime_channel=None: {
+            "runtimeChannel": runtime_channel or "base",
+            "chromadbInstalled": True,
+            "chromadbVersion": "1.2.3",
+            "sentenceTransformersInstalled": True,
+            "sentenceTransformersVersion": "3.4.5",
+            "knowledgeDependenciesReady": True,
+        },
+    )
+    monkeypatch.setattr(
+        "video_sum_service.app.build_worker",
+        lambda repository, current_settings, environment_info=None: {
+            "repository": repository,
+            "environment": environment_info,
+        },
+    )
+    monkeypatch.setattr("video_sum_service.app.write_runtime_metadata", lambda runtime_channel, payload: None)
+
+    response = install_knowledge_dependencies()
+
+    assert response["installed"] is True
+    assert response["runtimeChannel"] == "base"
+    assert response["environment"]["chromadbVersion"] == "1.2.3"
+    assert response["environment"]["sentenceTransformersVersion"] == "3.4.5"
 
 
 def test_recover_incomplete_tasks_resubmits_queued_and_running_records() -> None:

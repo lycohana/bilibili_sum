@@ -49,6 +49,11 @@ class SettingsUpdatePayload(BaseModel):
     llm_base_url: str | None = None
     llm_model: str | None = None
     llm_api_key: str | None = None
+    knowledge_llm_mode: str | None = None
+    knowledge_llm_enabled: bool | None = None
+    knowledge_llm_base_url: str | None = None
+    knowledge_llm_model: str | None = None
+    knowledge_llm_api_key: str | None = None
     summary_system_prompt: str | None = None
     summary_user_prompt_template: str | None = None
     summary_chunk_target_chars: int | None = None

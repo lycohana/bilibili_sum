@@ -20,6 +20,7 @@ from video_sum_service.runtime_support import (
     clear_environment_probe_cache,
     detect_environment,
     install_cuda_support,
+    install_knowledge_dependencies,
     install_local_asr,
     replace_task_worker,
     serialize_settings,
@@ -209,5 +210,13 @@ def post_cuda_install(payload: dict[str, object], request: Request) -> dict[str,
 def post_local_asr_install(request: Request, payload: dict[str, object] | None = None) -> dict[str, object]:
     reinstall = bool((payload or {}).get("reinstall"))
     result, worker = install_local_asr(reinstall=reinstall, repository=request.app.state.task_repository)
+    replace_task_worker(request.app.state, worker)
+    return result
+
+
+@router.post("/knowledge/install")
+def post_knowledge_install(request: Request, payload: dict[str, object] | None = None) -> dict[str, object]:
+    reinstall = bool((payload or {}).get("reinstall"))
+    result, worker = install_knowledge_dependencies(reinstall=reinstall, repository=request.app.state.task_repository)
     replace_task_worker(request.app.state, worker)
     return result

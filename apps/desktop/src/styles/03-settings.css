@@ -777,6 +777,36 @@
   gap: 12px;
 }
 
+.settings-inline-alert {
+  display: grid;
+  gap: 6px;
+  padding: 14px 16px;
+  border-radius: 18px;
+  border: 1px solid var(--settings-border);
+  background: var(--settings-elevated-bg);
+}
+
+.settings-inline-alert strong {
+  font-size: 0.9rem;
+  color: var(--settings-text-strong);
+}
+
+.settings-inline-alert span {
+  font-size: 0.82rem;
+  line-height: 1.6;
+  color: var(--settings-text-soft);
+}
+
+.settings-inline-alert.warning {
+  border-color: rgba(213, 137, 24, 0.22);
+  background: rgba(213, 137, 24, 0.08);
+}
+
+.settings-inline-alert.success {
+  border-color: rgba(34, 168, 102, 0.18);
+  background: rgba(34, 168, 102, 0.07);
+}
+
 .settings-inline-actions .secondary-button {
   min-width: 148px;
 }

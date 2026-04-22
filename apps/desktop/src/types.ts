@@ -187,6 +187,11 @@ export type EnvironmentInfo = {
   localAsrInstalled?: boolean;
   localAsrAvailable?: boolean;
   localAsrVersion?: string;
+  chromadbInstalled?: boolean;
+  chromadbVersion?: string;
+  sentenceTransformersInstalled?: boolean;
+  sentenceTransformersVersion?: string;
+  knowledgeDependenciesReady?: boolean;
   ffmpegLocation?: string;
   recommendedModel?: string;
   recommendedDevice?: string;
@@ -229,6 +234,12 @@ export type ServiceSettings = {
   llm_base_url: string;
   llm_model: string;
   llm_api_key_configured?: boolean;
+  knowledge_llm_mode: string;
+  knowledge_llm_enabled: boolean;
+  knowledge_llm_api_key: string;
+  knowledge_llm_base_url: string;
+  knowledge_llm_model: string;
+  knowledge_llm_api_key_configured?: boolean;
   summary_system_prompt: string;
   summary_user_prompt_template: string;
   summary_chunk_target_chars: number;
@@ -299,4 +310,118 @@ export type StorageOverview = {
     cacheCandidateCount: number;
     cacheCandidateBytes: number;
   };
+};
+
+export type KnowledgeTagRecord = {
+  video_id: string;
+  tag: string;
+  source: string;
+  confidence: number;
+  created_at: string;
+};
+
+export type KnowledgeTagItem = {
+  tag: string;
+  count: number;
+  videos: string[];
+};
+
+export type KnowledgeTagListResponse = {
+  items: KnowledgeTagItem[];
+};
+
+export type VideoKnowledgeTagListResponse = {
+  video_id: string;
+  items: KnowledgeTagRecord[];
+};
+
+export type KnowledgeNetworkNode = {
+  id: string;
+  label: string;
+  type: "tag" | "video" | string;
+  count?: number | null;
+  tags: string[];
+  degree?: number | null;
+  focus?: boolean;
+  hidden_count?: number;
+  video_count?: number;
+};
+
+export type KnowledgeNetworkLink = {
+  source: string;
+  target: string;
+  weight?: number;
+  kind?: "cooccurrence" | "association" | string;
+};
+
+export type KnowledgeNetworkResponse = {
+  nodes: KnowledgeNetworkNode[];
+  links: KnowledgeNetworkLink[];
+  mode?: string;
+  hidden_tag_count?: number;
+  selected_tags?: string[];
+};
+
+export type KnowledgeSearchFilters = {
+  tags?: string[];
+};
+
+export type KnowledgeSearchRequest = {
+  query: string;
+  limit?: number;
+  filters?: KnowledgeSearchFilters;
+};
+
+export type KnowledgeSearchResult = {
+  video_id: string;
+  title: string;
+  relevance_score: number;
+  snippet: string;
+  tags: string[];
+  cover_url: string;
+  timestamp?: string | null;
+};
+
+export type KnowledgeSearchResponse = {
+  query: string;
+  results: KnowledgeSearchResult[];
+  total: number;
+};
+
+export type KnowledgeSourceRef = {
+  video_id: string;
+  title: string;
+  relevance_score: number;
+  timestamp?: string | null;
+};
+
+export type KnowledgeAskResponse = {
+  query: string;
+  answer: string;
+  sources: KnowledgeSourceRef[];
+};
+
+export type KnowledgeToolTrace = {
+  id: string;
+  label: string;
+  status: "running" | "completed" | "error";
+  detail?: string;
+  meta?: Record<string, unknown>;
+};
+
+export type KnowledgeStatsResponse = {
+  video_count: number;
+  indexed_chunk_count: number;
+  tag_count: number;
+  untagged_video_count: number;
+  knowledge_llm_available: boolean;
+};
+
+export type KnowledgeAutoTagVideoResult = {
+  video_id: string;
+  tags: string[];
+};
+
+export type KnowledgeAutoTagResponse = {
+  items: KnowledgeAutoTagVideoResult[];
 };

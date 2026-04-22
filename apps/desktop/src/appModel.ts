@@ -127,6 +127,10 @@ export function getConfigHealth(
 
   const issues: ConfigIssue[] = [];
   const transcriptionProvider = String(settings.transcription_provider || "").trim().toLowerCase();
+  const knowledgeUsesCustomLlm = String(settings.knowledge_llm_mode || "same_as_main").trim().toLowerCase() === "custom";
+  const knowledgeLlmReady = knowledgeUsesCustomLlm
+    ? Boolean(settings.knowledge_llm_enabled && String(settings.knowledge_llm_base_url || "").trim() && String(settings.knowledge_llm_model || "").trim())
+    : Boolean(settings.llm_enabled && String(settings.llm_base_url || "").trim() && String(settings.llm_model || "").trim());
 
   if (transcriptionProvider === "siliconflow" && !settings.siliconflow_asr_api_key_configured) {
     issues.push({
@@ -173,6 +177,26 @@ export function getConfigHealth(
       key: "auto_mindmap_requires_llm",
       title: "自动导图依赖 LLM",
       description: "你已开启自动生成思维导图，但当前 LLM 处于关闭状态，导图不会自动生成。",
+      severity: "warning",
+    });
+  }
+
+  if (environment && environment.knowledgeDependenciesReady === false) {
+    issues.push({
+      key: "knowledge_dependencies",
+      title: "缺少知识库依赖",
+      description: "当前运行时缺少 chromadb 或 sentence-transformers，无法构建知识库索引。",
+      severity: "warning",
+    });
+  }
+
+  if (!knowledgeLlmReady) {
+    issues.push({
+      key: "knowledge_llm_configuration",
+      title: "知识库 LLM 未补全",
+      description: knowledgeUsesCustomLlm
+        ? "知识库当前使用独立 LLM，但还没有补全启用状态、Base URL 或模型名，自动打标和问答暂不可用。"
+        : "知识库当前跟随主 LLM；请先启用主 LLM，并补全 Base URL 与模型名。",
       severity: "warning",
     });
   }

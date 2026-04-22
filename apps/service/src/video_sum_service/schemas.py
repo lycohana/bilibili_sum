@@ -267,3 +267,140 @@ class TaskEventRecord(BaseModel):
             created_at=self.created_at,
             payload=self.payload,
         )
+
+
+class VideoTagRecord(BaseModel):
+    video_id: str
+    tag: str
+    source: str = "manual"
+    confidence: float = 1.0
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class KnowledgeIndexChunkRecord(BaseModel):
+    chunk_id: str
+    video_id: str
+    embedding_json: str
+    indexed_content: str
+    index_type: str = "video_summary"
+    segment_order: int | None = None
+    anchor_label: str | None = None
+    anchor_seconds: float | None = None
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class TagItem(BaseModel):
+    tag: str
+    count: int
+    videos: list[str] = Field(default_factory=list)
+
+
+class TagListResponse(BaseModel):
+    items: list[TagItem] = Field(default_factory=list)
+
+
+class VideoTagListResponse(BaseModel):
+    video_id: str
+    items: list[VideoTagRecord] = Field(default_factory=list)
+
+
+class KnowledgeTagCreateRequest(BaseModel):
+    video_id: str
+    tag: str
+
+
+class KnowledgeAutoTagRequest(BaseModel):
+    video_ids: list[str] | None = None
+
+
+class KnowledgeAutoTagVideoResult(BaseModel):
+    video_id: str
+    tags: list[str] = Field(default_factory=list)
+
+
+class KnowledgeAutoTagResponse(BaseModel):
+    items: list[KnowledgeAutoTagVideoResult] = Field(default_factory=list)
+
+
+class KnowledgeNetworkNode(BaseModel):
+    id: str
+    label: str
+    type: str
+    count: int | None = None
+    tags: list[str] = Field(default_factory=list)
+    degree: int | None = None
+    focus: bool = False
+    hidden_count: int = 0
+    video_count: int = 0
+
+
+class KnowledgeNetworkLink(BaseModel):
+    source: str
+    target: str
+    weight: float = 1.0
+    kind: str = "cooccurrence"
+
+
+class KnowledgeNetworkResponse(BaseModel):
+    nodes: list[KnowledgeNetworkNode] = Field(default_factory=list)
+    links: list[KnowledgeNetworkLink] = Field(default_factory=list)
+    mode: str = "overview"
+    hidden_tag_count: int = 0
+    selected_tags: list[str] = Field(default_factory=list)
+
+
+class KnowledgeSearchFilters(BaseModel):
+    tags: list[str] = Field(default_factory=list)
+
+
+class KnowledgeSearchRequest(BaseModel):
+    query: str
+    limit: int = 10
+    filters: KnowledgeSearchFilters | None = None
+
+
+class KnowledgeSearchResult(BaseModel):
+    video_id: str
+    title: str
+    relevance_score: float
+    snippet: str
+    tags: list[str] = Field(default_factory=list)
+    cover_url: str = ""
+    timestamp: str | None = None
+
+
+class KnowledgeSearchResponse(BaseModel):
+    query: str
+    results: list[KnowledgeSearchResult] = Field(default_factory=list)
+    total: int = 0
+
+
+class KnowledgeAskRequest(BaseModel):
+    query: str
+    context_limit: int = 5
+
+
+class KnowledgeSourceRef(BaseModel):
+    video_id: str
+    title: str
+    relevance_score: float
+    timestamp: str | None = None
+
+
+class KnowledgeAskResponse(BaseModel):
+    query: str
+    answer: str
+    sources: list[KnowledgeSourceRef] = Field(default_factory=list)
+
+
+class KnowledgeStatsResponse(BaseModel):
+    video_count: int
+    indexed_chunk_count: int
+    tag_count: int
+    untagged_video_count: int
+    knowledge_llm_available: bool
+
+
+class KnowledgeRebuildResponse(BaseModel):
+    indexed_videos: int

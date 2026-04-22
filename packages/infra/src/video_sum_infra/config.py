@@ -205,6 +205,14 @@ TRANSCRIPTION_PROVIDER_ALIASES = {
     "silicon_flow": "siliconflow",
 }
 
+KNOWLEDGE_LLM_MODE_ALIASES = {
+    "same_as_main": "same_as_main",
+    "same-as-main": "same_as_main",
+    "same": "same_as_main",
+    "custom": "custom",
+    "independent": "custom",
+}
+
 
 def normalize_device_preference(value: str | None, default: str = "cpu") -> str:
     normalized = str(value or "").strip().lower()
@@ -218,6 +226,13 @@ def normalize_transcription_provider(value: str | None, default: str = "siliconf
     if not normalized:
         return default
     return TRANSCRIPTION_PROVIDER_ALIASES.get(normalized, default)
+
+
+def normalize_knowledge_llm_mode(value: str | None, default: str = "same_as_main") -> str:
+    normalized = str(value or "").strip().lower()
+    if not normalized:
+        return default
+    return KNOWLEDGE_LLM_MODE_ALIASES.get(normalized, default)
 
 
 def recommend_task_concurrency(settings: "ServiceSettings", *, cuda_available: bool | None = None) -> int:
@@ -279,6 +294,11 @@ class ServiceSettings(BaseSettings):
     llm_api_key: str = ""
     llm_base_url: str = ""
     llm_model: str = ""
+    knowledge_llm_mode: str = "same_as_main"
+    knowledge_llm_enabled: bool = False
+    knowledge_llm_api_key: str = ""
+    knowledge_llm_base_url: str = ""
+    knowledge_llm_model: str = ""
     summary_system_prompt: str = DEFAULT_SUMMARY_SYSTEM_PROMPT
     summary_user_prompt_template: str = DEFAULT_SUMMARY_USER_PROMPT_TEMPLATE
     mindmap_system_prompt: str = DEFAULT_MINDMAP_SYSTEM_PROMPT
@@ -305,6 +325,11 @@ class ServiceSettings(BaseSettings):
     @classmethod
     def _normalize_transcription_provider(cls, value: str | None) -> str:
         return normalize_transcription_provider(value)
+
+    @field_validator("knowledge_llm_mode", mode="before")
+    @classmethod
+    def _normalize_knowledge_llm_mode(cls, value: str | None) -> str:
+        return normalize_knowledge_llm_mode(value)
 
     @field_validator("summary_chunk_overlap_segments", "task_concurrency", "mindmap_concurrency", "summary_chunk_concurrency", "summary_chunk_retry_count", mode="before")
     @classmethod

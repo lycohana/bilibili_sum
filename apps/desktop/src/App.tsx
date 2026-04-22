@@ -15,12 +15,13 @@ import {
   type UpdateState,
 } from "./appModel";
 import { api } from "./api";
-import { HomeIcon, LibraryIcon, SettingsIcon } from "./components/AppIcons";
+import { HomeIcon, KnowledgeIcon, LibraryIcon, SettingsIcon } from "./components/AppIcons";
 import { MultiPageSelectDialog } from "./components/MultiPageSelectDialog";
 import { SetupAssistantDialog } from "./components/SetupAssistantDialog";
 import { TitleBar } from "./components/TitleBar";
 import { UpdateDialog, type UpdateInfo } from "./components/UpdateDialog";
 import { HomePage } from "./pages/HomePage";
+import { KnowledgePage } from "./pages/KnowledgePage";
 import { LibraryPage } from "./pages/LibraryPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { VideoDetailPage } from "./pages/VideoDetailPage";
@@ -512,6 +513,13 @@ export function App() {
               <small>资产管理</small>
             </span>
           </Link>
+          <Link className={`nav-item ${location.pathname === "/knowledge" ? "active" : ""}`} to="/knowledge" aria-label="知识库" title="知识库" onClick={() => setMobileSidebarOpen(false)}>
+            <span className="nav-icon" aria-hidden="true"><KnowledgeIcon /></span>
+            <span className="nav-copy">
+              <strong>知识库</strong>
+              <small>检索与问答</small>
+            </span>
+          </Link>
           <Link className={`nav-item ${location.pathname.startsWith("/settings") ? "active" : ""}`} to="/settings" aria-label="设置" title="设置" onClick={() => setMobileSidebarOpen(false)}>
             <span className="nav-icon" aria-hidden="true"><SettingsIcon /></span>
             <span className="nav-copy">
@@ -626,6 +634,7 @@ export function App() {
                   />
                 )}
               />
+              <Route path="/knowledge" element={<KnowledgePage />} />
               <Route path="/videos/:videoId" element={<VideoDetailPage onRefresh={() => setRefreshSeed((value) => value + 1)} />} />
               <Route
                 path="/settings"
