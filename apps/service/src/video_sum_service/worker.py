@@ -7,6 +7,8 @@ from threading import Condition, Lock, Thread
 
 from video_sum_core.models.tasks import TaskResult, TaskStatus
 from video_sum_core.pipeline.base import PipelineContext, PipelineRunner
+from video_sum_infra.config import ServiceSettings
+from video_sum_service.knowledge import KnowledgeIndexService
 from video_sum_service.repository import SqliteTaskRepository
 from video_sum_service.schemas import TaskRecord
 
@@ -44,12 +46,16 @@ class TaskWorker:
         pipeline_runner: PipelineRunner,
         *,
         auto_generate_mindmap: bool = False,
+        knowledge_index_auto_rebuild: str = "disabled",
+        knowledge_index_settings: ServiceSettings | None = None,
         task_concurrency: int = 1,
         mindmap_concurrency: int = 1,
     ) -> None:
         self._repository = repository
         self._pipeline_runner = pipeline_runner
         self._auto_generate_mindmap = auto_generate_mindmap
+        self._knowledge_index_auto_rebuild = str(knowledge_index_auto_rebuild or "disabled")
+        self._knowledge_index_settings = knowledge_index_settings or ServiceSettings()
         self._task_state = _TaskQueueState("task", task_concurrency)
         self._mindmap_state = _TaskQueueState("mindmap", mindmap_concurrency)
         self._lock = Lock()
@@ -233,6 +239,8 @@ class TaskWorker:
             )
             if self._auto_generate_mindmap and self._can_auto_generate_mindmap(final_result):
                 self.submit_mindmap(task_id)
+            if self._knowledge_index_auto_rebuild == "on_task_completed":
+                self._index_completed_task(record.video_id, task_id)
         except Exception as exc:
             logger.exception("task failed task_id=%s error=%s", task_id, exc)
             self._repository.update_error(task_id, "TASK_EXECUTION_FAILED", str(exc))
@@ -250,6 +258,36 @@ class TaskWorker:
             result.knowledge_note_markdown.strip()
             and result.artifacts.get("summary_path")
         )
+
+    def _index_completed_task(self, video_id: str | None, task_id: str) -> None:
+        if not video_id:
+            return
+        self._repository.append_event(
+            task_id=task_id,
+            stage="knowledge_index_refreshing",
+            progress=100,
+            message="正在刷新知识库索引",
+        )
+        try:
+            index_service = KnowledgeIndexService(self._repository, self._knowledge_index_settings)
+            indexed = index_service.index_video(video_id)
+            self._repository.append_event(
+                task_id=task_id,
+                stage="knowledge_index_completed",
+                progress=100,
+                message="知识库索引已刷新",
+                payload={"indexed": indexed},
+            )
+            logger.info("auto refreshed knowledge index video_id=%s indexed=%s", video_id, indexed)
+        except Exception as exc:
+            self._repository.append_event(
+                task_id=task_id,
+                stage="knowledge_index_failed",
+                progress=100,
+                message="知识库索引刷新失败",
+                payload={"error": str(exc)},
+            )
+            logger.warning("auto knowledge index refresh failed video_id=%s error=%s", video_id, exc)
 
     def _run_mindmap_job(self, job: _MindmapJob) -> None:
         self._run_mindmap(job.task_id, job.force)

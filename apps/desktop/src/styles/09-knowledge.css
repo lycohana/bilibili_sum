@@ -16,10 +16,10 @@
   align-items: center;
   gap: 8px;
   padding: 6px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.78);
+  border-radius: var(--radius-pill);
+  background: var(--bg-card);
   border: 1px solid var(--border-subtle);
-  box-shadow: var(--shadow-sm);
+  box-shadow: none;
 }
 
 .knowledge-view-tab {
@@ -34,9 +34,9 @@
 }
 
 .knowledge-view-tab.is-active {
-  background: linear-gradient(135deg, color-mix(in srgb, var(--brand-500) 14%, white), rgba(255, 255, 255, 0.95));
+  background: var(--bg-accent-strong);
   color: var(--text-primary);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--brand-500) 18%, transparent), var(--shadow-sm);
+  box-shadow: none;
 }
 
 .knowledge-topbar-actions {
@@ -45,6 +45,83 @@
   gap: 10px;
   align-items: center;
   justify-content: flex-end;
+}
+
+.knowledge-maintenance-menu {
+  position: relative;
+}
+
+.knowledge-maintenance-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.knowledge-maintenance-caret {
+  width: 8px;
+  height: 8px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(45deg) translateY(-2px);
+  transition: transform var(--transition-fast);
+}
+
+.knowledge-maintenance-menu.is-open .knowledge-maintenance-caret {
+  transform: rotate(225deg) translate(-2px, -1px);
+}
+
+.knowledge-maintenance-popover {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  z-index: 24;
+  width: min(320px, calc(100vw - 32px));
+  display: grid;
+  gap: 4px;
+  padding: 8px;
+  border-radius: var(--radius-xl);
+  border: 1px solid var(--border-default);
+  background: color-mix(in srgb, var(--bg-card) 94%, var(--bg-base) 6%);
+  box-shadow: var(--shadow-lg);
+  backdrop-filter: blur(18px);
+  animation: knowledge-popover-in 180ms ease-out;
+}
+
+.knowledge-maintenance-item {
+  width: 100%;
+  border: 0;
+  border-radius: var(--radius-md);
+  padding: 11px 12px;
+  display: grid;
+  gap: 4px;
+  background: transparent;
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--transition-fast), opacity var(--transition-fast);
+}
+
+.knowledge-maintenance-item:hover {
+  background: var(--bg-subtle);
+}
+
+.knowledge-maintenance-item:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.knowledge-maintenance-item:disabled:hover {
+  background: transparent;
+}
+
+.knowledge-maintenance-item strong {
+  font-size: 0.9rem;
+}
+
+.knowledge-maintenance-item span {
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+  line-height: 1.45;
 }
 
 .knowledge-status-banner {
@@ -66,17 +143,17 @@
 .knowledge-chat-shell,
 .knowledge-network-card,
 .knowledge-panel-card {
-  border-radius: 30px;
+  border-radius: var(--radius-2xl);
   border: 1px solid var(--border-subtle);
-  background: rgba(255, 255, 255, 0.88);
-  box-shadow: var(--shadow-sm);
+  background: var(--bg-card);
+  box-shadow: none;
 }
 
 [data-theme="dark"] .knowledge-chat-shell,
 [data-theme="dark"] .knowledge-network-card,
 [data-theme="dark"] .knowledge-panel-card,
 [data-theme="dark"] .knowledge-tag-manager {
-  background: rgba(20, 20, 20, 0.95);
+  background: var(--bg-card);
 }
 
 .knowledge-chat-shell {
@@ -84,9 +161,7 @@
   display: grid;
   grid-template-rows: minmax(0, 1fr) auto;
   overflow: hidden;
-  background:
-    radial-gradient(circle at top, color-mix(in srgb, var(--brand-500) 10%, transparent), transparent 35%),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0.88));
+  background: var(--bg-canvas);
 }
 
 .knowledge-chat-scroll {
@@ -133,22 +208,21 @@
 }
 
 .knowledge-chat-suggestion-card {
-  border: 1px solid color-mix(in srgb, var(--brand-500) 14%, var(--border-subtle));
-  background: rgba(255, 255, 255, 0.86);
-  border-radius: 22px;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-card);
+  border-radius: var(--radius-lg);
   padding: 18px 20px;
   text-align: left;
   font-size: 0.95rem;
   font-weight: 700;
   color: var(--text-primary);
   cursor: pointer;
-  box-shadow: var(--shadow-sm);
-  transition: transform 140ms ease, box-shadow 140ms ease;
+  box-shadow: none;
+  transition: background-color 140ms ease;
 }
 
 .knowledge-chat-suggestion-card:hover {
-  transform: translateY(-1px);
-  box-shadow: var(--shadow-md);
+  background-color: var(--bg-soft);
 }
 
 .knowledge-chat-composer-dock {
@@ -156,19 +230,20 @@
   bottom: 0;
   z-index: 2;
   padding: 18px 28px 26px;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0), rgba(255, 255, 255, 0.9) 24%, rgba(255, 255, 255, 0.98));
+  background: var(--bg-canvas);
+  border-top: 1px solid var(--border-subtle);
 }
 
 .knowledge-chat-composer-surface {
   width: min(980px, 100%);
   margin: 0 auto;
-  border-radius: 28px;
-  border: 1px solid color-mix(in srgb, var(--brand-500) 16%, var(--border-subtle));
-  background: rgba(255, 255, 255, 0.96);
+  border-radius: var(--radius-2xl);
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-card);
   padding: 16px 16px 14px;
   display: grid;
   gap: 14px;
-  box-shadow: var(--shadow-lg);
+  box-shadow: none;
 }
 
 .knowledge-chat-textarea {
@@ -234,10 +309,10 @@
 .knowledge-chat-bubble.is-user {
   width: min(72%, 720px);
   padding: 14px 18px;
-  border-radius: 26px;
-  background: linear-gradient(135deg, color-mix(in srgb, var(--brand-500) 10%, white), rgba(255, 255, 255, 0.98));
-  border: 1px solid color-mix(in srgb, var(--brand-500) 16%, var(--border-subtle));
-  box-shadow: var(--shadow-sm);
+  border-radius: var(--radius-xl);
+  background: var(--bg-accent);
+  border: 1px solid var(--border-subtle);
+  box-shadow: none;
 }
 
 .knowledge-chat-bubble.is-assistant {
@@ -270,6 +345,184 @@
   color: var(--text-primary);
   font-size: 1rem;
   line-height: 1.82;
+  max-width: none;
+  overflow-wrap: break-word;
+}
+
+.knowledge-chat-markdown.markdown-content p,
+.knowledge-chat-markdown.markdown-content ul,
+.knowledge-chat-markdown.markdown-content ol,
+.knowledge-chat-markdown.markdown-content blockquote,
+.knowledge-chat-markdown.markdown-content pre,
+.knowledge-chat-markdown.markdown-content table {
+  margin-bottom: 16px;
+}
+
+.knowledge-chat-markdown.markdown-content p {
+  color: color-mix(in srgb, var(--text-primary) 86%, var(--text-secondary) 14%);
+}
+
+.knowledge-chat-markdown.markdown-content h1,
+.knowledge-chat-markdown.markdown-content h2,
+.knowledge-chat-markdown.markdown-content h3,
+.knowledge-chat-markdown.markdown-content h4 {
+  position: relative;
+  margin: 24px 0 12px;
+  color: var(--text-primary);
+  line-height: 1.34;
+  letter-spacing: 0;
+}
+
+.knowledge-chat-markdown.markdown-content h1:first-child,
+.knowledge-chat-markdown.markdown-content h2:first-child,
+.knowledge-chat-markdown.markdown-content h3:first-child,
+.knowledge-chat-markdown.markdown-content h4:first-child {
+  margin-top: 0;
+}
+
+.knowledge-chat-markdown.markdown-content h1 {
+  font-size: 1.42rem;
+  padding-bottom: 10px;
+  border-bottom: 1px solid color-mix(in srgb, var(--brand-500) 16%, var(--border-subtle));
+}
+
+.knowledge-chat-markdown.markdown-content h2 {
+  font-size: 1.2rem;
+  padding: 8px 0 8px 14px;
+  border-left: 3px solid color-mix(in srgb, var(--brand-500) 70%, transparent);
+}
+
+.knowledge-chat-markdown.markdown-content h3 {
+  font-size: 1.06rem;
+  padding-left: 12px;
+}
+
+.knowledge-chat-markdown.markdown-content h3::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0.62em;
+  width: 5px;
+  height: 5px;
+  border-radius: 999px;
+  background: var(--brand-500);
+}
+
+.knowledge-chat-markdown.markdown-content h4 {
+  font-size: 0.98rem;
+  color: var(--text-secondary);
+}
+
+.knowledge-chat-markdown.markdown-content strong {
+  color: var(--text-primary);
+  font-weight: 800;
+}
+
+.knowledge-chat-markdown.markdown-content p > strong:first-child,
+.knowledge-chat-markdown.markdown-content li > strong:first-child {
+  color: color-mix(in srgb, var(--brand-700) 78%, var(--text-primary) 22%);
+}
+
+.knowledge-chat-markdown.markdown-content ul,
+.knowledge-chat-markdown.markdown-content ol {
+  padding-left: 24px;
+}
+
+.knowledge-chat-markdown.markdown-content li {
+  padding-left: 2px;
+  color: color-mix(in srgb, var(--text-primary) 84%, var(--text-secondary) 16%);
+}
+
+.knowledge-chat-markdown.markdown-content li::marker {
+  color: var(--brand-500);
+  font-weight: 800;
+}
+
+.knowledge-chat-markdown.markdown-content blockquote {
+  margin: 18px 0;
+  padding: 14px 16px;
+  border-left: 3px solid color-mix(in srgb, var(--brand-500) 62%, transparent);
+  border-radius: 0 var(--radius-lg) var(--radius-lg) 0;
+  background: color-mix(in srgb, var(--brand-500) 6%, var(--bg-card));
+  color: var(--text-secondary);
+}
+
+.knowledge-chat-markdown.markdown-content blockquote > :last-child {
+  margin-bottom: 0;
+}
+
+.knowledge-chat-markdown.markdown-content :not(pre) > code {
+  border-radius: 7px;
+  padding: 0.16rem 0.38rem;
+  background: color-mix(in srgb, var(--bg-soft) 82%, var(--brand-500) 8%);
+  border: 1px solid color-mix(in srgb, var(--border-subtle) 78%, transparent);
+  color: color-mix(in srgb, var(--text-primary) 92%, var(--brand-700) 8%);
+}
+
+.knowledge-chat-markdown.markdown-content pre {
+  border-radius: var(--radius-lg);
+  border: 1px solid color-mix(in srgb, var(--border-subtle) 76%, var(--brand-500) 10%);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--bg-card) 78%, var(--bg-soft) 22%), var(--bg-soft));
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--bg-card) 78%, transparent);
+}
+
+.knowledge-chat-markdown.markdown-content table {
+  display: table;
+  width: fit-content;
+  min-width: 0;
+  max-width: 100%;
+  table-layout: auto;
+  overflow: hidden;
+  border-radius: var(--radius-lg);
+  border-color: color-mix(in srgb, var(--border-subtle) 82%, var(--brand-500) 18%);
+  background: color-mix(in srgb, var(--bg-card) 88%, var(--brand-500) 4%);
+}
+
+.knowledge-chat-markdown.markdown-content thead {
+  background: color-mix(in srgb, var(--brand-500) 9%, var(--bg-soft));
+}
+
+.knowledge-chat-markdown.markdown-content th {
+  color: var(--text-primary);
+}
+
+.knowledge-chat-markdown.markdown-content td {
+  color: var(--text-secondary);
+}
+
+.knowledge-chat-markdown.markdown-content th,
+.knowledge-chat-markdown.markdown-content td {
+  max-width: min(58ch, 64vw);
+  overflow-wrap: break-word;
+}
+
+.knowledge-chat-markdown.markdown-content .katex {
+  color: var(--text-primary);
+  font-size: 1.04em;
+}
+
+.knowledge-chat-markdown.markdown-content .katex-display {
+  margin: 18px 0;
+  padding: 14px 16px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  border-radius: var(--radius-lg);
+  border: 1px solid color-mix(in srgb, var(--brand-500) 18%, var(--border-subtle));
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--brand-500) 5%, var(--bg-card)), var(--bg-soft));
+}
+
+.knowledge-chat-markdown.markdown-content .katex-display > .katex {
+  display: inline-block;
+  min-width: max-content;
+  font-size: 1.08em;
+}
+
+[data-theme="dark"] .knowledge-chat-markdown.markdown-content blockquote,
+[data-theme="dark"] .knowledge-chat-markdown.markdown-content .katex-display,
+[data-theme="dark"] .knowledge-chat-markdown.markdown-content pre {
+  background: color-mix(in srgb, var(--bg-soft) 86%, var(--bg-card) 14%);
 }
 
 .knowledge-chat-action-row {
@@ -282,46 +535,228 @@
   min-width: 118px;
 }
 
+.knowledge-chat-new-session {
+  min-width: 96px;
+}
+
 .knowledge-tool-trace {
-  border-radius: 18px;
+  position: relative;
+  border-radius: var(--radius-lg);
   border: 1px solid var(--border-subtle);
-  background: var(--bg-card);
+  background: color-mix(in srgb, var(--bg-soft) 72%, var(--bg-card) 28%);
   overflow: hidden;
+  max-width: 100%;
+}
+
+.knowledge-tool-trace::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto auto 0;
+  width: 100%;
+  height: 2px;
+  pointer-events: none;
+  opacity: 0;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in srgb, var(--info) 74%, transparent),
+    transparent
+  );
+  transform: translateX(-100%);
+}
+
+.knowledge-tool-trace.is-running {
+  border-color: color-mix(in srgb, var(--info) 20%, var(--border-subtle));
+  background: color-mix(in srgb, var(--bg-info) 48%, var(--bg-card) 52%);
+}
+
+.knowledge-tool-trace.is-running::before {
+  opacity: 1;
+  animation: knowledge-tool-scan 1.8s ease-in-out infinite;
+}
+
+.knowledge-tool-trace.is-error {
+  border-color: var(--danger-border);
+  background: color-mix(in srgb, var(--bg-danger) 48%, var(--bg-card) 52%);
 }
 
 .knowledge-tool-trace summary {
+  position: relative;
   list-style: none;
   cursor: pointer;
-  padding: 12px 14px;
+  min-height: 46px;
+  padding: 10px 14px;
   font-size: 0.88rem;
   color: var(--text-secondary);
   font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  user-select: none;
+  transition: background-color var(--transition-fast);
+}
+
+.knowledge-tool-trace summary:hover {
+  background: color-mix(in srgb, var(--bg-card) 42%, transparent);
+}
+
+.knowledge-tool-trace summary::after {
+  content: "";
+  width: 8px;
+  height: 8px;
+  flex: 0 0 auto;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(45deg);
+  opacity: 0.62;
+  transition: transform var(--transition-fast);
+}
+
+.knowledge-tool-trace[open] summary::after {
+  transform: rotate(225deg) translate(-2px, -2px);
 }
 
 .knowledge-tool-trace summary::-webkit-details-marker {
   display: none;
 }
 
+.knowledge-tool-summary-main,
+.knowledge-tool-summary-status {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.knowledge-tool-summary-main {
+  gap: 8px;
+  color: var(--text-primary);
+}
+
+.knowledge-tool-summary-icon {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: linear-gradient(145deg, color-mix(in srgb, var(--info) 15%, var(--bg-card)), var(--bg-card));
+  border: 1px solid color-mix(in srgb, var(--info-border) 78%, transparent);
+  color: var(--info);
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+  box-shadow:
+    0 1px 2px color-mix(in srgb, var(--text-primary) 8%, transparent),
+    inset 0 1px 0 color-mix(in srgb, #fff 64%, transparent);
+}
+
+.knowledge-tool-trace.is-completed .knowledge-tool-summary-icon {
+  background: linear-gradient(145deg, color-mix(in srgb, var(--success) 18%, var(--bg-card)), var(--success-bg));
+  border-color: var(--success-border);
+  color: var(--success);
+}
+
+.knowledge-tool-trace.is-error .knowledge-tool-summary-icon {
+  background: linear-gradient(145deg, color-mix(in srgb, var(--danger) 16%, var(--bg-card)), var(--danger-bg));
+  border-color: var(--danger-border);
+  color: var(--danger);
+}
+
+.knowledge-tool-trace.is-running .knowledge-tool-summary-icon {
+  animation: knowledge-tool-breathe 1.35s ease-in-out infinite;
+}
+
+.knowledge-tool-summary-icon svg {
+  width: 15px;
+  height: 15px;
+  stroke-width: 1.75;
+}
+
+.knowledge-tool-summary-icon-page {
+  fill: color-mix(in srgb, currentColor 10%, transparent);
+}
+
+.knowledge-tool-summary-icon-fold {
+  fill: color-mix(in srgb, currentColor 18%, transparent);
+}
+
+.knowledge-tool-summary-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.knowledge-tool-summary-progress {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+  margin-left: 2px;
+}
+
+.knowledge-tool-summary-progress i {
+  width: 4px;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--info);
+  opacity: 0.36;
+  animation: knowledge-tool-dot 1.05s ease-in-out infinite;
+}
+
+.knowledge-tool-summary-progress i:nth-child(2) {
+  animation-delay: 140ms;
+}
+
+.knowledge-tool-summary-progress i:nth-child(3) {
+  animation-delay: 280ms;
+}
+
+.knowledge-tool-summary-status {
+  margin-left: auto;
+  color: var(--text-tertiary);
+  font-size: 0.78rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
 .knowledge-tool-list {
   display: grid;
-  gap: 10px;
-  padding: 0 14px 14px;
+  gap: 0;
+  padding: 2px 12px 12px;
+  animation: knowledge-tool-reveal 160ms ease-out;
+}
+
+.knowledge-tool-list::before {
+  content: "";
+  height: 1px;
+  margin: 0 2px 4px;
+  background: var(--border-subtle);
 }
 
 .knowledge-tool-card {
-  border-radius: 16px;
-  border: 1px solid var(--border-subtle);
-  background: rgba(255, 255, 255, 0.86);
-  padding: 12px 14px;
+  position: relative;
+  border-radius: var(--radius-md);
+  border: 0;
+  background: transparent;
+  padding: 11px 10px 11px 34px;
   display: grid;
-  gap: 10px;
+  gap: 6px;
+}
+
+.knowledge-tool-card.is-running {
+  background: color-mix(in srgb, var(--bg-info) 36%, transparent);
+}
+
+.knowledge-tool-card + .knowledge-tool-card {
+  border-top: 1px solid var(--border-subtle);
+  border-radius: 0;
 }
 
 .knowledge-tool-card p {
   margin: 0;
   color: var(--text-secondary);
-  line-height: 1.68;
-  font-size: 0.92rem;
+  line-height: 1.56;
+  font-size: 0.88rem;
 }
 
 .knowledge-tool-head,
@@ -334,52 +769,178 @@
 
 .knowledge-tool-status {
   justify-content: flex-start;
+  min-width: 0;
+}
+
+.knowledge-tool-status strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .knowledge-tool-status-dot {
-  width: 10px;
-  height: 10px;
+  position: absolute;
+  left: 12px;
+  top: 17px;
+  width: 8px;
+  height: 8px;
   border-radius: 999px;
   background: var(--text-tertiary);
 }
 
 .knowledge-tool-card.is-running .knowledge-tool-status-dot {
-  background: #2563eb;
-  box-shadow: 0 0 0 6px rgba(37, 99, 235, 0.12);
+  background: var(--info);
+  box-shadow: 0 0 0 5px var(--info-bg);
+  animation: knowledge-tool-pulse 1.2s ease-in-out infinite;
 }
 
 .knowledge-tool-card.is-completed .knowledge-tool-status-dot {
-  background: #16a34a;
+  background: var(--success);
 }
 
 .knowledge-tool-card.is-error .knowledge-tool-status-dot {
-  background: #dc2626;
+  background: var(--danger);
+}
+
+.knowledge-tool-step-index {
+  color: var(--text-muted);
+  font-size: 0.74rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
 }
 
 .knowledge-tool-status-text {
   color: var(--text-tertiary);
-  font-size: 0.8rem;
+  font-size: 0.76rem;
   font-weight: 700;
+  white-space: nowrap;
+}
+
+.knowledge-tool-card.is-running .knowledge-tool-status-text {
+  color: var(--info);
+}
+
+.knowledge-tool-card.is-completed .knowledge-tool-status-text {
+  color: var(--success);
+}
+
+.knowledge-tool-card.is-error .knowledge-tool-status-text {
+  color: var(--danger);
 }
 
 .knowledge-tool-meta,
 .knowledge-tool-source-preview {
   display: flex;
-  gap: 8px;
+  gap: 6px;
   flex-wrap: wrap;
 }
 
 .knowledge-tool-source-chip {
   border-radius: 999px;
-  padding: 6px 10px;
-  font-size: 0.78rem;
+  padding: 4px 8px;
+  max-width: min(100%, 340px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.74rem;
   color: var(--text-secondary);
-  background: var(--bg-soft);
+  background: var(--bg-card);
   border: 1px solid var(--border-subtle);
+}
+
+@keyframes knowledge-tool-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+
+  50% {
+    transform: scale(0.72);
+    opacity: 0.62;
+  }
+}
+
+@keyframes knowledge-tool-scan {
+  0% {
+    transform: translateX(-100%);
+  }
+
+  48%,
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+@keyframes knowledge-tool-breathe {
+  0%,
+  100% {
+    box-shadow:
+      0 1px 2px color-mix(in srgb, var(--text-primary) 8%, transparent),
+      inset 0 1px 0 color-mix(in srgb, #fff 64%, transparent),
+      0 0 0 0 color-mix(in srgb, var(--info) 0%, transparent);
+  }
+
+  50% {
+    box-shadow:
+      0 1px 2px color-mix(in srgb, var(--text-primary) 8%, transparent),
+      inset 0 1px 0 color-mix(in srgb, #fff 64%, transparent),
+      0 0 0 4px color-mix(in srgb, var(--info) 12%, transparent);
+  }
+}
+
+@keyframes knowledge-tool-dot {
+  0%,
+  100% {
+    opacity: 0.32;
+    transform: translateY(0);
+  }
+
+  45% {
+    opacity: 1;
+    transform: translateY(-2px);
+  }
+}
+
+@keyframes knowledge-tool-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes knowledge-popover-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .knowledge-tool-trace.is-running::before,
+  .knowledge-tool-trace.is-running .knowledge-tool-summary-icon,
+  .knowledge-tool-summary-progress i,
+  .knowledge-tool-card.is-running .knowledge-tool-status-dot,
+  .knowledge-tool-list {
+    animation: none;
+  }
 }
 
 .knowledge-chat-source-card {
   min-width: 220px;
+  max-width: min(100%, 520px);
   border-radius: 18px;
   border: 1px solid var(--border-subtle);
   background: var(--bg-card);
@@ -392,11 +953,14 @@
 
 .knowledge-chat-source-card strong {
   color: var(--text-primary);
+  line-height: 1.42;
+  overflow-wrap: anywhere;
 }
 
 .knowledge-chat-source-card span {
   color: var(--text-tertiary);
   font-size: 0.84rem;
+  line-height: 1.35;
 }
 
 .knowledge-workbench-shell {
@@ -444,6 +1008,50 @@
   flex-wrap: wrap;
 }
 
+.knowledge-network-legend {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.knowledge-network-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  border-radius: var(--radius-pill);
+  padding: 6px 10px;
+  background: var(--bg-soft);
+  color: var(--text-tertiary);
+  font-size: 0.78rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.knowledge-network-legend i {
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  flex: 0 0 auto;
+}
+
+.knowledge-network-legend i.is-tag {
+  background: var(--brand-500);
+}
+
+.knowledge-network-legend i.is-video {
+  background: var(--text-secondary);
+}
+
+.knowledge-network-legend i.is-edge {
+  width: 16px;
+  height: 2px;
+  border-radius: 0;
+  background: var(--border-strong);
+}
+
 .knowledge-stats-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -451,7 +1059,7 @@
 }
 
 .knowledge-stat-chip {
-  border-radius: 20px;
+  border-radius: var(--radius-lg);
   border: 1px solid var(--border-subtle);
   background: var(--bg-soft);
   padding: 14px 16px;
@@ -490,7 +1098,7 @@
 
 .knowledge-result-card,
 .knowledge-tag-record {
-  border-radius: 22px;
+  border-radius: var(--radius-lg);
   border: 1px solid var(--border-subtle);
   background: var(--bg-card);
   padding: 16px 18px;
@@ -521,40 +1129,108 @@
 }
 
 .knowledge-network-canvas {
-  height: 520px;
-  border-radius: 24px;
+  height: 560px;
+  border-radius: var(--radius-2xl);
   overflow: hidden;
   border: 1px solid var(--border-subtle);
   background:
-    radial-gradient(circle at top left, rgba(244, 114, 182, 0.08), transparent 34%),
-    var(--bg-soft);
+    radial-gradient(circle at 50% 52%, color-mix(in srgb, var(--brand-500) 10%, transparent), transparent 32%),
+    linear-gradient(180deg, var(--bg-card), var(--bg-soft));
+}
+
+.knowledge-network-canvas .react-flow__edge-path {
+  stroke: color-mix(in srgb, var(--text-muted) 48%, transparent);
+}
+
+.knowledge-network-canvas .react-flow__edge.is-association .react-flow__edge-path {
+  stroke-dasharray: 5 6;
+}
+
+.knowledge-network-canvas .react-flow__handle {
+  width: 7px;
+  height: 7px;
+  border: 1px solid color-mix(in srgb, var(--text-primary) 38%, transparent);
+  background: var(--bg-card);
+}
+
+.knowledge-network-canvas .react-flow__node {
+  transition: transform var(--transition-fast), filter var(--transition-fast);
+}
+
+.knowledge-network-canvas .react-flow__node:hover {
+  filter: drop-shadow(0 10px 18px rgba(0, 0, 0, 0.08));
 }
 
 .knowledge-flow-node {
-  border-radius: 18px;
-  border: 1px solid var(--border-default);
-  background: rgba(255, 255, 255, 0.96);
-  padding: 12px 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-card);
+  padding: 11px 14px;
   font-size: 0.88rem;
   font-weight: 700;
   color: var(--text-primary);
-  box-shadow: var(--shadow-sm);
+  line-height: 1.25;
+  text-align: center;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.55);
 }
 
 .knowledge-flow-node.is-tag {
-  border-color: color-mix(in srgb, var(--brand-500) 16%, var(--border-default));
-  background: color-mix(in srgb, var(--brand-500) 6%, white);
+  border-color: var(--accent-border);
+  background: var(--bg-accent);
+  color: color-mix(in srgb, var(--text-primary) 92%, var(--brand-700));
+}
+
+.knowledge-flow-node.is-tag.is-soft {
+  opacity: 0.78;
+}
+
+.knowledge-flow-node.is-tag.is-medium {
+  background: color-mix(in srgb, var(--bg-accent-strong) 68%, var(--bg-card) 32%);
+}
+
+.knowledge-flow-node.is-tag.is-strong {
+  border-color: color-mix(in srgb, var(--brand-500) 42%, var(--border-subtle));
+  background: color-mix(in srgb, var(--brand-500) 12%, var(--bg-card));
+}
+
+.knowledge-flow-node.is-tag.is-center {
+  border-color: var(--brand-500);
+  background: color-mix(in srgb, var(--brand-500) 18%, var(--bg-card));
+  font-size: 0.94rem;
+  box-shadow:
+    0 0 0 8px color-mix(in srgb, var(--brand-500) 8%, transparent),
+    0 14px 26px color-mix(in srgb, var(--brand-500) 12%, transparent);
 }
 
 .knowledge-flow-node.is-tag.is-focus,
 .knowledge-flow-node.is-tag.is-active {
   border-color: var(--brand-500);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand-500) 16%, transparent), var(--shadow-sm);
+  background: color-mix(in srgb, var(--brand-500) 16%, var(--bg-card));
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--brand-500) 16%, transparent),
+    0 8px 18px color-mix(in srgb, var(--brand-500) 12%, transparent);
 }
 
 .knowledge-flow-node.is-video {
-  max-width: 210px;
-  background: rgba(255, 255, 255, 0.98);
+  border-color: var(--border-default);
+  background: color-mix(in srgb, var(--bg-card) 96%, var(--bg-soft) 4%);
+  color: var(--text-secondary);
+  font-weight: 650;
+  text-align: left;
+}
+
+[data-theme="dark"] .knowledge-network-canvas {
+  background:
+    radial-gradient(circle at 50% 52%, color-mix(in srgb, var(--brand-500) 14%, transparent), transparent 34%),
+    linear-gradient(180deg, var(--bg-card), var(--bg-soft));
+}
+
+[data-theme="dark"] .knowledge-network-canvas .react-flow__node:hover {
+  filter: drop-shadow(0 12px 20px rgba(0, 0, 0, 0.24));
+}
+
+[data-theme="dark"] .knowledge-flow-node {
+  box-shadow: none;
 }
 
 .knowledge-empty-state {
@@ -570,13 +1246,13 @@
   width: min(560px, calc(100vw - 32px));
   max-height: min(80vh, 720px);
   overflow: auto;
-  border-radius: 28px;
+  border-radius: var(--radius-2xl);
   border: 1px solid var(--border-subtle);
   background: var(--bg-canvas);
   padding: 22px;
   display: grid;
   gap: 16px;
-  box-shadow: var(--shadow-xl);
+  box-shadow: none;
 }
 
 .knowledge-tag-input-row {

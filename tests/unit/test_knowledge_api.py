@@ -7,8 +7,14 @@ from video_sum_core.models.tasks import TaskResult
 from video_sum_infra.config import ServiceSettings
 from video_sum_service.app import app
 from video_sum_service.knowledge.index_service import KnowledgeIndexService
-from video_sum_service.knowledge.local_llm import chat_knowledge_llm
-from video_sum_service.knowledge.rag_service import RagService
+from video_sum_service.knowledge.local_llm import _extract_stream_delta, chat_knowledge_llm
+from video_sum_service.knowledge.rag_service import (
+    KNOWLEDGE_QA_SYSTEM_PROMPT,
+    KnowledgeAgent,
+    RagService,
+    _build_contextual_search_query,
+    _build_knowledge_user_prompt,
+)
 from video_sum_service.knowledge.tag_service import TagService
 from video_sum_service.repository import SqliteTaskRepository
 from video_sum_service.routers import knowledge as knowledge_router
@@ -124,7 +130,12 @@ def seed_video(repository: SqliteTaskRepository, video_id_suffix: str = "knowled
     return repository.get_video_asset(video.video_id) or video
 
 
-def seed_video_with_real_task(repository: SqliteTaskRepository, video_id_suffix: str = "knowledge") -> VideoAssetRecord:
+def seed_video_with_real_task(
+    repository: SqliteTaskRepository,
+    video_id_suffix: str = "knowledge",
+    page_number: int | None = None,
+    page_title: str | None = None,
+) -> VideoAssetRecord:
     from video_sum_core.models.tasks import InputType, TaskInput, TaskStatus
 
     video = repository.upsert_video_asset(
@@ -135,7 +146,12 @@ def seed_video_with_real_task(repository: SqliteTaskRepository, video_id_suffix:
             source_url=f"https://www.bilibili.com/video/BV-{video_id_suffix}",
         )
     )
-    task = repository.create_task(TaskInput(input_type=InputType.URL, source=video.source_url, title=video.title), video_id=video.video_id)
+    task = repository.create_task(
+        TaskInput(input_type=InputType.URL, source=video.source_url, title=page_title or video.title),
+        video_id=video.video_id,
+        page_number=page_number,
+        page_title=page_title,
+    )
     repository.save_result(
         task.task_id,
         TaskResult(
@@ -205,6 +221,42 @@ def test_knowledge_search_returns_snippet_and_timestamp() -> None:
     assert response.results[0].timestamp is not None
 
 
+def test_knowledge_sources_prefer_multi_page_title(monkeypatch) -> None:
+    repository = create_repository()
+    page_title = "P72 项目实战-答题卡识别判卷：3-填涂轮廓检测"
+    video = seed_video_with_real_task(repository, "ask-page-title", page_number=72, page_title=page_title)
+    request = create_request(repository)
+    settings = ServiceSettings(
+        knowledge_llm_mode="custom",
+        knowledge_llm_enabled=True,
+        knowledge_llm_base_url="https://api.example.com/v1",
+        knowledge_llm_model="remote-model",
+    )
+    tag_service = TagService(repository, settings)
+    index_service = FakeKnowledgeIndexService(repository, settings)
+    rag_service = RagService(repository, index_service, tag_service, settings)
+    knowledge_router._get_services = lambda req: (tag_service, index_service, rag_service)  # type: ignore[assignment]
+    index_service.index_video(video.video_id)
+    monkeypatch.setattr(
+        "video_sum_service.knowledge.rag_service.chat_knowledge_llm",
+        lambda *args, **kwargs: ("这部分主要在讲填涂轮廓检测。", {"choices": []}),
+    )
+
+    response = knowledge_router.ask_knowledge(type("Body", (), {"query": "讲了什么", "context_limit": 3})(), request)
+    search_response = knowledge_router.search_knowledge(
+        type("Body", (), {"query": "填涂轮廓检测", "limit": 3, "filters": type("Filters", (), {"tags": []})()})(),
+        request,
+    )
+
+    assert response.sources
+    assert response.sources[0].title == page_title
+    assert response.sources[0].page_title == page_title
+    assert response.sources[0].page_number == 72
+    assert response.sources[0].video_title == "答题卡识别判卷"
+    assert search_response.results[0].title == page_title
+    assert search_response.results[0].video_title == "答题卡识别判卷"
+
+
 def test_knowledge_ask_accepts_remote_custom_llm(monkeypatch) -> None:
     repository = create_repository()
     video = seed_video_with_real_task(repository, "ask")
@@ -229,6 +281,52 @@ def test_knowledge_ask_accepts_remote_custom_llm(monkeypatch) -> None:
 
     assert "轮廓检测" in response.answer
     assert response.sources
+
+
+def test_knowledge_qa_prompt_encourages_evidence_based_learning_insight() -> None:
+    user_prompt = _build_knowledge_user_prompt(
+        "我最近主要在学什么主题？",
+        ["[视频：高等数学]\n[时间：00:00]\n极限、导数和积分是本节的核心。"],
+    )
+
+    assert "学习画像" in KNOWLEDGE_QA_SYSTEM_PROMPT
+    assert "直接归纳学习主题" in KNOWLEDGE_QA_SYSTEM_PROMPT
+    assert "不要说" in KNOWLEDGE_QA_SYSTEM_PROMPT
+    assert "暂无您的个人学习记录" in KNOWLEDGE_QA_SYSTEM_PROMPT
+    assert "不要输出" in user_prompt
+    assert "请提供更多上下文或学习记录" in user_prompt
+
+
+def test_knowledge_qa_uses_conversation_context() -> None:
+    history = [
+        type("History", (), {"role": "user", "content": "我刚才问了 OpenCV 的学习线索"})(),
+        type("History", (), {"role": "assistant", "content": "目前主要围绕图像处理和目标检测"})(),
+    ]
+
+    user_prompt = _build_knowledge_user_prompt(
+        "那数学部分呢？",
+        ["[视频：高等数学]\n[时间：00:00]\n极限、导数和积分是本节的核心。"],
+        history,  # type: ignore[arg-type]
+    )
+    search_query = _build_contextual_search_query("那数学部分呢？", history)  # type: ignore[arg-type]
+
+    assert "本轮会话上下文" in user_prompt
+    assert "OpenCV 的学习线索" in user_prompt
+    assert "近期追问线索" in search_query
+    assert "OpenCV 的学习线索" in search_query
+
+
+def test_knowledge_agent_plan_has_stable_tool_chain() -> None:
+    repository = create_repository()
+    settings = ServiceSettings(llm_enabled=False)
+    index_service = FakeKnowledgeIndexService(repository, settings)
+    agent = KnowledgeAgent(repository, index_service, settings)
+
+    plan = agent.make_plan("继续讲数学部分", context_limit=3)
+
+    assert plan.steps == ["conversation_context", "semantic_search", "context_builder", "knowledge_llm"]
+    assert plan.context_limit == 3
+    assert "继续讲数学部分" in plan.search_query
 
 
 def test_knowledge_ask_stream_emits_tool_and_done_events(monkeypatch) -> None:
@@ -256,8 +354,52 @@ def test_knowledge_ask_stream_emits_tool_and_done_events(monkeypatch) -> None:
     assert "tool" in event_names
     assert "text_delta" in event_names
     assert "done" in event_names
+    tool_ids = [payload["id"] for name, payload in events if name == "tool"]
+    assert tool_ids[:4] == ["agent_plan", "semantic_search", "semantic_search", "context_builder"]
+    assert "knowledge_llm" in tool_ids
     done_payload = next(payload for name, payload in events if name == "done")
     assert "轮廓检测" in str(done_payload["answer"])
+
+
+def test_knowledge_ask_stream_falls_back_when_stream_has_no_text(monkeypatch) -> None:
+    repository = create_repository()
+    video = seed_video_with_real_task(repository, "ask-stream-fallback")
+    settings = ServiceSettings(
+        knowledge_llm_mode="custom",
+        knowledge_llm_enabled=True,
+        knowledge_llm_base_url="https://api.example.com/v1",
+        knowledge_llm_model="remote-model",
+    )
+    tag_service = TagService(repository, settings)
+    index_service = FakeKnowledgeIndexService(repository, settings)
+    rag_service = RagService(repository, index_service, tag_service, settings)
+    index_service.index_video(video.video_id)
+
+    monkeypatch.setattr(
+        "video_sum_service.knowledge.rag_service.stream_knowledge_llm",
+        lambda *args, **kwargs: iter([]),
+    )
+    monkeypatch.setattr(
+        "video_sum_service.knowledge.rag_service.chat_knowledge_llm",
+        lambda *args, **kwargs: ("流式无正文后切换为普通回答。", {"choices": []}),
+    )
+
+    events = list(rag_service.ask_stream("我最近主要在学什么主题？", context_limit=3))
+
+    assert any(
+        name == "tool"
+        and payload["id"] == "knowledge_llm"
+        and payload.get("meta", {}).get("fallback") == "non_streaming"
+        for name, payload in events
+    )
+    done_payload = next(payload for name, payload in events if name == "done")
+    assert done_payload["answer"] == "流式无正文后切换为普通回答。"
+
+
+def test_extract_stream_delta_accepts_common_compatible_shapes() -> None:
+    assert _extract_stream_delta({"choices": [{"delta": {"content": "openai"}}]}) == "openai"
+    assert _extract_stream_delta({"message": {"content": "ollama"}}) == "ollama"
+    assert _extract_stream_delta({"response": "text"}) == "text"
 
 
 def test_chat_knowledge_llm_returns_clear_timeout_error(monkeypatch) -> None:

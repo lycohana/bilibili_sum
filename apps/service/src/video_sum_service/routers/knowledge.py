@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import json
+from queue import Empty, Queue
+from threading import BoundedSemaphore, Event, Thread
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
@@ -25,6 +28,15 @@ from video_sum_service.schemas import (
 )
 
 router = APIRouter(prefix="/api/v1/knowledge")
+_QUEUE_TIMEOUT = object()
+_ASK_STREAM_SEMAPHORE = BoundedSemaphore(2)
+
+
+def _get_queue_item(event_queue: Queue[object], timeout: float) -> object:
+    try:
+        return event_queue.get(timeout=timeout)
+    except Empty:
+        return _QUEUE_TIMEOUT
 
 
 def _knowledge_settings_signature(settings) -> tuple[object, ...]:
@@ -122,7 +134,11 @@ def search_knowledge(body: KnowledgeSearchRequest, request: Request) -> Knowledg
 @router.post("/ask", response_model=KnowledgeAskResponse)
 def ask_knowledge(body: KnowledgeAskRequest, request: Request) -> KnowledgeAskResponse:
     _tag_service, _index_service, rag_service = _get_services(request)
-    return rag_service.ask(body.query, context_limit=body.context_limit)
+    return rag_service.ask(
+        body.query,
+        context_limit=body.context_limit,
+        history=getattr(body, "history", []),
+    )
 
 
 @router.post("/ask/stream")
@@ -130,10 +146,55 @@ async def ask_knowledge_stream(body: KnowledgeAskRequest, request: Request) -> S
     _tag_service, _index_service, rag_service = _get_services(request)
 
     async def event_generator():
+        event_queue: Queue[object] = Queue()
+        cancel_event = Event()
+
+        def produce_events() -> None:
+            acquired = _ASK_STREAM_SEMAPHORE.acquire(blocking=False)
+            if not acquired:
+                event_queue.put(
+                    HTTPException(
+                        status_code=429,
+                        detail="知识库问答任务较多，请等待当前回答结束后再试。",
+                    )
+                )
+                event_queue.put(None)
+                return
+            try:
+                for event in rag_service.ask_stream(
+                    body.query,
+                    context_limit=body.context_limit,
+                    history=getattr(body, "history", []),
+                    should_cancel=cancel_event.is_set,
+                ):
+                    if cancel_event.is_set():
+                        return
+                    event_queue.put(event)
+            except Exception as exc:  # pragma: no cover - surfaced to the SSE client below
+                event_queue.put(exc)
+            finally:
+                _ASK_STREAM_SEMAPHORE.release()
+                event_queue.put(None)
+
+        worker = Thread(target=produce_events, daemon=True, name="knowledge-ask-stream")
+        worker.start()
+
         try:
-            for event_name, payload in rag_service.ask_stream(body.query, context_limit=body.context_limit):
+            while True:
                 if await request.is_disconnected():
+                    cancel_event.set()
                     return
+                item = await asyncio.to_thread(_get_queue_item, event_queue, 1.5)
+                if item is _QUEUE_TIMEOUT:
+                    yield ": keep-alive\n\n"
+                    continue
+                if item is None:
+                    return
+                if isinstance(item, HTTPException):
+                    raise item
+                if isinstance(item, Exception):
+                    raise item
+                event_name, payload = item
                 yield f"event: {event_name}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
         except HTTPException as exc:
             yield (
@@ -142,6 +203,8 @@ async def ask_knowledge_stream(body: KnowledgeAskRequest, request: Request) -> S
             )
         except Exception as exc:  # pragma: no cover - defensive fallback
             yield f"event: error\ndata: {json.dumps({'message': f'知识库问答失败：{exc}'}, ensure_ascii=False)}\n\n"
+        finally:
+            cancel_event.set()
 
     return StreamingResponse(
         event_generator(),

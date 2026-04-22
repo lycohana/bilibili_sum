@@ -1382,6 +1382,18 @@ export function SettingsPage({
                   <strong>知识库 LLM</strong>
                   <span>自动打标和知识库问答可以跟随主 LLM，也可以使用独立配置；不再限制为本地地址。</span>
                 </div>
+                <label className="settings-input-group">
+                  <span className="settings-input-label">自动维护知识库索引</span>
+                  <select
+                    className="settings-select-field"
+                    value={form.knowledge_index_auto_rebuild || "disabled"}
+                    onChange={(e) => updateForm({ ...form, knowledge_index_auto_rebuild: e.target.value })}
+                  >
+                    <option value="disabled">关闭自动维护</option>
+                    <option value="on_task_completed">视频生成结束后更新索引</option>
+                  </select>
+                  <span className="settings-input-caption">开启后，每次摘要任务完成都会后台刷新该视频的知识库索引；关闭后可在知识库页手动维护。</span>
+                </label>
                 <label
                   className={`settings-input-group settings-focus-target ${activeFocusTarget === "knowledge_llm_mode" ? "is-highlighted" : ""}`}
                   ref={registerFocusTarget("knowledge_llm_mode") as (node: HTMLLabelElement | null) => void}

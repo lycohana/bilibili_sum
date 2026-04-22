@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 
 import httpx
 from fastapi import HTTPException
@@ -10,6 +10,7 @@ from video_sum_infra.config import ServiceSettings
 from video_sum_service.integrations import extract_http_error_detail, extract_llm_message_content
 
 KNOWLEDGE_LLM_TIMEOUT = httpx.Timeout(connect=15.0, read=180.0, write=30.0, pool=30.0)
+KNOWLEDGE_LLM_STREAM_TIMEOUT = httpx.Timeout(connect=15.0, read=45.0, write=30.0, pool=30.0)
 
 
 def resolve_knowledge_llm_settings(settings: ServiceSettings) -> tuple[bool, str, str, str]:
@@ -95,6 +96,17 @@ def chat_knowledge_llm(
 
 
 def _extract_stream_delta(payload: dict[str, object]) -> str:
+    message = payload.get("message")
+    if isinstance(message, dict):
+        content = message.get("content")
+        if isinstance(content, str):
+            return content
+
+    for key in ("response", "text", "content"):
+        value = payload.get(key)
+        if isinstance(value, str):
+            return value
+
     choices = payload.get("choices")
     if not isinstance(choices, list) or not choices:
         return ""
@@ -126,6 +138,7 @@ def stream_knowledge_llm(
     user_prompt: str,
     max_tokens: int = 800,
     temperature: float = 0.2,
+    should_cancel: Callable[[], bool] | None = None,
 ) -> Iterator[str]:
     base_url, model, api_key = ensure_knowledge_llm_settings(settings)
     headers = {"Content-Type": "application/json"}
@@ -142,15 +155,18 @@ def stream_knowledge_llm(
         "max_tokens": max_tokens,
         "stream": True,
     }
+    should_stop = should_cancel or (lambda: False)
 
     try:
-        with httpx.Client(timeout=KNOWLEDGE_LLM_TIMEOUT, follow_redirects=True) as client:
+        with httpx.Client(timeout=KNOWLEDGE_LLM_STREAM_TIMEOUT, follow_redirects=True) as client:
             with client.stream("POST", f"{base_url}/chat/completions", headers=headers, json=payload) as response:
                 if response.status_code >= 400:
                     detail = extract_http_error_detail(response)
                     raise HTTPException(status_code=response.status_code, detail=f"知识库 LLM 调用失败：{detail}")
 
                 for raw_line in response.iter_lines():
+                    if should_stop():
+                        return
                     line = str(raw_line or "").strip()
                     if not line or line.startswith(":"):
                         continue

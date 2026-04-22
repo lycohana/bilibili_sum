@@ -97,6 +97,9 @@ class KnowledgeIndexService:
         if asset is None or asset.latest_result is None:
             return None, []
         result = asset.latest_result
+        task = self._repository.get_task(asset.latest_task_id) if asset.latest_task_id else None
+        page_title = str(task.page_title or task.task_input.title or "").strip() if task is not None else ""
+        display_title = page_title or asset.title
         now = datetime.now(timezone.utc)
         chunk_specs: list[dict[str, object]] = []
 
@@ -109,7 +112,7 @@ class KnowledgeIndexService:
                     "segment_order": 0,
                     "anchor_label": None,
                     "anchor_seconds": None,
-                    "content": f"{asset.title}\n{overview_text}",
+                    "content": f"{display_title}\n{overview_text}",
                 }
             )
 
@@ -120,7 +123,7 @@ class KnowledgeIndexService:
             summary = str(chapter.get("summary") or "").strip()
             start_raw = chapter.get("start")
             start = float(start_raw) if isinstance(start_raw, (int, float)) else None
-            content = "\n".join([asset.title, title, summary]).strip()
+            content = "\n".join([display_title, title, summary]).strip()
             if summary:
                 chunk_specs.append(
                     {
@@ -139,7 +142,7 @@ class KnowledgeIndexService:
                     "segment_order": index + 1,
                     "anchor_label": title,
                     "anchor_seconds": None,
-                    "content": f"{asset.title}\n{title}\n{body}".strip(),
+                    "content": f"{display_title}\n{title}\n{body}".strip(),
                 }
             )
 
@@ -182,6 +185,9 @@ class KnowledgeIndexService:
             return True
 
         tags = [item.tag for item in self._repository.list_video_tags(video_id)]
+        task = self._repository.get_task(asset.latest_task_id) if asset.latest_task_id else None
+        page_number = int(task.page_number) if task is not None and task.page_number is not None else None
+        page_title = str(task.page_title or task.task_input.title or "").strip() if task is not None else ""
         collection.add(
             ids=[chunk.chunk_id for chunk in chunks],
             documents=[chunk.indexed_content for chunk in chunks],
@@ -193,6 +199,9 @@ class KnowledgeIndexService:
                     "anchor_label": chunk.anchor_label or "",
                     "anchor_seconds": float(chunk.anchor_seconds) if chunk.anchor_seconds is not None else -1.0,
                     "title": asset.title,
+                    "page_number": page_number if page_number is not None else -1,
+                    "page_title": page_title,
+                    "display_title": page_title or asset.title,
                     "cover_url": asset.cover_url or "",
                     "tags_json": json.dumps(tags, ensure_ascii=False),
                 }
@@ -295,13 +304,19 @@ class KnowledgeIndexService:
             video_id = str(candidate["video_id"])
             asset = self._repository.get_video_asset(video_id)
             metadata = candidate["metadata"] if isinstance(candidate["metadata"], dict) else {}
+            video_title = asset.title if asset is not None else str(metadata.get("title") or "未知视频")
+            page_title = str(metadata.get("page_title") or metadata.get("display_title") or "").strip()
+            if page_title == video_title:
+                page_title = ""
+            page_number_raw = metadata.get("page_number")
+            page_number = int(page_number_raw) if isinstance(page_number_raw, (int, float)) and int(page_number_raw) > 0 else None
             snippet = str(candidate["document"]).strip().replace("\n", " ")
             snippet = snippet[:180].rstrip() + ("..." if len(snippet) > 180 else "")
             tags = [item.tag for item in self._repository.list_video_tags(video_id)]
             results.append(
                 KnowledgeSearchResult(
                     video_id=video_id,
-                    title=asset.title if asset is not None else str(metadata.get("title") or "未知视频"),
+                    title=page_title or video_title,
                     relevance_score=float(candidate["relevance_score"]),
                     snippet=snippet,
                     tags=tags,
@@ -311,6 +326,9 @@ class KnowledgeIndexService:
                         if metadata.get("anchor_seconds") not in {None, "", -1, -1.0}
                         else None
                     ),
+                    video_title=video_title,
+                    page_title=page_title or None,
+                    page_number=page_number,
                 )
             )
         return results

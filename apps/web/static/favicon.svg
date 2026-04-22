@@ -1,17 +1,18 @@
 <svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
   <defs>
-    <linearGradient id="bg" x1="76" y1="76" x2="436" y2="436" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#FF9ABA"/>
-      <stop offset="1" stop-color="#F85D8E"/>
+    <linearGradient id="bg" x1="88" y1="72" x2="424" y2="440" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FF8BB0"/>
+      <stop offset="1" stop-color="#F45C8C"/>
+    </linearGradient>
+    <linearGradient id="shine" x1="160" y1="128" x2="320" y2="352" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#FFE8F0"/>
     </linearGradient>
   </defs>
-  <rect x="56" y="56" width="400" height="400" rx="96" fill="url(#bg)"/>
-  <rect x="132" y="112" width="248" height="288" rx="42" fill="white"/>
-  <path d="M314 112H340C362.091 112 380 129.909 380 152V178H354C331.909 178 314 160.091 314 138V112Z" fill="#FFE6EE"/>
-  <circle cx="318" cy="172" r="32" fill="#FB7299"/>
-  <path d="M307 157L329 172L307 187V157Z" fill="white"/>
-  <rect x="172" y="172" width="96" height="20" rx="10" fill="#FB7299"/>
-  <rect x="172" y="222" width="160" height="20" rx="10" fill="#FB7299" opacity="0.9"/>
-  <rect x="172" y="272" width="138" height="20" rx="10" fill="#FB7299" opacity="0.72"/>
-  <rect x="172" y="322" width="112" height="20" rx="10" fill="#FB7299" opacity="0.5"/>
+  <rect x="48" y="48" width="416" height="416" rx="104" fill="url(#bg)"/>
+  <path d="M156 176C156 149.49 177.49 128 204 128H308C334.51 128 356 149.49 356 176V336C356 362.51 334.51 384 308 384H204C177.49 384 156 362.51 156 336V176Z" fill="white" opacity="0.18"/>
+  <path d="M206 160L342 246C349.993 251.054 349.993 262.946 342 268L206 354C197.676 359.264 186.8 353.283 186.8 343.432V170.568C186.8 160.717 197.676 154.736 206 160Z" fill="url(#shine)"/>
+  <path d="M294 151H338" stroke="white" stroke-width="28" stroke-linecap="round" opacity="0.42"/>
+  <path d="M318 194H374" stroke="white" stroke-width="28" stroke-linecap="round" opacity="0.34"/>
+  <path d="M160 388H292" stroke="white" stroke-width="24" stroke-linecap="round" opacity="0.28"/>
 </svg>

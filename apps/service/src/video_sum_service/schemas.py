@@ -368,6 +368,9 @@ class KnowledgeSearchResult(BaseModel):
     tags: list[str] = Field(default_factory=list)
     cover_url: str = ""
     timestamp: str | None = None
+    video_title: str | None = None
+    page_title: str | None = None
+    page_number: int | None = None
 
 
 class KnowledgeSearchResponse(BaseModel):
@@ -376,9 +379,15 @@ class KnowledgeSearchResponse(BaseModel):
     total: int = 0
 
 
+class KnowledgeChatHistoryItem(BaseModel):
+    role: str
+    content: str
+
+
 class KnowledgeAskRequest(BaseModel):
     query: str
     context_limit: int = 5
+    history: list[KnowledgeChatHistoryItem] = Field(default_factory=list)
 
 
 class KnowledgeSourceRef(BaseModel):
@@ -386,6 +395,9 @@ class KnowledgeSourceRef(BaseModel):
     title: str
     relevance_score: float
     timestamp: str | None = None
+    video_title: str | None = None
+    page_title: str | None = None
+    page_number: int | None = None
 
 
 class KnowledgeAskResponse(BaseModel):

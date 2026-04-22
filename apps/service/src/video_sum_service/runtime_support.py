@@ -551,6 +551,8 @@ def build_worker(
         repository=repository,
         pipeline_runner=RealPipelineRunner(pipeline_settings),
         auto_generate_mindmap=current_settings.auto_generate_mindmap,
+        knowledge_index_auto_rebuild=current_settings.knowledge_index_auto_rebuild,
+        knowledge_index_settings=current_settings,
         task_concurrency=current_settings.task_concurrency,
         mindmap_concurrency=current_settings.mindmap_concurrency,
     )
@@ -609,6 +611,7 @@ def serialize_settings(
         "knowledge_llm_model": current_settings.knowledge_llm_model,
         "knowledge_llm_api_key": current_settings.knowledge_llm_api_key,
         "knowledge_llm_api_key_configured": bool(current_settings.knowledge_llm_api_key),
+        "knowledge_index_auto_rebuild": current_settings.knowledge_index_auto_rebuild,
         "summary_system_prompt": current_settings.summary_system_prompt,
         "summary_user_prompt_template": current_settings.summary_user_prompt_template,
         "summary_chunk_target_chars": current_settings.summary_chunk_target_chars,

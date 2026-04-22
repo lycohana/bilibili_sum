@@ -263,6 +263,13 @@ def recommend_mindmap_concurrency() -> int:
     return 1
 
 
+def normalize_knowledge_index_auto_rebuild(value: str | None) -> str:
+    normalized = str(value or "disabled").strip().lower()
+    if normalized in {"on_task_completed", "task_completed", "completed"}:
+        return "on_task_completed"
+    return "disabled"
+
+
 class ServiceSettings(BaseSettings):
     host: str = Field(default_factory=default_host)
     port: int = 3838
@@ -299,6 +306,7 @@ class ServiceSettings(BaseSettings):
     knowledge_llm_api_key: str = ""
     knowledge_llm_base_url: str = ""
     knowledge_llm_model: str = ""
+    knowledge_index_auto_rebuild: str = "disabled"
     summary_system_prompt: str = DEFAULT_SUMMARY_SYSTEM_PROMPT
     summary_user_prompt_template: str = DEFAULT_SUMMARY_USER_PROMPT_TEMPLATE
     mindmap_system_prompt: str = DEFAULT_MINDMAP_SYSTEM_PROMPT
@@ -330,6 +338,11 @@ class ServiceSettings(BaseSettings):
     @classmethod
     def _normalize_knowledge_llm_mode(cls, value: str | None) -> str:
         return normalize_knowledge_llm_mode(value)
+
+    @field_validator("knowledge_index_auto_rebuild", mode="before")
+    @classmethod
+    def _normalize_knowledge_index_auto_rebuild(cls, value: str | None) -> str:
+        return normalize_knowledge_index_auto_rebuild(value)
 
     @field_validator("summary_chunk_overlap_segments", "task_concurrency", "mindmap_concurrency", "summary_chunk_concurrency", "summary_chunk_retry_count", mode="before")
     @classmethod

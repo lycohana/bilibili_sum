@@ -240,6 +240,7 @@ export type ServiceSettings = {
   knowledge_llm_base_url: string;
   knowledge_llm_model: string;
   knowledge_llm_api_key_configured?: boolean;
+  knowledge_index_auto_rebuild: string;
   summary_system_prompt: string;
   summary_user_prompt_template: string;
   summary_chunk_target_chars: number;
@@ -380,6 +381,9 @@ export type KnowledgeSearchResult = {
   tags: string[];
   cover_url: string;
   timestamp?: string | null;
+  video_title?: string | null;
+  page_title?: string | null;
+  page_number?: number | null;
 };
 
 export type KnowledgeSearchResponse = {
@@ -393,12 +397,20 @@ export type KnowledgeSourceRef = {
   title: string;
   relevance_score: number;
   timestamp?: string | null;
+  video_title?: string | null;
+  page_title?: string | null;
+  page_number?: number | null;
 };
 
 export type KnowledgeAskResponse = {
   query: string;
   answer: string;
   sources: KnowledgeSourceRef[];
+};
+
+export type KnowledgeChatHistoryItem = {
+  role: "user" | "assistant";
+  content: string;
 };
 
 export type KnowledgeToolTrace = {

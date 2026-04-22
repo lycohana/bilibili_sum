@@ -117,8 +117,9 @@ export function normalizeRenderableMarkdown(content: string) {
   const normalizedControls = normalizeControlCharacters(raw);
   const normalizedNewlines = normalizeEscapedNewlines(normalizedControls).replace(/\r\n?/g, "\n");
   const decodedEntities = decodeHtmlEntities(normalizedNewlines);
+  const repairedMarkdown = normalizeMarkdownDecorationArtifacts(decodedEntities);
 
-  return decodedEntities
+  return repairedMarkdown
     .split("\n")
     .map((line) => normalizeMarkdownLine(line))
     .join("\n");
@@ -173,6 +174,14 @@ function decodeHtmlEntities(content: string) {
 
     return entity;
   });
+}
+
+function normalizeMarkdownDecorationArtifacts(content: string) {
+  return content
+    .replace(/\\([*#>`])/g, "$1")
+    .replace(/==\s*(\*\*[^*\n]+\*\*)\s*==/g, "$1")
+    .replace(/(\*\*[^*\n]+\*\*)\s*==(?=$|[\s，。；;:：!?！？])/g, "$1")
+    .replace(/==\s*([^=\n]{1,80}?)\s*==/g, "**$1**");
 }
 
 function normalizeMarkdownLine(line: string) {

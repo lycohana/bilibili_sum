@@ -330,7 +330,7 @@ export const api = {
       body: JSON.stringify(payload),
     });
   },
-  askKnowledge(payload: { query: string; context_limit?: number }) {
+  askKnowledge(payload: { query: string; context_limit?: number; history?: Array<{ role: "user" | "assistant"; content: string }> }) {
     return fetchJson<KnowledgeAskResponse>("/api/v1/knowledge/ask", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -338,7 +338,7 @@ export const api = {
     });
   },
   async streamKnowledgeAsk(
-    payload: { query: string; context_limit?: number },
+    payload: { query: string; context_limit?: number; history?: Array<{ role: "user" | "assistant"; content: string }> },
     handlers: {
       onTool?(tool: KnowledgeToolTrace): void;
       onTextDelta?(delta: string): void;

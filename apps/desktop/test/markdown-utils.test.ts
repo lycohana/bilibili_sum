@@ -49,6 +49,18 @@ run("collapses redundant dollar delimiters without wrapping prose lines", () => 
   assert.equal(normalized, "> $$\\left|\\frac{1}{n} - 0\\right| = \\frac{1}{n} < \\varepsilon$$\n> 故 $\\lim_{n \\to \\infty} \\frac{1}{n} = 0。$");
 });
 
+run("repairs common llm markdown emphasis artifacts", () => {
+  const normalized = normalizeRenderableMarkdown("结论：你最近更像是\\*\\*数学基础 + 机器学习实战 + AI前沿认知\\*\\*==");
+
+  assert.equal(normalized, "结论：你最近更像是**数学基础 + 机器学习实战 + AI前沿认知**");
+});
+
+run("converts highlight marks into portable markdown emphasis", () => {
+  const normalized = normalizeRenderableMarkdown("学习重心是==高等数学与OpenCV==，公式为 \\(x_n = \\frac{n}{n+1}\\)。");
+
+  assert.equal(normalized, "学习重心是**高等数学与OpenCV**，公式为 $x_n = \\frac{n}{n+1}$。");
+});
+
 run("repairs truncated mindmap labels before rendering", () => {
   const sanitized = sanitizeMindMapLabel(
     "核心公式$f(x_0+\\Delta$ x)\\app",
