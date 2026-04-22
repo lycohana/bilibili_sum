@@ -155,6 +155,18 @@ export type TaskMindMapResponse = {
   mindmap?: TaskMindMap | null;
 };
 
+export type TaskMarkdownExportTarget = "markdown" | "obsidian";
+
+export type TaskMarkdownExportResponse = {
+  task_id: string;
+  target_format: TaskMarkdownExportTarget;
+  path: string;
+  directory: string;
+  file_name: string;
+  overwritten: boolean;
+  artifact_key: string;
+};
+
 export type TaskEvent = {
   event_id: string;
   task_id: string;

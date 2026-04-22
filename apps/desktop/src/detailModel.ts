@@ -431,6 +431,13 @@ export function resolveKnowledgeNoteMarkdown(result?: TaskResult | null): string
   return sections.join("\n").trim();
 }
 
+export function canExportKnowledgeNote(task?: Pick<TaskDetail, "status" | "result"> | null): boolean {
+  if (!task || task.status !== "completed" || !task.result) {
+    return false;
+  }
+  return Boolean(resolveKnowledgeNoteMarkdown(task.result).trim());
+}
+
 function formatMarkdownDuration(totalSeconds: number) {
   const safeSeconds = Math.max(0, Math.floor(totalSeconds));
   const minutes = Math.floor(safeSeconds / 60);

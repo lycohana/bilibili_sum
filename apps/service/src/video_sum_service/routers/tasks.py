@@ -12,12 +12,15 @@ from video_sum_service.schemas import (
     TaskCreateRequest,
     TaskDetailResponse,
     TaskEventResponse,
+    TaskMarkdownExportRequest,
+    TaskMarkdownExportResponse,
     TaskMindMapResponse,
     TaskProgressResponse,
     TaskSummaryResponse,
 )
 from video_sum_service.context import settings_manager
 from video_sum_service.task_artifacts import cleanup_task_files, load_task_mindmap
+from video_sum_service.task_exports import export_task_markdown as export_task_markdown_artifact
 from video_sum_service.video_assets import probe_video_asset
 from video_sum_service.worker import TaskWorker
 
@@ -184,6 +187,17 @@ def generate_task_mindmap(request: Request, task_id: str, force: bool = False) -
         error_message=refreshed_result.mindmap_error_message,
         updated_at=refreshed_result.mindmap_updated_at,
         mindmap=None,
+    )
+
+
+@router.post("/{task_id}/exports/markdown", response_model=TaskMarkdownExportResponse)
+def export_task_markdown(request: Request, task_id: str, body: TaskMarkdownExportRequest) -> TaskMarkdownExportResponse:
+    task_store: SqliteTaskRepository = request.app.state.task_repository
+    return export_task_markdown_artifact(
+        task_store,
+        settings_manager.current,
+        task_id,
+        target=body.target,
     )
 
 

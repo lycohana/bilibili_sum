@@ -423,9 +423,41 @@ export function SettingsPage({
     setForm(next);
   }
 
+  function validateSettingsBeforeSave(nextForm: ServiceSettings): { message: string; category: SettingsCategory; targetKey: string } | null {
+    if (!String(nextForm.host || "").trim()) {
+      return {
+        message: "请先填写监听地址。",
+        category: "general",
+        targetKey: "host",
+      };
+    }
+    if (nextForm.transcription_provider === "siliconflow" && !String(nextForm.siliconflow_asr_base_url || "").trim()) {
+      return {
+        message: "请先填写 SiliconFlow Base URL。",
+        category: "model",
+        targetKey: "siliconflow_asr_base_url",
+      };
+    }
+    if (nextForm.llm_enabled && !String(nextForm.llm_base_url || "").trim()) {
+      return {
+        message: "请先填写 LLM API Base URL。",
+        category: "llm",
+        targetKey: "llm_base_url",
+      };
+    }
+    return null;
+  }
+
   async function save(event: FormEvent) {
     event.preventDefault();
     if (!form || isSaving) return;
+    const validationError = validateSettingsBeforeSave(form);
+    if (validationError) {
+      setSaveStatus(validationError.message);
+      setActiveCategory(validationError.category);
+      setPendingFocusTarget(validationError.targetKey);
+      return;
+    }
     try {
       setIsSaving(true);
       const response = await api.updateSettings({
@@ -939,7 +971,12 @@ export function SettingsPage({
               <div className="settings-form-group">
                 <label className="settings-input-group">
                   <span className="settings-input-label">监听地址</span>
-                  <input className="settings-input-field" value={form.host} onChange={(e) => updateForm({ ...form, host: e.target.value })} />
+                  <input
+                    className="settings-input-field"
+                    ref={registerFocusTarget("host") as (node: HTMLInputElement | null) => void}
+                    value={form.host}
+                    onChange={(e) => updateForm({ ...form, host: e.target.value })}
+                  />
                   <span className="settings-input-caption">服务绑定的 IP 地址，默认为 127.0.0.1</span>
                 </label>
                 <label className="settings-input-group">
@@ -972,6 +1009,11 @@ export function SettingsPage({
                   <span className="settings-input-label">任务目录</span>
                   <input className="settings-input-field" value={String(form.tasks_dir)} onChange={(e) => updateForm({ ...form, tasks_dir: e.target.value })} />
                   <span className="settings-input-caption">任务历史记录</span>
+                </label>
+                <label className="settings-input-group">
+                  <span className="settings-input-label">输出目录</span>
+                  <input className="settings-input-field" value={String(form.output_dir)} onChange={(e) => updateForm({ ...form, output_dir: e.target.value })} />
+                  <span className="settings-input-caption">手动导出的 Markdown / Obsidian 笔记会写入这里。</span>
                 </label>
               </div>
             </section>
@@ -1108,7 +1150,10 @@ export function SettingsPage({
                 </label>
                 {usesSiliconFlowAsr ? (
                   <>
-                    <label className="settings-input-group">
+                    <label
+                      className={`settings-input-group settings-focus-target ${activeFocusTarget === "siliconflow_asr_base_url" ? "is-highlighted" : ""}`}
+                      ref={registerFocusTarget("siliconflow_asr_base_url") as (node: HTMLLabelElement | null) => void}
+                    >
                       <span className="settings-input-label">SiliconFlow Base URL</span>
                       <input className="settings-input-field" value={form.siliconflow_asr_base_url} onChange={(e) => updateForm({ ...form, siliconflow_asr_base_url: e.target.value })} placeholder="https://api.siliconflow.cn/v1" />
                       <span className="settings-input-caption">默认保持 `https://api.siliconflow.cn/v1` 即可。</span>

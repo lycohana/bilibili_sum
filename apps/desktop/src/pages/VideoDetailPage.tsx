@@ -12,6 +12,7 @@ import { FloatingNoticeStack } from "../components/FloatingNoticeStack";
 import {
   AGGREGATE_SUMMARY_PAGE_NUMBER,
   buildVideoPageBatchOptions,
+  canExportKnowledgeNote,
   buildChapterGroups,
   buildKnowledgeCards,
   describeMindMapWorkspace,
@@ -27,7 +28,7 @@ import {
   type KnowledgeCard,
   type TaskPanelState,
 } from "../detailModel";
-import type { MindMapNode, TaskDetail, TaskEvent, TaskMindMapResponse, TaskStatus, TaskSummary, VideoAssetDetail, VideoPageBatchOption, VideoTaskBatchResponse } from "../types";
+import type { MindMapNode, TaskDetail, TaskEvent, TaskMarkdownExportResponse, TaskMindMapResponse, TaskStatus, TaskSummary, VideoAssetDetail, VideoPageBatchOption, VideoTaskBatchResponse } from "../types";
 import { formatDateTime, formatDuration, formatTaskDuration, formatTokenCount, sanitizeMindMapLabel, summarizeEvents, taskStatusLabel } from "../utils";
 import { buildPlayerEmbedDescriptor, withPlayerSeek } from "../videoPlayer";
 
@@ -229,6 +230,9 @@ export function VideoDetailPage({ onRefresh }: { onRefresh(): void }) {
   const [mindMaps, setMindMaps] = useState<Record<string, TaskMindMapResponse>>({});
   const [mindMapLoading, setMindMapLoading] = useState<Record<string, boolean>>({});
   const [isExportingKnowledgeCard, setIsExportingKnowledgeCard] = useState(false);
+  const [isExportingKnowledgeNote, setIsExportingKnowledgeNote] = useState(false);
+  const [knowledgeOutputDir, setKnowledgeOutputDir] = useState("");
+  const [lastKnowledgeExport, setLastKnowledgeExport] = useState<TaskMarkdownExportResponse | null>(null);
   const [expandedChapterGroupIds, setExpandedChapterGroupIds] = useState<string[]>([]);
   const [selectedPageNumber, setSelectedPageNumber] = useState<number | null>(null);
   const [jumpConfirmPopover, setJumpConfirmPopover] = useState<{ open: boolean; pageNumber: number; title: string; x: number; y: number } | null>(null);
@@ -263,6 +267,20 @@ export function VideoDetailPage({ onRefresh }: { onRefresh(): void }) {
   useEffect(() => {
     selectedTaskIdRef.current = selectedTaskId;
   }, [selectedTaskId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void api.getSettings()
+      .then((settings) => {
+        if (!cancelled) {
+          setKnowledgeOutputDir(String(settings.output_dir || "").trim());
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   async function ensureTaskContext(taskId: string, options: { force?: boolean } = {}) {
     const { force = false } = options;
@@ -453,6 +471,7 @@ export function VideoDetailPage({ onRefresh }: { onRefresh(): void }) {
     setStatus("");
     setMindMaps({});
     setMindMapLoading({});
+    setLastKnowledgeExport(null);
     setSelectedPageNumber(null);
     setPageMenuOpen(false);
     setBatchDialogOpen(false);
@@ -837,6 +856,7 @@ export function VideoDetailPage({ onRefresh }: { onRefresh(): void }) {
   );
   const areAllChapterGroupsExpanded = chapterGroups.length > 0 && expandedChapterGroupIds.length === chapterGroups.length;
   const selectedKnowledgeNoteMarkdown = useMemo(() => resolveKnowledgeNoteMarkdown(selectedResult), [selectedResult]);
+  const canExportSelectedKnowledgeNote = useMemo(() => canExportKnowledgeNote(selectedTaskDetail), [selectedTaskDetail]);
   const selectedTranscript = selectedResult?.transcript_text ?? "";
   const liveStatus = latestTaskDetail?.status ?? latestTaskSummary?.status ?? video?.latest_status;
   const liveMessage = latestTaskLoadError
@@ -1200,6 +1220,35 @@ export function VideoDetailPage({ onRefresh }: { onRefresh(): void }) {
       return;
     }
     const result = await window.desktop.shell.openPath(heroSourceTarget);
+    if (result) {
+      throw new Error(result);
+    }
+  }
+
+  async function handleExportKnowledgeNote(target: "markdown" | "obsidian" = "obsidian") {
+    if (!selectedTaskId || isExportingKnowledgeNote) {
+      return;
+    }
+    setIsExportingKnowledgeNote(true);
+    setStatus(target === "obsidian" ? "正在导出 Obsidian 笔记..." : "正在导出 Markdown 笔记...");
+    try {
+      const response = await api.exportTaskMarkdown(selectedTaskId, { target });
+      setLastKnowledgeExport(response);
+      setKnowledgeOutputDir((current) => current || response.directory);
+      await refreshDetail({ preferredTaskId: selectedTaskId, forceTaskIds: [selectedTaskId] });
+      setStatus(`已导出到 ${response.file_name}`);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "导出 Markdown 失败");
+    } finally {
+      setIsExportingKnowledgeNote(false);
+    }
+  }
+
+  async function handleOpenKnowledgeExportDirectory() {
+    if (!window.desktop?.shell || !lastKnowledgeExport?.directory) {
+      return;
+    }
+    const result = await window.desktop.shell.openPath(lastKnowledgeExport.directory);
     if (result) {
       throw new Error(result);
     }
@@ -2074,9 +2123,37 @@ export function VideoDetailPage({ onRefresh }: { onRefresh(): void }) {
                   <section className="detail-content-section">
                     <div className="detail-section-heading">
                       <h3 className="detail-section-label">Knowledge Note</h3>
-                      <span className="detail-section-meta">完整学习视图</span>
+                      <div className="detail-section-heading-actions">
+                        <span className="detail-section-meta">完整学习视图</span>
+                        <button
+                          className="detail-section-icon-button"
+                          type="button"
+                          disabled={!canExportSelectedKnowledgeNote || isExportingKnowledgeNote || !knowledgeOutputDir}
+                          onClick={() => void handleExportKnowledgeNote("obsidian")}
+                          aria-label={isExportingKnowledgeNote ? "正在导出 Obsidian 笔记" : "导出到 Obsidian"}
+                          title={isExportingKnowledgeNote ? "正在导出 Obsidian 笔记" : "导出到 Obsidian"}
+                        >
+                          <IconExportNote />
+                        </button>
+                        {lastKnowledgeExport?.directory && window.desktop?.shell ? (
+                          <button
+                            className="detail-section-icon-button"
+                            type="button"
+                            onClick={() => void handleOpenKnowledgeExportDirectory().catch((error) => {
+                              setStatus(error instanceof Error ? error.message : "打开导出目录失败");
+                            })}
+                            aria-label="打开导出目录"
+                            title="打开导出目录"
+                          >
+                            <IconFolderOpen />
+                          </button>
+                        ) : null}
+                      </div>
                     </div>
                     <h4 className="detail-section-title">知识笔记</h4>
+                    {!knowledgeOutputDir ? (
+                      <p className="detail-section-body">导出前请先在设置中填写输出目录，Markdown / Obsidian 笔记会写入该目录。</p>
+                    ) : null}
                     {selectedKnowledgeNoteMarkdown ? (
                       <MarkdownContent className="detail-note-markdown" content={selectedKnowledgeNoteMarkdown} />
                     ) : (
@@ -3001,6 +3078,29 @@ function IconShare(props: SVGProps<SVGSVGElement>) {
       <path d="M4 12v7a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-7" />
       <path d="M12 16V4" />
       <path d="m7 9 5-5 5 5" />
+    </svg>
+  );
+}
+
+function IconExportNote(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" viewBox="0 0 24 24" {...props}>
+      <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />
+      <path d="M14 3v5h5" />
+      <path d="M12 12V6" />
+      <path d="m9.5 9.5 2.5-2.5 2.5 2.5" />
+      <path d="M9 16h6" />
+    </svg>
+  );
+}
+
+function IconFolderOpen(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" viewBox="0 0 24 24" {...props}>
+      <path d="M3 7.5A1.5 1.5 0 0 1 4.5 6h4l1.6 2H19.5A1.5 1.5 0 0 1 21 9.5v7A1.5 1.5 0 0 1 19.5 18h-15A1.5 1.5 0 0 1 3 16.5z" />
+      <path d="M3 10h18" />
+      <path d="m13 14 2-2 2 2" />
+      <path d="M17 12v5" />
     </svg>
   );
 }

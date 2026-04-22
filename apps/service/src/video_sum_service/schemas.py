@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from typing import Literal
 from uuid import uuid4
 
 from pydantic import BaseModel, Field
@@ -27,6 +28,10 @@ class VideoTaskBatchRequest(BaseModel):
 
 class AggregateSummaryRequest(BaseModel):
     page_numbers: list[int] | None = None
+
+
+class TaskMarkdownExportRequest(BaseModel):
+    target: Literal["markdown", "obsidian"] = "obsidian"
 
 
 class VideoTaskBatchPageResponse(BaseModel):
@@ -167,6 +172,16 @@ class TaskMindMapResponse(BaseModel):
     error_message: str | None = None
     updated_at: datetime | None = None
     mindmap: TaskMindMap | None = None
+
+
+class TaskMarkdownExportResponse(BaseModel):
+    task_id: str
+    target_format: Literal["markdown", "obsidian"]
+    path: str
+    directory: str
+    file_name: str
+    overwritten: bool = False
+    artifact_key: str
 
 
 class TaskEventResponse(BaseModel):

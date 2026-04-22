@@ -4,6 +4,7 @@ import {
   buildChapterGroups,
   buildKnowledgeCards,
   buildVideoPageBatchOptions,
+  canExportKnowledgeNote,
   describeMindMapWorkspace,
   describeTaskContentState,
   describeUserFacingErrorMessage,
@@ -106,6 +107,20 @@ run("filters aggregate summary tasks away from normal P1 history", () => {
 
   assert.deepEqual(filterTasksForPage(tasks, 1).map((task) => task.task_id), ["task-p1"]);
   assert.deepEqual(filterTasksForPage(tasks, 0).map((task) => task.task_id), ["task-aggregate"]);
+});
+
+run("marks completed tasks with knowledge notes as exportable", () => {
+  const exportable = createTaskDetail({
+    status: "completed",
+    result: createTaskResult({ knowledge_note_markdown: "# 笔记\n\n内容" }),
+  });
+  const blocked = createTaskDetail({
+    status: "running",
+    result: createTaskResult({ knowledge_note_markdown: "# 笔记\n\n内容" }),
+  });
+
+  assert.equal(canExportKnowledgeNote(exportable), true);
+  assert.equal(canExportKnowledgeNote(blocked), false);
 });
 
 run("builds page batch status without counting aggregate summary tasks", () => {

@@ -5,6 +5,7 @@ import type {
   SystemInfo,
   TaskDetail,
   TaskEvent,
+  TaskMarkdownExportResponse,
   LlmTestResponse,
   TaskMindMapResponse,
   TaskSummary,
@@ -186,6 +187,13 @@ export const api = {
   },
   getTaskMindMap(taskId: string) {
     return fetchJson<TaskMindMapResponse>(`/api/v1/tasks/${taskId}/mindmap`);
+  },
+  exportTaskMarkdown(taskId: string, payload?: { target?: "markdown" | "obsidian" }) {
+    return fetchJson<TaskMarkdownExportResponse>(`/api/v1/tasks/${taskId}/exports/markdown`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload ?? {}),
+    });
   },
   generateTaskMindMap(taskId: string, options?: { force?: boolean }) {
     const url = new URL(`/api/v1/tasks/${taskId}/mindmap`, window.location.origin);
