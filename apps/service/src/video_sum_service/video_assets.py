@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import re
 import shutil
 import subprocess
@@ -12,18 +13,28 @@ from urllib.parse import unquote, urlencode, urlparse
 import httpx
 from fastapi import HTTPException
 from yt_dlp import YoutubeDL
+from yt_dlp.utils import DownloadError
 
 from video_sum_core.models.tasks import InputType
 from video_sum_core.utils import extract_bilibili_page, normalize_video_url
 from video_sum_infra.runtime import ffmpeg_location
 
-from video_sum_service.context import COVER_CACHE_DIR
+from video_sum_service.context import COVER_CACHE_DIR, settings_manager
 from video_sum_service.integrations import cache_cover_image
 from video_sum_service.repository import SqliteTaskRepository
 from video_sum_service.schemas import VideoAssetRecord, VideoPageOptionResponse
 
 logger = logging.getLogger("video_sum_service.app")
 
+_BILIBILI_HTTP_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Safari/537.36"
+    ),
+    "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+    "Referer": "https://www.bilibili.com/",
+}
 LOCAL_VIDEO_SUFFIXES = {
     ".mp4",
     ".mov",
@@ -94,12 +105,66 @@ def build_page_title(base_title: str, page: int, info: dict[str, object]) -> str
     return f"P{page} {candidate}"
 
 
-def extract_video_info(url: str, *, extract_flat: bool = False) -> dict[str, object]:
-    options: dict[str, object] = {"quiet": True, "no_warnings": True}
+def build_ydl_probe_options(*, extract_flat: bool = False) -> dict[str, object]:
+    options: dict[str, object] = {
+        "quiet": True,
+        "no_warnings": True,
+        "http_headers": _BILIBILI_HTTP_HEADERS,
+        "retries": 3,
+        "extractor_retries": 3,
+        "fragment_retries": 3,
+        "sleep_interval_requests": 1,
+        "socket_timeout": 30,
+    }
+    cookie_file = str(
+        settings_manager.current.ytdlp_cookies_file
+        or os.environ.get("VIDEO_SUM_YTDLP_COOKIES_FILE")
+        or os.environ.get("YTDLP_COOKIES_FILE")
+        or ""
+    ).strip()
+    if cookie_file:
+        cookie_path = Path(cookie_file).expanduser()
+        if cookie_path.exists() and cookie_path.is_file():
+            options["cookiefile"] = str(cookie_path)
+        else:
+            logger.warning("yt-dlp cookie file does not exist: %s", cookie_path)
     if extract_flat:
         options["extract_flat"] = "in_playlist"
-    with YoutubeDL(options) as ydl:
-        info = ydl.extract_info(url, download=False)
+    return options
+
+
+def extract_video_info(url: str, *, extract_flat: bool = False) -> dict[str, object]:
+    options = build_ydl_probe_options(extract_flat=extract_flat)
+    try:
+        with YoutubeDL(options) as ydl:
+            info = ydl.extract_info(url, download=False)
+    except DownloadError as exc:
+        message = str(exc)
+        if "Could not copy Chrome cookie database" in message:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "无法读取 Chrome 登录态：yt-dlp 不能复制 Chrome Cookie 数据库。"
+                    "请通过 BriefVid 的 B 站登录窗口重新捕获登录态，或按教程导出 cookies.txt 并填写 yt-dlp Cookies 文件。"
+                ),
+            ) from exc
+        if "Failed to decrypt with DPAPI" in message:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "无法读取浏览器登录态：yt-dlp 解密 Windows 浏览器 Cookie 失败（DPAPI）。"
+                    "请通过 BriefVid 的 B 站登录窗口重新捕获登录态，或按教程导出 cookies.txt 并填写 yt-dlp Cookies 文件。"
+                ),
+            ) from exc
+        if "HTTP Error 412" in message and "BiliBili" in message:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "B 站返回 HTTP 412，当前请求可能被风控拦截。"
+                    "请稍后重试、切换网络，或通过 BriefVid 的 B 站登录窗口捕获登录态。"
+                ),
+            ) from exc
+        raise
     if not isinstance(info, dict):
         raise HTTPException(status_code=400, detail="无法读取视频信息。")
     return info

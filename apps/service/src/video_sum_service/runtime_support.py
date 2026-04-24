@@ -762,6 +762,8 @@ def build_worker(
         summary_chunk_overlap_segments=runtime_settings.summary_chunk_overlap_segments,
         summary_chunk_concurrency=runtime_settings.summary_chunk_concurrency,
         summary_chunk_retry_count=runtime_settings.summary_chunk_retry_count,
+        ytdlp_cookies_file=runtime_settings.ytdlp_cookies_file,
+        ytdlp_cookies_browser=runtime_settings.ytdlp_cookies_browser,
     )
     return TaskWorker(
         repository=repository,
@@ -841,6 +843,8 @@ def serialize_settings(
         "mindmap_concurrency": current_settings.mindmap_concurrency,
         "summary_chunk_concurrency": current_settings.summary_chunk_concurrency,
         "summary_chunk_retry_count": current_settings.summary_chunk_retry_count,
+        "ytdlp_cookies_file": current_settings.ytdlp_cookies_file,
+        "ytdlp_cookies_browser": current_settings.ytdlp_cookies_browser,
         "settings_file_exists": settings_manager.has_persisted_settings,
     }
 

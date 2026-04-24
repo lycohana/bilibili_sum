@@ -7,7 +7,7 @@ from video_sum_infra.config import ServiceSettings
 from video_sum_service.app import app
 from video_sum_service.context import settings_manager
 from video_sum_service.knowledge.index_service import KnowledgeIndexService
-from video_sum_service.knowledge.local_llm import _extract_stream_delta, chat_knowledge_llm
+from video_sum_service.knowledge.local_llm import KnowledgeLlmStreamEvent, _extract_stream_delta, _extract_stream_reasoning_delta, chat_knowledge_llm
 from video_sum_service.knowledge.rag_service import (
     KNOWLEDGE_QA_SYSTEM_PROMPT,
     KnowledgeAgent,
@@ -484,10 +484,94 @@ def test_knowledge_ask_stream_falls_back_when_stream_has_no_text(monkeypatch) ->
     assert done_payload["answer"] == "流式无正文后切换为普通回答。"
 
 
+def test_knowledge_ask_stream_does_not_fallback_on_llm_timeout(monkeypatch) -> None:
+    repository = create_repository()
+    video = seed_video_with_real_task(repository, "ask-stream-timeout")
+    settings = ServiceSettings(
+        knowledge_llm_mode="custom",
+        knowledge_llm_enabled=True,
+        knowledge_llm_base_url="https://api.example.com/v1",
+        knowledge_llm_model="remote-model",
+    )
+    tag_service = TagService(repository, settings)
+    index_service = FakeKnowledgeIndexService(repository, settings)
+    rag_service = RagService(repository, index_service, tag_service, settings)
+    index_service.index_video(video.video_id)
+    fallback_called = False
+
+    def fail_stream(*args, **kwargs):
+        del args, kwargs
+        raise HTTPException(status_code=504, detail="知识库 LLM 响应超时")
+        yield ""
+
+    def fallback_chat(*args, **kwargs):
+        del args, kwargs
+        nonlocal fallback_called
+        fallback_called = True
+        return "不应该调用普通问答。", {"choices": []}
+
+    monkeypatch.setattr("video_sum_service.knowledge.rag_service.stream_knowledge_llm", fail_stream)
+    monkeypatch.setattr("video_sum_service.knowledge.rag_service.chat_knowledge_llm", fallback_chat)
+
+    events = list(rag_service.ask_stream("讲了哪些步骤", context_limit=3))
+
+    assert fallback_called is False
+    assert any(
+        name == "tool"
+        and payload["id"] == "knowledge_llm"
+        and payload["status"] == "error"
+        and payload.get("meta", {}).get("status_code") == 504
+        for name, payload in events
+    )
+    assert any(name == "error" and payload.get("status_code") == 504 for name, payload in events)
+    assert not any(name == "done" for name, _payload in events)
+
+
+def test_knowledge_ask_stream_tracks_reasoning_before_answer(monkeypatch) -> None:
+    repository = create_repository()
+    video = seed_video_with_real_task(repository, "ask-stream-reasoning")
+    settings = ServiceSettings(
+        knowledge_llm_mode="custom",
+        knowledge_llm_enabled=True,
+        knowledge_llm_base_url="https://api.example.com/v1",
+        knowledge_llm_model="remote-model",
+    )
+    tag_service = TagService(repository, settings)
+    index_service = FakeKnowledgeIndexService(repository, settings)
+    rag_service = RagService(repository, index_service, tag_service, settings)
+    index_service.index_video(video.video_id)
+
+    monkeypatch.setattr(
+        "video_sum_service.knowledge.rag_service.stream_knowledge_llm",
+        lambda *args, **kwargs: iter([
+            KnowledgeLlmStreamEvent(kind="reasoning", delta="先分析检索片段。"),
+            KnowledgeLlmStreamEvent(kind="content", delta="答案正文。"),
+        ]),
+    )
+
+    events = list(rag_service.ask_stream("讲了哪些步骤", context_limit=3))
+
+    reasoning = "".join(str(payload["delta"]) for name, payload in events if name == "reasoning_delta")
+    assert reasoning == "先分析检索片段。"
+    assert any(
+        name == "tool"
+        and payload["id"] == "knowledge_llm"
+        and payload.get("meta", {}).get("reasoning_character_count")
+        for name, payload in events
+    )
+    text = "".join(str(payload["delta"]) for name, payload in events if name == "text_delta")
+    assert text == "答案正文。"
+
+
 def test_extract_stream_delta_accepts_common_compatible_shapes() -> None:
     assert _extract_stream_delta({"choices": [{"delta": {"content": "openai"}}]}) == "openai"
     assert _extract_stream_delta({"message": {"content": "ollama"}}) == "ollama"
     assert _extract_stream_delta({"response": "text"}) == "text"
+
+
+def test_extract_stream_reasoning_delta_accepts_reasoning_shapes() -> None:
+    assert _extract_stream_reasoning_delta({"choices": [{"delta": {"reasoning_content": "think"}}]}) == "think"
+    assert _extract_stream_reasoning_delta({"message": {"reasoning_content": "plan"}}) == "plan"
 
 
 def test_chat_knowledge_llm_returns_clear_timeout_error(monkeypatch) -> None:

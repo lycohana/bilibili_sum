@@ -64,6 +64,8 @@ class SettingsUpdatePayload(BaseModel):
     mindmap_concurrency: int | None = None
     summary_chunk_concurrency: int | None = None
     summary_chunk_retry_count: int | None = None
+    ytdlp_cookies_file: str | None = None
+    ytdlp_cookies_browser: str | None = None
 
 
 class SettingsManager:

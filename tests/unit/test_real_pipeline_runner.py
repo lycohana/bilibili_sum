@@ -1,13 +1,16 @@
 import json
 from pathlib import Path
 
+import httpx
 import pytest
+from yt_dlp.utils import DownloadError
 
 from video_sum_core.errors import (
     LLMAuthenticationError,
     TranscriptionAuthenticationError,
     TranscriptionConfigurationError,
     UnsupportedInputError,
+    VideoSumError,
 )
 from video_sum_core.models.tasks import InputType
 from video_sum_core.pipeline.base import PipelineContext
@@ -442,6 +445,127 @@ def test_run_from_url_rejects_unsupported_url(tmp_path: Path) -> None:
                 },
             )
         )
+
+
+def test_probe_video_uses_cookies_file_and_browser_headers(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    cookie_file = tmp_path / "cookies.txt"
+    cookie_file.write_text("# Netscape HTTP Cookie File\n", encoding="utf-8")
+    captured_options: dict[str, object] = {}
+
+    class FakeYoutubeDL:
+        def __init__(self, options: dict[str, object]) -> None:
+            captured_options.update(options)
+
+        def __enter__(self) -> "FakeYoutubeDL":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def extract_info(self, url: str, download: bool = False) -> dict[str, object]:
+            return {"title": "测试视频"}
+
+    monkeypatch.setattr("video_sum_core.pipeline.real.YoutubeDL", FakeYoutubeDL)
+    runner = RealPipelineRunner(PipelineSettings(tasks_dir=tmp_path, ytdlp_cookies_file=str(cookie_file)))
+
+    assert runner._probe_video("https://www.bilibili.com/video/BV1xx411c7mD")["title"] == "测试视频"
+    assert captured_options["cookiefile"] == str(cookie_file)
+    assert "Mozilla/5.0" in captured_options["http_headers"]["User-Agent"]
+    assert captured_options["http_headers"]["Referer"] == "https://www.bilibili.com/"
+
+
+def test_probe_video_maps_bilibili_412_to_actionable_error(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    class FakeYoutubeDL:
+        def __init__(self, options: dict[str, object]) -> None:
+            pass
+
+        def __enter__(self) -> "FakeYoutubeDL":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def extract_info(self, url: str, download: bool = False) -> dict[str, object]:
+            raise DownloadError("ERROR: [BiliBili] BV1xx: HTTP Error 412: Precondition Failed")
+
+    monkeypatch.setattr("video_sum_core.pipeline.real.YoutubeDL", FakeYoutubeDL)
+    runner = RealPipelineRunner(PipelineSettings(tasks_dir=tmp_path))
+
+    with pytest.raises(VideoSumError, match="VIDEO_SUM_YTDLP_COOKIES_FILE"):
+        runner._probe_video("https://www.bilibili.com/video/BV1xx411c7mD")
+
+
+def test_probe_video_maps_chrome_cookie_database_failure_to_actionable_error(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    class FakeYoutubeDL:
+        def __init__(self, options: dict[str, object]) -> None:
+            pass
+
+        def __enter__(self) -> "FakeYoutubeDL":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def extract_info(self, url: str, download: bool = False) -> dict[str, object]:
+            raise DownloadError("ERROR: Could not copy Chrome cookie database")
+
+    monkeypatch.setattr("video_sum_core.pipeline.real.YoutubeDL", FakeYoutubeDL)
+    runner = RealPipelineRunner(PipelineSettings(tasks_dir=tmp_path, ytdlp_cookies_browser="chrome"))
+
+    with pytest.raises(VideoSumError, match="登录窗口"):
+        runner._probe_video("https://www.bilibili.com/video/BV1xx411c7mD")
+
+
+def test_probe_video_maps_browser_dpapi_failure_to_actionable_error(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    class FakeYoutubeDL:
+        def __init__(self, options: dict[str, object]) -> None:
+            pass
+
+        def __enter__(self) -> "FakeYoutubeDL":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def extract_info(self, url: str, download: bool = False) -> dict[str, object]:
+            raise DownloadError("ERROR: Failed to decrypt with DPAPI")
+
+    monkeypatch.setattr("video_sum_core.pipeline.real.YoutubeDL", FakeYoutubeDL)
+    runner = RealPipelineRunner(PipelineSettings(tasks_dir=tmp_path, ytdlp_cookies_browser="chrome"))
+
+    with pytest.raises(VideoSumError, match="登录窗口"):
+        runner._probe_video("https://www.bilibili.com/video/BV1xx411c7mD")
+
+
+def test_preflight_llm_timeout_fails_quickly(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    runner = RealPipelineRunner(
+        PipelineSettings(
+            tasks_dir=tmp_path,
+            llm_enabled=True,
+            llm_api_key="test-key",
+            llm_base_url="https://api.example.com/v1",
+            llm_model="test-model",
+        )
+    )
+
+    def fake_request(**kwargs: object) -> dict[str, object]:
+        assert kwargs["timeout"] == 20
+        assert kwargs["retry_count"] == 0
+        raise httpx.ReadTimeout("slow preflight")
+
+    monkeypatch.setattr(runner, "_request_llm_json", fake_request)
+
+    with pytest.raises(VideoSumError, match="LLM API 检查超时"):
+        runner._preflight_llm_availability()
 
 
 def test_export_transcript_snapshot_creates_resummary_artifacts(tmp_path: Path) -> None:

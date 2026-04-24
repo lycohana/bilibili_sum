@@ -11,10 +11,11 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
+from typing import Callable, NoReturn
 
 import httpx
 from yt_dlp import YoutubeDL
+from yt_dlp.utils import DownloadError
 
 from video_sum_core.errors import (
     LLMAuthenticationError,
@@ -36,6 +37,15 @@ from video_sum_infra.runtime import (
 
 logger = logging.getLogger("video_sum_core.pipeline.real")
 
+_BILIBILI_HTTP_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Safari/537.36"
+    ),
+    "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+    "Referer": "https://www.bilibili.com/",
+}
 
 def _windows_hidden_subprocess_kwargs() -> dict[str, object]:
     if os.name != "nt":
@@ -154,6 +164,8 @@ class PipelineSettings:
     summary_chunk_overlap_segments: int = 2
     summary_chunk_concurrency: int = 2
     summary_chunk_retry_count: int = 2
+    ytdlp_cookies_file: str = ""
+    ytdlp_cookies_browser: str = ""
 
 
 class RealPipelineRunner(PipelineRunner):
@@ -479,9 +491,57 @@ class RealPipelineRunner(PipelineRunner):
             segments.append({"start": start_value, "end": end_value, "text": text})
         return segments
 
+    def _base_ydl_options(self) -> dict[str, object]:
+        options: dict[str, object] = {
+            "quiet": True,
+            "no_warnings": True,
+            "http_headers": _BILIBILI_HTTP_HEADERS,
+            "retries": 3,
+            "extractor_retries": 3,
+            "fragment_retries": 3,
+            "sleep_interval_requests": 1,
+            "socket_timeout": 30,
+        }
+        cookie_file = str(
+            self._settings.ytdlp_cookies_file
+            or os.environ.get("VIDEO_SUM_YTDLP_COOKIES_FILE")
+            or os.environ.get("YTDLP_COOKIES_FILE")
+            or ""
+        ).strip()
+        if cookie_file:
+            cookie_path = Path(cookie_file).expanduser()
+            if cookie_path.exists() and cookie_path.is_file():
+                options["cookiefile"] = str(cookie_path)
+            else:
+                logger.warning("yt-dlp cookie file does not exist: %s", cookie_path)
+        return options
+
+    def _raise_ydl_error(self, error: DownloadError) -> NoReturn:
+        message = str(error)
+        if "Could not copy Chrome cookie database" in message:
+            raise VideoSumError(
+                "无法读取 Chrome 登录态：yt-dlp 不能复制 Chrome Cookie 数据库。"
+                "请通过 BriefVid 的 B 站登录窗口重新捕获登录态，或按教程导出 cookies.txt 并填写 yt-dlp Cookies 文件。"
+            ) from error
+        if "Failed to decrypt with DPAPI" in message:
+            raise VideoSumError(
+                "无法读取浏览器登录态：yt-dlp 解密 Windows 浏览器 Cookie 失败（DPAPI）。"
+                "请通过 BriefVid 的 B 站登录窗口重新捕获登录态，或按教程导出 cookies.txt 并填写 yt-dlp Cookies 文件。"
+            ) from error
+        if "HTTP Error 412" in message and "BiliBili" in message:
+            raise VideoSumError(
+                "B 站返回 HTTP 412，当前请求可能被风控拦截。请稍后重试、切换网络/IP，"
+                "或通过 BriefVid 的 B 站登录窗口捕获登录态；也可以填写 yt-dlp Cookies 文件 "
+                "/ VIDEO_SUM_YTDLP_COOKIES_FILE。"
+            ) from error
+        raise VideoSumError(f"Failed to read or download video with yt-dlp: {message}") from error
+
     def _probe_video(self, url: str) -> dict:
-        with YoutubeDL({"quiet": True, "no_warnings": True}) as ydl:
-            info = ydl.extract_info(url, download=False)
+        try:
+            with YoutubeDL(self._base_ydl_options()) as ydl:
+                info = ydl.extract_info(url, download=False)
+        except DownloadError as exc:
+            self._raise_ydl_error(exc)
         if not isinstance(info, dict):
             raise VideoSumError("Failed to probe video metadata.")
         return info
@@ -588,10 +648,9 @@ class RealPipelineRunner(PipelineRunner):
                 emit("downloading", 48, "音频提取完成")
 
         options = {
+            **self._base_ydl_options(),
             "format": "bestaudio/best",
             "outtmpl": output_template,
-            "quiet": True,
-            "no_warnings": True,
             "noplaylist": True,
             "progress_hooks": [progress_hook],
             "postprocessor_hooks": [postprocessor_hook],
@@ -609,8 +668,11 @@ class RealPipelineRunner(PipelineRunner):
             logger.info("using ffmpeg location: %s", ffmpeg_exe)
         else:
             logger.warning("ffmpeg not found, yt_dlp will use system PATH")
-        with YoutubeDL(options) as ydl:
-            ydl.download([url])
+        try:
+            with YoutubeDL(options) as ydl:
+                ydl.download([url])
+        except DownloadError as exc:
+            self._raise_ydl_error(exc)
         candidates = sorted(task_dir.glob(f"{safe_title}.*"))
         if not candidates:
             raise VideoSumError("Audio download failed.")
@@ -1401,17 +1463,20 @@ class RealPipelineRunner(PipelineRunner):
         self,
         base_url: str,
         payload: dict[str, object],
+        *,
+        timeout: float = 180,
+        retry_count: int | None = None,
     ) -> dict[str, object]:
         headers = {
             "Authorization": f"Bearer {self._settings.llm_api_key}",
             "Content-Type": "application/json",
         }
-        transport_retry_count = max(0, int(self._settings.summary_chunk_retry_count))
+        transport_retry_count = max(0, int(self._settings.summary_chunk_retry_count if retry_count is None else retry_count))
         last_error: Exception | None = None
         response: httpx.Response | None = None
         for attempt in range(transport_retry_count + 1):
             try:
-                with httpx.Client(timeout=180, follow_redirects=True) as client:
+                with httpx.Client(timeout=timeout, follow_redirects=True) as client:
                     response = client.post(f"{base_url}/chat/completions", headers=headers, json=payload)
                 break
             except Exception as exc:
@@ -1480,7 +1545,12 @@ class RealPipelineRunner(PipelineRunner):
             "temperature": 0,
             "max_tokens": 32,
         }
-        self._request_llm_json(base_url=base_url, payload=payload)
+        try:
+            self._request_llm_json(base_url=base_url, payload=payload, timeout=20, retry_count=0)
+        except httpx.TimeoutException as exc:
+            raise VideoSumError("LLM API 检查超时，请稍后重试或检查 Base URL / 网络代理。") from exc
+        except httpx.TransportError as exc:
+            raise VideoSumError(f"LLM API 检查失败，请检查 Base URL / 网络代理：{exc}") from exc
 
     def _parse_llm_json_content(self, content: str) -> dict[str, object]:
         # 移除可能的 think 标签（某些模型如 MiniMax-M2.5 可能返回）

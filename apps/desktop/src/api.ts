@@ -4,6 +4,7 @@ import type {
   KnowledgeAskResponse,
   KnowledgeAutoTagResponse,
   KnowledgeNetworkResponse,
+  KnowledgeReasoningDelta,
   KnowledgeSearchRequest,
   KnowledgeSearchResponse,
   KnowledgeStatsResponse,
@@ -358,6 +359,7 @@ export const api = {
     payload: { query: string; context_limit?: number; history?: Array<{ role: "user" | "assistant"; content: string }> },
     handlers: {
       onTool?(tool: KnowledgeToolTrace): void;
+      onReasoningDelta?(delta: string): void;
       onTextDelta?(delta: string): void;
       onSources?(sources: KnowledgeAskResponse["sources"]): void;
       onDone?(result: KnowledgeAskResponse): void;
@@ -406,6 +408,9 @@ export const api = {
             break;
           case "text_delta":
             handlers.onTextDelta?.(String((data as { delta?: string }).delta || ""));
+            break;
+          case "reasoning_delta":
+            handlers.onReasoningDelta?.(String((data as KnowledgeReasoningDelta).delta || ""));
             break;
           case "sources":
             handlers.onSources?.(((data as { sources?: KnowledgeAskResponse["sources"] }).sources || []));

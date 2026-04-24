@@ -109,7 +109,8 @@
 .config-alert-list,
 .settings-config-health-list,
 .setup-assistant-issues,
-.setup-assistant-sequence {
+.setup-assistant-sequence,
+.cookie-help-steps {
   display: grid;
   gap: 10px;
 }
@@ -117,7 +118,8 @@
 .config-alert-item,
 .settings-config-health-item,
 .setup-assistant-issue,
-.setup-assistant-step {
+.setup-assistant-step,
+.cookie-help-step {
   display: grid;
   gap: 4px;
   padding: 12px 14px;
@@ -153,14 +155,16 @@
 .config-alert-item strong,
 .settings-config-health-item strong,
 .setup-assistant-issue strong,
-.setup-assistant-step strong {
+.setup-assistant-step strong,
+.cookie-help-step strong {
   font-size: 0.92rem;
 }
 
 .config-alert-item span,
 .settings-config-health-item span,
 .setup-assistant-issue p,
-.setup-assistant-step p {
+.setup-assistant-step p,
+.cookie-help-step p {
   margin: 0;
   color: var(--text-secondary);
   line-height: 1.55;
@@ -212,12 +216,18 @@
   width: min(640px, calc(100vw - 40px));
 }
 
-.setup-assistant-body {
+.cookie-help-dialog {
+  width: min(620px, calc(100vw - 40px));
+}
+
+.setup-assistant-body,
+.cookie-help-body {
   display: grid;
   gap: 18px;
 }
 
-.setup-assistant-hero {
+.setup-assistant-hero,
+.cookie-help-hero {
   display: grid;
   gap: 8px;
   padding: 18px 18px 16px;
@@ -236,19 +246,41 @@
   background: color-mix(in srgb, var(--bg-card) 86%, var(--bg-warning) 14%);
 }
 
-.setup-assistant-hero p {
+.setup-assistant-hero p,
+.cookie-help-hero p {
   margin: 0;
   color: var(--text-secondary);
   line-height: 1.6;
 }
 
-.setup-assistant-step {
+.cookie-help-summary {
+  display: grid;
+  gap: 6px;
+  padding: 14px 16px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--warning-border);
+  background: var(--bg-warning);
+}
+
+.cookie-help-summary strong {
+  font-size: 0.92rem;
+}
+
+.cookie-help-summary p {
+  margin: 0;
+  color: var(--text-secondary);
+  line-height: 1.58;
+}
+
+.setup-assistant-step,
+.cookie-help-step {
   grid-template-columns: auto 1fr;
   gap: 12px;
   align-items: flex-start;
 }
 
-.setup-assistant-step > span {
+.setup-assistant-step > span,
+.cookie-help-step > span {
   width: 28px;
   height: 28px;
   display: grid;

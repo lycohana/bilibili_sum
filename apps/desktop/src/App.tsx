@@ -16,6 +16,7 @@ import {
 } from "./appModel";
 import { api } from "./api";
 import { HomeIcon, KnowledgeIcon, LibraryIcon, SettingsIcon } from "./components/AppIcons";
+import { CookieHelpDialog } from "./components/CookieHelpDialog";
 import { MultiPageSelectDialog } from "./components/MultiPageSelectDialog";
 import { SetupAssistantDialog } from "./components/SetupAssistantDialog";
 import { TitleBar } from "./components/TitleBar";
@@ -64,6 +65,7 @@ export function App() {
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [updateDialogOpen, setUpdateDialogOpen] = useState(false);
   const [setupAssistantOpen, setSetupAssistantOpen] = useState(false);
+  const [cookieHelpDialogOpen, setCookieHelpDialogOpen] = useState(false);
   const [setupAssistantDismissed, setSetupAssistantDismissed] = useState(false);
   const [updateState, setUpdateState] = useState<UpdateState>({
     status: "idle",
@@ -332,6 +334,61 @@ export function App() {
     navigate("/settings");
   }
 
+  function isBilibiliCookieHelpError(message: string) {
+    return /HTTP\s*412|cookies?\.txt|B\s*站返回|Bilibili rejected|风控拦截|登录态|cookiesfrombrowser|DPAPI/i.test(message);
+  }
+
+  function showBilibiliCookieHelp(message: string) {
+    setSubmitStatus(message || "B 站请求被拦截，请导出登录态 cookies 后重试。");
+    setCookieHelpDialogOpen(true);
+  }
+
+  function openCookieExportTutorial() {
+    window.open("https://github.com/yt-dlp/yt-dlp/wiki/FAQ#how-do-i-pass-cookies-to-yt-dlp", "_blank", "noopener,noreferrer");
+  }
+
+  function openYtdlpCookieSettings() {
+    setCookieHelpDialogOpen(false);
+    setSettingsFocusRequest({ issueKey: "ytdlp_cookies_file", nonce: Date.now() });
+    navigate("/settings");
+  }
+
+  async function captureBilibiliLoginCookies() {
+    try {
+      const currentProbeUrl = probeUrl.trim();
+      if (!window.desktop?.bilibili) {
+        setSubmitStatus("当前环境不支持打开 B 站登录窗口，请按教程手动导出 cookies.txt。");
+        return;
+      }
+      setSubmitStatus("请在新窗口登录 B 站，登录成功后会自动保存 cookies...");
+      const captured = await window.desktop.bilibili.captureLoginCookies();
+      const response = await api.updateSettings({
+        ytdlp_cookies_file: captured.cookiesFile,
+        ytdlp_cookies_browser: "",
+      });
+      setSnapshot((current) => ({
+        ...current,
+        settings: response.settings,
+        systemInfo: current.systemInfo
+          ? {
+              ...current.systemInfo,
+              settings: response.settings,
+            }
+          : current.systemInfo,
+      }));
+      if (currentProbeUrl) {
+        await api.probeVideo({ url: currentProbeUrl, force_refresh: true });
+        setSubmitStatus(`B 站登录态已保存，捕获 ${captured.cookieCount} 条 cookies。可以重新提交任务。`);
+      } else {
+        setSubmitStatus(`B 站登录态已保存，捕获 ${captured.cookieCount} 条 cookies。重新提交任务即可。`);
+      }
+      setCookieHelpDialogOpen(false);
+    } catch (error) {
+      setSubmitStatus(error instanceof Error ? error.message : "捕获 B 站登录态失败，请按教程手动导出 cookies.txt。");
+      setCookieHelpDialogOpen(true);
+    }
+  }
+
   async function handleProbe(event: FormEvent) {
     event.preventDefault();
     if (!probeUrl.trim()) {
@@ -365,7 +422,12 @@ export function App() {
       setRefreshSeed((value) => value + 1);
       navigate(`/videos/${response.video.video_id}`);
     } catch (error) {
-      setSubmitStatus(error instanceof Error ? error.message : "开始总结失败");
+      const message = error instanceof Error ? error.message : "开始总结失败";
+      if (isBilibiliCookieHelpError(message)) {
+        showBilibiliCookieHelp(message);
+        return;
+      }
+      setSubmitStatus(message);
     }
   }
 
@@ -397,7 +459,12 @@ export function App() {
         setRefreshSeed((value) => value + 1);
         navigate(`/videos/${response.video.video_id}`);
       } catch (error) {
-        setSubmitStatus(error instanceof Error ? error.message : "导入本地视频失败");
+        const message = error instanceof Error ? error.message : "导入本地视频失败";
+        if (isBilibiliCookieHelpError(message)) {
+          showBilibiliCookieHelp(message);
+          return;
+        }
+        setSubmitStatus(message);
       }
       return;
     }
@@ -422,7 +489,12 @@ export function App() {
       setRefreshSeed((value) => value + 1);
       navigate(`/videos/${response.video.video_id}`);
     } catch (error) {
-      setSubmitStatus(error instanceof Error ? error.message : "导入本地视频失败");
+      const message = error instanceof Error ? error.message : "导入本地视频失败";
+      if (isBilibiliCookieHelpError(message)) {
+        showBilibiliCookieHelp(message);
+        return;
+      }
+      setSubmitStatus(message);
     }
   }
 
@@ -635,7 +707,17 @@ export function App() {
                 )}
               />
               <Route path="/knowledge" element={<KnowledgePage />} />
-              <Route path="/videos/:videoId" element={<VideoDetailPage onRefresh={() => setRefreshSeed((value) => value + 1)} />} />
+              <Route
+                path="/videos/:videoId"
+                element={(
+                  <VideoDetailPage
+                    onRefresh={() => setRefreshSeed((value) => value + 1)}
+                    onOpenCookieSettings={openYtdlpCookieSettings}
+                    onOpenCookieTutorial={openCookieExportTutorial}
+                    onCaptureLoginCookies={captureBilibiliLoginCookies}
+                  />
+                )}
+              />
               <Route
                 path="/settings"
                 element={(
@@ -697,6 +779,13 @@ export function App() {
         onClose={closeSetupAssistant}
         onOpenSettings={openSettingsFromAssistant}
         onNavigateToIssue={navigateToConfigIssue}
+      />
+      <CookieHelpDialog
+        isOpen={cookieHelpDialogOpen}
+        onClose={() => setCookieHelpDialogOpen(false)}
+        onOpenTutorial={openCookieExportTutorial}
+        onOpenSettings={openYtdlpCookieSettings}
+        onCaptureLoginCookies={captureBilibiliLoginCookies}
       />
     </div>
   );

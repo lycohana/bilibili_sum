@@ -767,6 +767,9 @@ export function SettingsPage({
       }
       return { category: "llm", targetKey: "llm_base_url" };
     }
+    if (issueKey === "ytdlp_cookies_browser" || issueKey === "ytdlp_cookies_file") {
+      return { category: "advanced", targetKey: "ytdlp_cookies_file" };
+    }
     return null;
   }
 
@@ -1737,6 +1740,19 @@ export function SettingsPage({
                     <option value="true">开启</option>
                     <option value="false">关闭</option>
                   </select>
+                </label>
+                <label
+                  className={`settings-input-group settings-focus-target ${activeFocusTarget === "ytdlp_cookies_file" ? "is-highlighted" : ""}`}
+                  ref={registerFocusTarget("ytdlp_cookies_file") as (node: HTMLLabelElement | null) => void}
+                >
+                  <span className="settings-input-label">yt-dlp Cookies 文件</span>
+                  <input
+                    className="settings-input-field"
+                    value={form.ytdlp_cookies_file || ""}
+                    onChange={(e) => updateForm({ ...form, ytdlp_cookies_file: e.target.value })}
+                    placeholder="C:\\Users\\you\\Downloads\\cookies.txt"
+                  />
+                  <span className="settings-input-caption">推荐通过提示弹窗打开 B 站登录窗口自动生成；也可以手动填写从已登录浏览器导出的 B 站 cookies.txt。</span>
                 </label>
               </div>
             </section>

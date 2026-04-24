@@ -318,6 +318,8 @@ class ServiceSettings(BaseSettings):
     mindmap_concurrency: int = 1
     summary_chunk_concurrency: int = 2
     summary_chunk_retry_count: int = 2
+    ytdlp_cookies_file: str = ""
+    ytdlp_cookies_browser: str = ""
 
     model_config = SettingsConfigDict(
         env_prefix="VIDEO_SUM_",

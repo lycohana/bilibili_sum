@@ -58,6 +58,11 @@ type StorageCleanupResult = {
   reclaimedBytes: number;
 };
 
+type BilibiliCookieExportResult = {
+  cookiesFile: string;
+  cookieCount: number;
+};
+
 type DesktopBridge = {
   app: {
     getVersion(): Promise<string>;
@@ -82,6 +87,9 @@ type DesktopBridge = {
   };
   media: {
     pickVideoFile(): Promise<string | null>;
+  };
+  bilibili: {
+    captureLoginCookies(): Promise<BilibiliCookieExportResult>;
   };
   shell: {
     openPath(targetPath: string): Promise<string>;

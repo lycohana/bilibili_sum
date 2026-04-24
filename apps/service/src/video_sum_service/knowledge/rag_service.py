@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 
@@ -290,8 +291,10 @@ class KnowledgeAgent:
 
         yield _tool_event("knowledge_llm", "知识库 LLM", "running", "正在根据证据片段与会话上下文生成回答。")
         answer_parts: list[str] = []
+        reasoning_character_count = 0
+        last_reasoning_notice_at = 0.0
         try:
-            for delta in stream_knowledge_llm(
+            for event in stream_knowledge_llm(
                 self._settings,
                 system_prompt=KNOWLEDGE_QA_SYSTEM_PROMPT,
                 user_prompt=_build_knowledge_user_prompt(run.plan.query, run.context_blocks, run.plan.history),
@@ -301,9 +304,40 @@ class KnowledgeAgent:
             ):
                 if should_stop():
                     return
+                if isinstance(event, str):
+                    delta = event
+                    kind = "content"
+                else:
+                    delta = event.delta
+                    kind = event.kind
+                if kind == "reasoning":
+                    reasoning_character_count += len(delta)
+                    yield ("reasoning_delta", {"delta": delta})
+                    now = time.monotonic()
+                    if reasoning_character_count and (last_reasoning_notice_at == 0.0 or now - last_reasoning_notice_at > 2.0):
+                        last_reasoning_notice_at = now
+                        yield _tool_event(
+                            "knowledge_llm",
+                            "知识库 LLM",
+                            "running",
+                            "已收到模型推理流，正在等待最终回答正文。",
+                            {"reasoning_character_count": reasoning_character_count},
+                        )
+                    continue
                 answer_parts.append(delta)
                 yield ("text_delta", {"delta": delta})
         except HTTPException as exc:
+            if exc.status_code in {502, 503, 504}:
+                message = str(exc.detail)
+                yield _tool_event(
+                    "knowledge_llm",
+                    "知识库 LLM",
+                    "error",
+                    message,
+                    {"status_code": exc.status_code},
+                )
+                yield ("error", {"message": message, "status_code": exc.status_code})
+                return
             yield _tool_event(
                 "knowledge_llm",
                 "知识库 LLM",

@@ -273,6 +273,8 @@ export type ServiceSettings = {
   mindmap_concurrency: number;
   summary_chunk_concurrency: number;
   summary_chunk_retry_count: number;
+  ytdlp_cookies_file: string;
+  ytdlp_cookies_browser: string;
   settings_file_exists?: boolean;
 };
 
@@ -430,6 +432,10 @@ export type KnowledgeAskResponse = {
   query: string;
   answer: string;
   sources: KnowledgeSourceRef[];
+};
+
+export type KnowledgeReasoningDelta = {
+  delta: string;
 };
 
 export type KnowledgeChatHistoryItem = {

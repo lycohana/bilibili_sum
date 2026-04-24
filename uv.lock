@@ -2336,25 +2336,30 @@ name = "video-sum-service"
 version = "1.11.0"
 source = { editable = "apps/service" }
 dependencies = [
-    { name = "chromadb" },
     { name = "fastapi" },
     { name = "pydantic" },
-    { name = "sentence-transformers" },
     { name = "uvicorn", extra = ["standard"] },
     { name = "video-sum-core" },
     { name = "video-sum-infra" },
 ]
 
+[package.optional-dependencies]
+knowledge = [
+    { name = "chromadb" },
+    { name = "sentence-transformers" },
+]
+
 [package.metadata]
 requires-dist = [
-    { name = "chromadb", specifier = ">=1.0.0" },
+    { name = "chromadb", marker = "extra == 'knowledge'", specifier = ">=1.0.0" },
     { name = "fastapi", specifier = ">=0.115,<1.0" },
     { name = "pydantic", specifier = ">=2.10,<3.0" },
-    { name = "sentence-transformers", specifier = ">=3.0" },
+    { name = "sentence-transformers", marker = "extra == 'knowledge'", specifier = ">=3.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.34,<1.0" },
     { name = "video-sum-core", editable = "packages/core" },
     { name = "video-sum-infra", editable = "packages/infra" },
 ]
+provides-extras = ["knowledge"]
 
 [[package]]
 name = "watchfiles"

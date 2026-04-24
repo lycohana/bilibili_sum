@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { SVGProps } from "react";
 import { Link } from "react-router-dom";
 
@@ -9,6 +9,7 @@ export type KnowledgeChatMessage = {
   id: string;
   role: "user" | "assistant";
   content: string;
+  reasoning?: string;
   sources?: KnowledgeSourceRef[];
   tools?: KnowledgeToolTrace[];
   status?: "streaming" | "completed" | "error";
@@ -40,9 +41,13 @@ function renderToolMeta(meta: KnowledgeToolTrace["meta"]) {
     return null;
   }
   const sourceItems = Array.isArray(meta.sources) ? meta.sources : [];
-  const pairs = Object.entries(meta).filter(([key]) => key !== "sources");
+  const pairs = Object.entries(meta).filter(([key]) => key !== "sources" && key !== "reasoning_character_count");
+  const reasoningCharacterCount = Number(meta.reasoning_character_count || 0);
   return (
     <div className="knowledge-tool-meta">
+      {reasoningCharacterCount > 0 ? (
+        <span className="helper-chip">已收到推理流</span>
+      ) : null}
       {pairs.map(([key, value]) => (
         <span key={key} className="helper-chip">
           {key.replace(/_/g, " ")} {String(value)}
@@ -92,6 +97,31 @@ function formatSourceMeta(source: KnowledgeSourceRef) {
     parts.push(source.timestamp);
   }
   return parts.join(" · ");
+}
+
+function buildSourceCards(sources: KnowledgeSourceRef[] = []) {
+  const sourceMap = new Map<string, KnowledgeSourceRef & { timestamps: string[] }>();
+  sources.forEach((source) => {
+    const key = source.video_id || source.title;
+    const existing = sourceMap.get(key);
+    const timestamps = source.timestamp ? [source.timestamp] : [];
+    if (!existing) {
+      sourceMap.set(key, { ...source, timestamps });
+      return;
+    }
+    const nextTimestamps = [...existing.timestamps];
+    timestamps.forEach((timestamp) => {
+      if (!nextTimestamps.includes(timestamp)) {
+        nextTimestamps.push(timestamp);
+      }
+    });
+    if (source.relevance_score > existing.relevance_score) {
+      sourceMap.set(key, { ...source, timestamps: nextTimestamps });
+      return;
+    }
+    existing.timestamps = nextTimestamps;
+  });
+  return [...sourceMap.values()].slice(0, 4);
 }
 
 function ToolTimeline({ tools = [] }: { tools?: KnowledgeToolTrace[] }) {
@@ -170,6 +200,9 @@ export function AskPanel({
   const threadRef = useRef<HTMLDivElement | null>(null);
   const threadContentRef = useRef<HTMLDivElement | null>(null);
   const threadEndRef = useRef<HTMLDivElement | null>(null);
+  const shouldAutoScrollRef = useRef(true);
+  const previousMessageCountRef = useRef(0);
+  const [showScrollBottom, setShowScrollBottom] = useState(false);
 
   const suggestionItems = useMemo(() => {
     const seen = new Set<string>();
@@ -193,30 +226,55 @@ export function AskPanel({
   }, [lastMessage?.tools]);
   const latestAssistantIsStreaming = lastMessage?.role === "assistant" && lastMessage.status === "streaming";
 
+  const updateScrollState = useCallback(() => {
+    const element = threadRef.current;
+    if (!element) {
+      return;
+    }
+    const distanceFromBottom = element.scrollHeight - element.scrollTop - element.clientHeight;
+    const isNearBottom = distanceFromBottom < 160;
+    shouldAutoScrollRef.current = isNearBottom;
+    setShowScrollBottom(hasMessages && !isNearBottom);
+  }, [hasMessages]);
+
   const scrollThreadToBottom = useCallback((behavior: ScrollBehavior = "auto") => {
     const element = threadRef.current;
     if (!element) {
       return;
     }
     element.scrollTo({ top: element.scrollHeight, behavior });
-    threadEndRef.current?.scrollIntoView({ block: "end", behavior });
+    shouldAutoScrollRef.current = true;
+    setShowScrollBottom(false);
   }, []);
 
   useLayoutEffect(() => {
     if (!hasMessages) {
+      previousMessageCountRef.current = 0;
       return;
     }
-    scrollThreadToBottom(latestAssistantIsStreaming ? "auto" : "smooth");
+    const hasNewMessage = messages.length > previousMessageCountRef.current;
+    previousMessageCountRef.current = messages.length;
+    if (hasNewMessage) {
+      shouldAutoScrollRef.current = true;
+    }
+    if (shouldAutoScrollRef.current || hasNewMessage) {
+      scrollThreadToBottom(latestAssistantIsStreaming ? "auto" : "smooth");
+    } else {
+      updateScrollState();
+    }
   }, [
     hasMessages,
     latestAssistantIsStreaming,
     lastMessage?.id,
     lastMessage?.content,
+    lastMessage?.reasoning,
     lastMessage?.sources?.length,
     lastMessage?.status,
+    lastMessage?.role,
     lastToolSignature,
     messages.length,
     scrollThreadToBottom,
+    updateScrollState,
   ]);
 
   useEffect(() => {
@@ -229,8 +287,15 @@ export function AskPanel({
     }
     let frameId = 0;
     const scheduleScroll = () => {
+      if (!shouldAutoScrollRef.current) {
+        updateScrollState();
+        return;
+      }
       window.cancelAnimationFrame(frameId);
-      frameId = window.requestAnimationFrame(() => scrollThreadToBottom("auto"));
+      frameId = window.requestAnimationFrame(() => {
+        scrollThreadToBottom("auto");
+        updateScrollState();
+      });
     };
     scheduleScroll();
     const observer = new ResizeObserver(scheduleScroll);
@@ -239,16 +304,16 @@ export function AskPanel({
       window.cancelAnimationFrame(frameId);
       observer.disconnect();
     };
-  }, [latestAssistantIsStreaming, lastMessage?.id, scrollThreadToBottom]);
+  }, [latestAssistantIsStreaming, lastMessage?.id, scrollThreadToBottom, updateScrollState]);
 
   return (
     <div className={`knowledge-chat-shell knowledge-chat-shell-gpt ${hasMessages ? "has-thread" : "is-empty"}`}>
-      <div ref={threadRef} className="knowledge-chat-scroll">
+      <div ref={threadRef} className="knowledge-chat-scroll" onScroll={updateScrollState}>
         {!hasMessages ? (
           <div className="knowledge-chat-welcome">
             <span className="library-kicker">Knowledge Chat</span>
             <h2>直接问你的知识库</h2>
-            <p>边检索、边生成、边展示工具轨迹。把视频、知识笔记和标签关系收束成一个真正能追问的助手。</p>
+            <p>搜索、整理和追问你的视频知识库。</p>
             <div className="knowledge-chat-suggestion-grid">
               {suggestionItems.map((item) => (
                 <button key={item} className="knowledge-chat-suggestion-card" type="button" onClick={() => onPickSuggestion(item)}>
@@ -262,29 +327,49 @@ export function AskPanel({
             {messages.map((message) => (
               <article key={message.id} className={`knowledge-chat-message-row ${message.role === "user" ? "is-user" : "is-assistant"}`}>
                 <div className={`knowledge-chat-bubble ${message.role === "user" ? "is-user" : "is-assistant"}`}>
-                  <div className="knowledge-chat-message-meta">
-                    <strong>{message.role === "user" ? "你" : "知识库助手"}</strong>
-                    {message.role === "assistant" && message.status === "streaming" ? (
-                      <span className="knowledge-streaming-indicator">正在输出</span>
-                    ) : null}
-                  </div>
+                  {message.role === "assistant" ? (
+                    <div className="knowledge-chat-message-meta">
+                      <strong>知识库助手</strong>
+                      {message.status === "streaming" ? (
+                        <span className="knowledge-streaming-indicator">正在输出</span>
+                      ) : null}
+                    </div>
+                  ) : null}
                   {message.role === "assistant" ? (
                     <>
-                      <ToolTimeline tools={message.tools} />
-                      <MarkdownContent className="knowledge-chat-markdown" content={message.content || (message.status === "streaming" ? "正在整理回答..." : "")} />
+                      <div className={`knowledge-chat-answer-card ${message.status === "error" ? "is-error" : ""}`}>
+                        <ToolTimeline tools={message.tools} />
+                        {message.reasoning ? (
+                          <details className="knowledge-chat-reasoning" open={message.status === "streaming"}>
+                            <summary>
+                              <span>思考</span>
+                              <small>{message.status === "streaming" ? "正在更新" : "已完成"}</small>
+                            </summary>
+                            <pre>{message.reasoning}</pre>
+                          </details>
+                        ) : null}
+                        <MarkdownContent className="knowledge-chat-markdown" content={message.content || (message.status === "streaming" ? "正在整理回答..." : "")} />
+                      </div>
                     </>
                   ) : (
                     <p className="knowledge-chat-user-text">{message.content}</p>
                   )}
                   {message.role === "assistant" && message.sources?.length ? (
-                    <div className="knowledge-chat-sources">
-                      {message.sources.map((source) => (
-                        <Link key={`${source.video_id}-${source.timestamp || "na"}`} className="knowledge-chat-source-card" to={`/videos/${source.video_id}`}>
-                          <strong>{source.title}</strong>
-                          <span>{formatSourceMeta(source)}</span>
-                        </Link>
-                      ))}
-                    </div>
+                    <details className="knowledge-chat-source-drawer">
+                      <summary>
+                        <span>参考来源</span>
+                        <strong>{buildSourceCards(message.sources).length}</strong>
+                      </summary>
+                      <div className="knowledge-chat-sources">
+                        {buildSourceCards(message.sources).map((source) => (
+                          <Link key={source.video_id || source.title} className="knowledge-chat-source-card" to={`/videos/${source.video_id}`}>
+                            <strong>{source.title}</strong>
+                            <span>{formatSourceMeta(source)}</span>
+                            {source.timestamps.length ? <small>{source.timestamps.slice(0, 3).join(" / ")}</small> : null}
+                          </Link>
+                        ))}
+                      </div>
+                    </details>
                   ) : null}
                 </div>
               </article>
@@ -294,13 +379,25 @@ export function AskPanel({
         )}
       </div>
 
+      {showScrollBottom ? (
+        <button
+          className="knowledge-chat-scroll-bottom"
+          type="button"
+          onClick={() => scrollThreadToBottom("smooth")}
+          aria-label="滚动到底部"
+          title="滚动到底部"
+        >
+          <span aria-hidden="true">↓</span>
+        </button>
+      ) : null}
+
       <div className="knowledge-chat-composer-dock">
         <div className="knowledge-chat-composer-surface">
           <textarea
             className="textarea-field knowledge-chat-textarea"
             value={query}
             onChange={(event) => onQueryChange(event.target.value)}
-            placeholder="问知识库任何问题，例如：我最近在学什么？把 OpenCV 相关内容帮我串起来。"
+            placeholder="有问题，尽管问"
             onKeyDown={(event) => {
               if (event.key === "Enter" && !event.shiftKey) {
                 event.preventDefault();
@@ -309,12 +406,8 @@ export function AskPanel({
             }}
           />
           <div className="knowledge-chat-composer-footer">
-            <div className="knowledge-chat-suggestion-row">
-              {suggestionItems.slice(0, hasMessages ? 3 : 4).map((item) => (
-                <button key={item} className="filter-pill" type="button" onClick={() => onPickSuggestion(item)}>
-                  <span>{item}</span>
-                </button>
-              ))}
+            <div className="knowledge-chat-composer-hint">
+              Enter 发送，Shift + Enter 换行
             </div>
             <div className="knowledge-chat-action-row">
               <button

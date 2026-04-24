@@ -89,6 +89,11 @@ export type StorageCleanupResult = {
   reclaimedBytes: number;
 };
 
+export type BilibiliCookieExportResult = {
+  cookiesFile: string;
+  cookieCount: number;
+};
+
 const desktop = {
   app: {
     getVersion: () => ipcRenderer.invoke("desktop:app:get-version") as Promise<string>,
@@ -120,6 +125,10 @@ const desktop = {
   },
   media: {
     pickVideoFile: () => ipcRenderer.invoke("desktop:media:pick-video-file") as Promise<string | null>,
+  },
+  bilibili: {
+    captureLoginCookies: () =>
+      ipcRenderer.invoke("desktop:bilibili:capture-login-cookies") as Promise<BilibiliCookieExportResult>,
   },
   shell: {
     openPath: (targetPath: string) => ipcRenderer.invoke("desktop:shell:open-path", targetPath) as Promise<string>,

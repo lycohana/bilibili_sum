@@ -2722,6 +2722,13 @@
   white-space: pre-wrap;
 }
 
+.detail-state-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 2px;
+}
+
 .detail-mindmap-placeholder {
   display: flex;
   align-items: flex-end;

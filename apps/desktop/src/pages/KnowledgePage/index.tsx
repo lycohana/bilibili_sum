@@ -19,12 +19,13 @@ type KnowledgeView = "chat" | "workspace";
 function createMessage(
   role: "user" | "assistant",
   content: string,
-  options: Partial<Pick<KnowledgeChatMessage, "sources" | "tools" | "status">> = {},
+  options: Partial<Pick<KnowledgeChatMessage, "reasoning" | "sources" | "tools" | "status">> = {},
 ) {
   return {
     id: `${role}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     role,
     content,
+    reasoning: options.reasoning || "",
     sources: options.sources || [],
     tools: options.tools || [],
     status: options.status,
@@ -245,6 +246,12 @@ export function KnowledgePage() {
           },
           onTextDelta: (delta) => {
             enqueueAssistantDelta(assistantMessage.id, delta);
+          },
+          onReasoningDelta: (delta) => {
+            updateMessage(assistantMessage.id, (message) => ({
+              ...message,
+              reasoning: `${message.reasoning || ""}${delta}`,
+            }));
           },
           onSources: (sources) => {
             flushPendingAssistantDelta();

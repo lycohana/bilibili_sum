@@ -6,6 +6,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 
 import { progressEventClass, stageLabel, taskStatusClass } from "../appModel";
 import { api } from "../api";
+import { CookieHelpDialog } from "../components/CookieHelpDialog";
 import { MarkdownContent } from "../components/MarkdownContent";
 import { MultiPageSelectDialog } from "../components/MultiPageSelectDialog";
 import { FloatingNoticeStack } from "../components/FloatingNoticeStack";
@@ -65,6 +66,13 @@ type RefreshDetailOptions = {
 type PlayerSeekTarget = {
   nonce: number;
   seconds: number | null;
+};
+
+type VideoDetailPageProps = {
+  onRefresh(): void;
+  onOpenCookieSettings?: () => void;
+  onOpenCookieTutorial?: () => void;
+  onCaptureLoginCookies?: () => void | Promise<void>;
 };
 
 type MindMapCanvasNode = {
@@ -212,7 +220,11 @@ function IconFavorite(props: SVGProps<SVGSVGElement>) {
   );
 }
 
-export function VideoDetailPage({ onRefresh }: { onRefresh(): void }) {
+function isBilibiliCookieHelpError(message: string) {
+  return /HTTP\s*412|cookies?\.txt|B\s*站返回|Bilibili rejected|风控拦截|登录态|cookiesfrombrowser|DPAPI/i.test(message);
+}
+
+export function VideoDetailPage({ onRefresh, onOpenCookieSettings, onOpenCookieTutorial, onCaptureLoginCookies }: VideoDetailPageProps) {
   const { videoId = "" } = useParams();
   const navigate = useNavigate();
   const [video, setVideo] = useState<VideoAssetDetail | null>(null);
@@ -227,6 +239,7 @@ export function VideoDetailPage({ onRefresh }: { onRefresh(): void }) {
   const [actionMenuSection, setActionMenuSection] = useState<"regenerate" | "batch" | "maintenance" | null>(null);
   const [pageMenuOpen, setPageMenuOpen] = useState(false);
   const [status, setStatus] = useState("");
+  const [cookieHelpDialogOpen, setCookieHelpDialogOpen] = useState(false);
   const [mindMaps, setMindMaps] = useState<Record<string, TaskMindMapResponse>>({});
   const [mindMapLoading, setMindMapLoading] = useState<Record<string, boolean>>({});
   const [isExportingKnowledgeCard, setIsExportingKnowledgeCard] = useState(false);
@@ -241,6 +254,7 @@ export function VideoDetailPage({ onRefresh }: { onRefresh(): void }) {
   const [playerSeekTarget, setPlayerSeekTarget] = useState<PlayerSeekTarget>({ nonce: 0, seconds: null });
   const [selectedMindMapNodeId, setSelectedMindMapNodeId] = useState<string | null>(null);
   const lastAutoRefreshEventRef = useRef<string | null>(null);
+  const cookieHelpAutoShownRef = useRef<string | null>(null);
   const taskPopoverRef = useRef<HTMLDivElement | null>(null);
   const actionMenuRef = useRef<HTMLDivElement | null>(null);
   const pageSwitcherRef = useRef<HTMLDivElement | null>(null);
@@ -810,6 +824,57 @@ export function VideoDetailPage({ onRefresh }: { onRefresh(): void }) {
     }
     return describeTaskContentState(selectedTaskDetail);
   }, [isSelectedTaskLoading, selectedTaskDetail, selectedTaskLoadError]);
+  const cookieHelpNeeded = Boolean(contentState?.detail && isBilibiliCookieHelpError(contentState.detail));
+
+  useEffect(() => {
+    if (!selectedTaskId || !contentState?.detail || !isBilibiliCookieHelpError(contentState.detail)) {
+      return;
+    }
+    const helpKey = `${selectedTaskId}:${contentState.detail}`;
+    if (cookieHelpAutoShownRef.current === helpKey) {
+      return;
+    }
+    cookieHelpAutoShownRef.current = helpKey;
+    setCookieHelpDialogOpen(true);
+  }, [contentState?.detail, selectedTaskId]);
+
+  function openCookieExportTutorial() {
+    onOpenCookieTutorial?.();
+    if (!onOpenCookieTutorial) {
+      window.open("https://github.com/yt-dlp/yt-dlp/wiki/FAQ#how-do-i-pass-cookies-to-yt-dlp", "_blank", "noopener,noreferrer");
+    }
+  }
+
+  function openYtdlpCookieSettings() {
+    setCookieHelpDialogOpen(false);
+    if (onOpenCookieSettings) {
+      onOpenCookieSettings();
+      return;
+    }
+    navigate("/settings");
+  }
+
+  async function captureLoginCookies() {
+    if (!onCaptureLoginCookies) {
+      openYtdlpCookieSettings();
+      return;
+    }
+    try {
+      await onCaptureLoginCookies();
+      setCookieHelpDialogOpen(false);
+      setStatus("B 站登录态已保存。重新提交任务即可。");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "捕获 B 站登录态失败，请按教程手动导出 cookies.txt。");
+    }
+  }
+
+  const cookieHelpActions = cookieHelpNeeded
+    ? {
+        onOpenTutorial: openCookieExportTutorial,
+        onOpenSettings: openYtdlpCookieSettings,
+      }
+    : null;
+
   const selectedMindMap = useMemo(() => {
     const current = selectedTaskId ? mindMaps[selectedTaskId] ?? null : null;
     if (current?.status === "ready" && (!current.mindmap || !current.mindmap.nodes?.length)) {
@@ -1257,6 +1322,13 @@ export function VideoDetailPage({ onRefresh }: { onRefresh(): void }) {
   return (
     <section className="video-detail-page">
       <FloatingNoticeStack notices={[{ id: "video-detail-status", message: status }]} />
+      <CookieHelpDialog
+        isOpen={cookieHelpDialogOpen}
+        onClose={() => setCookieHelpDialogOpen(false)}
+        onOpenTutorial={openCookieExportTutorial}
+        onOpenSettings={openYtdlpCookieSettings}
+        onCaptureLoginCookies={captureLoginCookies}
+      />
 
       {/* 分 P 跳转确认悬浮窗 */}
       {jumpConfirmPopover?.open && (
@@ -1954,7 +2026,7 @@ export function VideoDetailPage({ onRefresh }: { onRefresh(): void }) {
 
             {activeTab === "knowledge" ? (
               contentState ? (
-                <TaskStatePanel state={contentState} />
+                <TaskStatePanel cookieHelpActions={cookieHelpActions} state={contentState} />
               ) : (
                 <section className="detail-tab-panel detail-export-target" ref={knowledgeExportRef}>
                   <div className="detail-knowledge-lead">
@@ -2117,7 +2189,7 @@ export function VideoDetailPage({ onRefresh }: { onRefresh(): void }) {
 
             {activeTab === "summary" ? (
               contentState ? (
-                <TaskStatePanel state={contentState} />
+                <TaskStatePanel cookieHelpActions={cookieHelpActions} state={contentState} />
               ) : (
                 <section className="detail-tab-panel">
                   <section className="detail-content-section">
@@ -2948,7 +3020,13 @@ function FloatingVideoPlayer({
   );
 }
 
-function TaskStatePanel({ state }: { state: NonNullable<ReturnType<typeof describeTaskContentState>> }) {
+function TaskStatePanel({
+  cookieHelpActions,
+  state,
+}: {
+  cookieHelpActions?: { onOpenTutorial(): void; onOpenSettings(): void } | null;
+  state: NonNullable<ReturnType<typeof describeTaskContentState>>;
+}) {
   return (
     <section className={`detail-state-panel tone-${state.tone}`} role="status">
       <div className="detail-state-copy">
@@ -2956,6 +3034,16 @@ function TaskStatePanel({ state }: { state: NonNullable<ReturnType<typeof descri
         <h4 className="detail-section-title">{state.title}</h4>
         <p className="detail-section-body">{state.description}</p>
         {state.detail ? <pre className="detail-state-detail">{state.detail}</pre> : null}
+        {cookieHelpActions ? (
+          <div className="detail-state-actions">
+            <button className="secondary-button" type="button" onClick={cookieHelpActions.onOpenTutorial}>
+              打开导出教程
+            </button>
+            <button className="primary-button" type="button" onClick={cookieHelpActions.onOpenSettings}>
+              前往 Cookies 设置
+            </button>
+          </div>
+        ) : null}
       </div>
     </section>
   );
