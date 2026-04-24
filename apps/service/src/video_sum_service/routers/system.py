@@ -6,9 +6,15 @@ import httpx
 from fastapi import APIRouter, HTTPException, Request
 
 from video_sum_core.models.tasks import TaskStatus
-from video_sum_infra.runtime import bootstrap_managed_runtime, log_dir, prepend_runtime_path, service_log_path
+from video_sum_infra.runtime import (
+    activate_runtime_pythonpath,
+    bootstrap_managed_runtime,
+    log_dir,
+    prepend_runtime_path,
+    service_log_path,
+)
 
-from video_sum_service.context import app_info, settings_manager
+from video_sum_service.context import app_info, logger, settings_manager
 from video_sum_service.integrations import (
     extract_http_error_detail,
     probe_asr_connection,
@@ -19,16 +25,30 @@ from video_sum_service.runtime_support import (
     build_worker,
     clear_environment_probe_cache,
     detect_environment,
+    inspect_runtime_channels,
     install_cuda_support,
     install_knowledge_dependencies,
     install_local_asr,
     replace_task_worker,
     serialize_settings,
+    sync_all_runtime_channels,
+    sync_runtime_channel,
 )
 from video_sum_service.settings_manager import SettingsUpdatePayload
 
 router = APIRouter(prefix="/api/v1")
 LATEST_RELEASE_URL = "https://api.github.com/repos/lycohana/BriefVid/releases/latest"
+
+
+def _clear_knowledge_service_cache(app_state) -> None:
+    for key in (
+        "knowledge_tag_service",
+        "knowledge_index_service",
+        "knowledge_rag_service",
+        "knowledge_settings_signature",
+    ):
+        if hasattr(app_state, key):
+            delattr(app_state, key)
 
 
 def _normalize_version(value: str | None) -> str:
@@ -135,6 +155,7 @@ def update_settings(payload: SettingsUpdatePayload, request: Request) -> dict[st
     current_settings = settings_manager.save(payload)
     bootstrap_managed_runtime(current_settings.runtime_channel)
     prepend_runtime_path(current_settings.runtime_channel)
+    activate_runtime_pythonpath(current_settings.runtime_channel)
     current_settings.data_dir.mkdir(parents=True, exist_ok=True)
     current_settings.cache_dir.mkdir(parents=True, exist_ok=True)
     current_settings.tasks_dir.mkdir(parents=True, exist_ok=True)
@@ -142,6 +163,7 @@ def update_settings(payload: SettingsUpdatePayload, request: Request) -> dict[st
     if runtime_channel_changed:
         clear_environment_probe_cache(previous_settings.runtime_channel)
         clear_environment_probe_cache(current_settings.runtime_channel)
+        _clear_knowledge_service_cache(request.app.state)
     environment = detect_environment(current_settings.runtime_channel)
     replace_task_worker(
         request.app.state,
@@ -176,6 +198,40 @@ def get_environment(runtime_channel: str | None = None, refresh: bool = False) -
     return detect_environment(active_channel)
 
 
+@router.get("/runtime/status")
+def get_runtime_status() -> dict[str, object]:
+    return inspect_runtime_channels()
+
+
+@router.post("/runtime/sync")
+def post_runtime_sync(request: Request, payload: dict[str, object] | None = None) -> dict[str, object]:
+    requested_channel = str((payload or {}).get("runtime_channel") or (payload or {}).get("runtimeChannel") or "").strip()
+    try:
+        result = sync_runtime_channel(requested_channel) if requested_channel else sync_all_runtime_channels()
+        _clear_knowledge_service_cache(request.app.state)
+
+        current_settings = settings_manager.current
+        environment = detect_environment(current_settings.runtime_channel)
+        replace_task_worker(
+            request.app.state,
+            build_worker(
+                request.app.state.task_repository,
+                current_settings,
+                environment_info=environment,
+            ),
+        )
+        return {
+            **result,
+            "environment": environment,
+            "runtimeStatus": inspect_runtime_channels(),
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("runtime sync failed requested_channel=%s error=%s", requested_channel or "all", exc)
+        raise HTTPException(status_code=500, detail=f"运行时同步失败：{exc}") from exc
+
+
 @router.get("/system/logs")
 def get_system_logs(lines: int = 200) -> dict[str, object]:
     line_count = max(20, min(int(lines), 1000))
@@ -202,6 +258,7 @@ def shutdown_service(request: Request) -> dict[str, object]:
 def post_cuda_install(payload: dict[str, object], request: Request) -> dict[str, object]:
     requested_variant = payload.get("cuda_variant", payload.get("cudaVariant", "cu128"))
     result, worker = install_cuda_support(str(requested_variant), request.app.state.task_repository)
+    _clear_knowledge_service_cache(request.app.state)
     replace_task_worker(request.app.state, worker)
     return result
 
@@ -218,5 +275,6 @@ def post_local_asr_install(request: Request, payload: dict[str, object] | None =
 def post_knowledge_install(request: Request, payload: dict[str, object] | None = None) -> dict[str, object]:
     reinstall = bool((payload or {}).get("reinstall"))
     result, worker = install_knowledge_dependencies(reinstall=reinstall, repository=request.app.state.task_repository)
+    _clear_knowledge_service_cache(request.app.state)
     replace_task_worker(request.app.state, worker)
     return result

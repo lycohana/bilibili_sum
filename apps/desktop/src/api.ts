@@ -1,5 +1,6 @@
 import type {
   EnvironmentInfo,
+  RuntimeStatus,
   KnowledgeAskResponse,
   KnowledgeAutoTagResponse,
   KnowledgeNetworkResponse,
@@ -102,6 +103,22 @@ export const api = {
       url.searchParams.set("refresh", "1");
     }
     return fetchJson<EnvironmentInfo>(url.toString());
+  },
+  getRuntimeStatus() {
+    return fetchJson<RuntimeStatus>("/api/v1/runtime/status");
+  },
+  syncRuntime(payload?: { runtime_channel?: string }) {
+    return fetchJson<{
+      synced: boolean;
+      runtimeChannel?: string;
+      channels?: Array<{ runtimeChannel: string; synced: boolean }>;
+      runtimeStatus?: RuntimeStatus;
+      environment?: EnvironmentInfo;
+    }>("/api/v1/runtime/sync", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload ?? {}),
+    });
   },
   getSettings() {
     return fetchJson<ServiceSettings>("/api/v1/settings");

@@ -127,6 +127,7 @@ export function getConfigHealth(
 
   const issues: ConfigIssue[] = [];
   const transcriptionProvider = String(settings.transcription_provider || "").trim().toLowerCase();
+  const knowledgeEnabled = Boolean(settings.knowledge_enabled);
   const knowledgeUsesCustomLlm = String(settings.knowledge_llm_mode || "same_as_main").trim().toLowerCase() === "custom";
   const knowledgeLlmReady = knowledgeUsesCustomLlm
     ? Boolean(settings.knowledge_llm_enabled && String(settings.knowledge_llm_base_url || "").trim() && String(settings.knowledge_llm_model || "").trim())
@@ -181,7 +182,7 @@ export function getConfigHealth(
     });
   }
 
-  if (environment && environment.knowledgeDependenciesReady === false) {
+  if (knowledgeEnabled && environment && environment.knowledgeDependenciesReady === false) {
     issues.push({
       key: "knowledge_dependencies",
       title: "缺少知识库依赖",
@@ -190,7 +191,7 @@ export function getConfigHealth(
     });
   }
 
-  if (!knowledgeLlmReady) {
+  if (knowledgeEnabled && !knowledgeLlmReady) {
     issues.push({
       key: "knowledge_llm_configuration",
       title: "知识库 LLM 未补全",

@@ -189,6 +189,9 @@ def test_install_local_asr_retries_with_mirror_when_official_index_fails(monkeyp
     assert response["installed"] is True
     assert len(commands) == 2
     assert "--index-url" not in commands[0]
+    assert "--upgrade-strategy" in commands[0]
+    strategy_flag = commands[0].index("--upgrade-strategy")
+    assert commands[0][strategy_flag + 1] == "only-if-needed"
     assert "--index-url" in commands[1]
     index_flag = commands[1].index("--index-url")
     assert commands[1][index_flag + 1] == "https://pypi.tuna.tsinghua.edu.cn/simple"
@@ -304,9 +307,209 @@ def test_install_workspace_packages_bootstraps_hatchling_before_local_packages(
         "install",
         "--no-build-isolation",
     ]
+    assert "--no-deps" in commands[1]
     assert str(tmp_path / "packages" / "infra") in commands[1]
     assert str(tmp_path / "packages" / "core") in commands[1]
     assert str(tmp_path / "apps" / "service") in commands[1]
+
+
+def test_install_workspace_packages_keeps_base_dependencies(monkeypatch, tmp_path: Path) -> None:
+    commands: list[list[str]] = []
+
+    monkeypatch.setattr(service_app, "is_frozen", lambda: False)
+    monkeypatch.setattr(
+        service_app,
+        "_ensure_runtime_pip",
+        lambda python_executable, runtime_channel: None,
+    )
+    monkeypatch.setattr(service_app, "repo_root", lambda: tmp_path)
+    monkeypatch.setattr(
+        service_app,
+        "_run_command",
+        lambda command, runtime_channel, timeout=1800: commands.append(command)
+        or type("Result", (), {"stdout": "", "stderr": ""})(),
+    )
+
+    service_app._install_workspace_packages(tmp_path / "python.exe", runtime_channel="base")
+
+    assert len(commands) == 2
+    assert "--no-deps" not in commands[1]
+
+
+def test_ensure_runtime_channel_syncs_base_preserves_cuda(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    runtime_root = tmp_path / "runtime"
+    base_dir = runtime_root / "base"
+    gpu_dir = runtime_root / "gpu-cu128"
+    base_site_packages = base_dir / "Lib" / "site-packages"
+    gpu_site_packages = gpu_dir / "Lib" / "site-packages"
+    base_scripts = base_dir / "Scripts"
+    gpu_scripts = gpu_dir / "Scripts"
+    base_stdlib = base_dir / "stdlib"
+    gpu_stdlib = gpu_dir / "stdlib"
+    base_dlls = base_dir / "DLLs"
+    gpu_dlls = gpu_dir / "DLLs"
+    base_site_packages.mkdir(parents=True)
+    gpu_site_packages.mkdir(parents=True)
+    base_scripts.mkdir(parents=True)
+    gpu_scripts.mkdir(parents=True)
+    base_stdlib.mkdir(parents=True)
+    gpu_stdlib.mkdir(parents=True)
+    base_dlls.mkdir(parents=True)
+    gpu_dlls.mkdir(parents=True)
+    (base_dir / "python.exe").write_text("base-python", encoding="utf-8")
+    (gpu_dir / "python.exe").write_text("gpu-python", encoding="utf-8")
+    (base_stdlib / "filecmp.py").write_text("base-stdlib", encoding="utf-8")
+    (gpu_stdlib / "filecmp.py").write_text("old-stdlib", encoding="utf-8")
+    (base_dlls / "_sqlite3.pyd").write_text("base-dll", encoding="utf-8")
+    (gpu_dlls / "_sqlite3.pyd").write_text("old-dll", encoding="utf-8")
+    (base_site_packages / "video_sum_service").mkdir()
+    (base_site_packages / "video_sum_service" / "__init__.py").write_text(
+        "version = 'new'",
+        encoding="utf-8",
+    )
+    (base_site_packages / "video_sum_service-2.0.0.dist-info").mkdir()
+    (base_site_packages / "video_sum_service-2.0.0.dist-info" / "METADATA").write_text(
+        "new",
+        encoding="utf-8",
+    )
+    (base_site_packages / "new_dependency").mkdir()
+    (base_site_packages / "new_dependency" / "__init__.py").write_text(
+        "value = 'base'",
+        encoding="utf-8",
+    )
+    (base_site_packages / "new_dependency-2.0.0.dist-info").mkdir()
+    (base_site_packages / "new_dependency-2.0.0.dist-info" / "METADATA").write_text(
+        "Name: new-dependency",
+        encoding="utf-8",
+    )
+    (base_site_packages / "torch").mkdir()
+    (base_site_packages / "torch" / "cpu_marker.txt").write_text("cpu", encoding="utf-8")
+    (base_site_packages / "nvidia_cublas_cu12-1.0.0.dist-info").mkdir()
+    (base_site_packages / "nvidia_cublas_cu12-1.0.0.dist-info" / "METADATA").write_text(
+        "cpu cuda wheel marker",
+        encoding="utf-8",
+    )
+    (gpu_site_packages / "torch").mkdir()
+    (gpu_site_packages / "torch" / "cuda_marker.txt").write_text("cuda", encoding="utf-8")
+    (gpu_site_packages / "nvidia_cublas_cu12-0.9.0.dist-info").mkdir()
+    (gpu_site_packages / "nvidia_cublas_cu12-0.9.0.dist-info" / "METADATA").write_text(
+        "gpu cuda wheel marker",
+        encoding="utf-8",
+    )
+    (gpu_site_packages / "video_sum_service").mkdir()
+    (gpu_site_packages / "video_sum_service" / "__init__.py").write_text(
+        "version = 'old'",
+        encoding="utf-8",
+    )
+    (gpu_site_packages / "video_sum_service-1.0.0.dist-info").mkdir()
+    (gpu_site_packages / "video_sum_service-1.0.0.dist-info" / "METADATA").write_text(
+        "old",
+        encoding="utf-8",
+    )
+    (base_scripts / "video-sum-transcribe-worker.exe").write_text("new-worker", encoding="utf-8")
+    (gpu_scripts / "pip.exe").write_text("keep-pip", encoding="utf-8")
+    (base_dir / "video_sum_runtime.json").write_text(
+        (
+            '{"runtimeChannel":"base","runtimeLayout":"portable-cpython",'
+            '"appVersion":"2.0.0","pythonVersion":"3.12.0"}'
+        ),
+        encoding="utf-8",
+    )
+    (gpu_dir / "video_sum_runtime.json").write_text(
+        '{"runtimeChannel":"gpu-cu128","cudaVariant":"cu128","localAsrInstalled":true}',
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        runtime_support,
+        "managed_runtime_dir",
+        lambda runtime_channel: runtime_root / runtime_channel,
+    )
+    monkeypatch.setattr(
+        runtime_support,
+        "bootstrap_managed_runtime",
+        lambda runtime_channel: base_dir if runtime_channel == "base" else None,
+    )
+    monkeypatch.setattr(
+        runtime_support,
+        "runtime_python_executable",
+        lambda runtime_channel: runtime_root / runtime_channel / "python.exe"
+        if (runtime_root / runtime_channel / "python.exe").exists()
+        else None,
+    )
+
+    result = runtime_support.ensure_runtime_channel("gpu-cu128")
+    metadata = runtime_support.read_runtime_metadata(gpu_dir)
+
+    assert result == gpu_dir
+    assert (gpu_dir / "python.exe").read_text(encoding="utf-8") == "gpu-python"
+    assert (gpu_stdlib / "filecmp.py").read_text(encoding="utf-8") == "base-stdlib"
+    assert (gpu_dlls / "_sqlite3.pyd").read_text(encoding="utf-8") == "base-dll"
+    assert (gpu_site_packages / "torch" / "cuda_marker.txt").exists()
+    assert not (gpu_site_packages / "torch" / "cpu_marker.txt").exists()
+    assert (gpu_site_packages / "nvidia_cublas_cu12-0.9.0.dist-info").exists()
+    assert not (gpu_site_packages / "nvidia_cublas_cu12-1.0.0.dist-info").exists()
+    assert (
+        (gpu_site_packages / "video_sum_service" / "__init__.py").read_text(encoding="utf-8")
+        == "version = 'new'"
+    )
+    assert (gpu_site_packages / "video_sum_service-2.0.0.dist-info").exists()
+    assert not (gpu_site_packages / "video_sum_service-1.0.0.dist-info").exists()
+    assert (gpu_site_packages / "new_dependency" / "__init__.py").read_text(encoding="utf-8") == "value = 'base'"
+    assert (gpu_site_packages / "new_dependency-2.0.0.dist-info").exists()
+    assert (gpu_scripts / "pip.exe").read_text(encoding="utf-8") == "keep-pip"
+    assert (
+        (gpu_scripts / "video-sum-transcribe-worker.exe").read_text(encoding="utf-8")
+        == "new-worker"
+    )
+    assert metadata["appVersion"] == "2.0.0"
+    assert metadata["runtimeLayout"] == "portable-cpython"
+    assert metadata["cudaVariant"] == "cu128"
+    assert metadata["localAsrInstalled"] is True
+
+
+def test_inspect_runtime_channels_reports_outdated_runtime(monkeypatch, tmp_path: Path) -> None:
+    runtime_root = tmp_path / "runtime"
+    base_dir = runtime_root / "base"
+    gpu_dir = runtime_root / "gpu-cu128"
+    base_dir.mkdir(parents=True)
+    gpu_dir.mkdir(parents=True)
+    (base_dir / "python.exe").write_text("", encoding="utf-8")
+    (gpu_dir / "python.exe").write_text("", encoding="utf-8")
+    (base_dir / "video_sum_runtime.json").write_text(
+        '{"runtimeLayout":"portable-cpython","appVersion":"2.0.0"}',
+        encoding="utf-8",
+    )
+    (gpu_dir / "video_sum_runtime.json").write_text(
+        '{"runtimeLayout":"portable-cpython","appVersion":"1.0.0","cudaVariant":"cu128"}',
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(runtime_support, "managed_runtime_root", lambda: runtime_root)
+    monkeypatch.setattr(runtime_support, "managed_runtime_dir", lambda channel: runtime_root / channel)
+    bootstrap_calls: list[str] = []
+    monkeypatch.setattr(runtime_support, "bootstrap_managed_runtime", lambda channel: bootstrap_calls.append(channel))
+    monkeypatch.setattr(
+        runtime_support,
+        "runtime_python_executable",
+        lambda channel: runtime_root / channel / "python.exe"
+        if (runtime_root / channel / "python.exe").exists()
+        else None,
+    )
+
+    payload = runtime_support.inspect_runtime_channels()
+    gpu_status = next(
+        channel for channel in payload["channels"] if channel["runtimeChannel"] == "gpu-cu128"
+    )
+
+    assert payload["baseAppVersion"] == "2.0.0"
+    assert gpu_status["needsUpdate"] is True
+    assert gpu_status["cudaVariant"] == "cu128"
+    assert [item["label"] for item in payload["pipIndexes"]] == ["official", "tsinghua", "aliyun"]
+    assert bootstrap_calls == []
 
 
 def test_torch_install_with_fallbacks_accepts_custom_cuda_index(monkeypatch, tmp_path: Path) -> None:

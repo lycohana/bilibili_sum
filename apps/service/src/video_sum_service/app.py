@@ -14,6 +14,7 @@ from yt_dlp import YoutubeDL
 from video_sum_core.models.tasks import TaskStatus
 from video_sum_infra.db import connect_sqlite
 from video_sum_infra.runtime import (
+    activate_runtime_pythonpath,
     bootstrap_managed_runtime,
     is_frozen,
     prepend_runtime_path,
@@ -104,6 +105,7 @@ async def lifespan(app: FastAPI):
     current_settings = settings_manager.current
     bootstrap_managed_runtime(current_settings.runtime_channel)
     prepend_runtime_path(current_settings.runtime_channel)
+    activate_runtime_pythonpath(current_settings.runtime_channel)
     connection = connect_sqlite(current_settings.database_url)
     repository = SqliteTaskRepository(connection)
     repository.initialize()
@@ -208,20 +210,23 @@ def _install_workspace_packages(python_executable, runtime_channel: str) -> None
         runtime_channel=runtime_channel,
         timeout=900,
     )
-    _run_command(
+    command = [
+        str(python_executable),
+        "-m",
+        "pip",
+        "install",
+        "--no-build-isolation",
+    ]
+    if runtime_channel != "base":
+        command.append("--no-deps")
+    command.extend(
         [
-            str(python_executable),
-            "-m",
-            "pip",
-            "install",
-            "--no-build-isolation",
             str(root / "packages" / "infra"),
             str(root / "packages" / "core"),
             str(root / "apps" / "service"),
-        ],
-        runtime_channel=runtime_channel,
-        timeout=1800,
+        ]
     )
+    _run_command(command, runtime_channel=runtime_channel, timeout=1800)
 
 
 def update_settings(payload: SettingsUpdatePayload) -> dict[str, object]:
@@ -229,6 +234,7 @@ def update_settings(payload: SettingsUpdatePayload) -> dict[str, object]:
     current_settings = settings_manager.save(payload)
     bootstrap_managed_runtime(current_settings.runtime_channel)
     prepend_runtime_path(current_settings.runtime_channel)
+    activate_runtime_pythonpath(current_settings.runtime_channel)
     current_settings.data_dir.mkdir(parents=True, exist_ok=True)
     current_settings.cache_dir.mkdir(parents=True, exist_ok=True)
     current_settings.tasks_dir.mkdir(parents=True, exist_ok=True)
@@ -341,6 +347,7 @@ def install_knowledge_dependencies(reinstall: bool = False) -> dict[str, object]
         raise HTTPException(status_code=500, detail=str(detail)[-1500:]) from exc
 
     importlib.invalidate_caches()
+    activate_runtime_pythonpath(runtime_channel)
     clear_environment_probe_cache(runtime_channel)
     environment = detect_environment(runtime_channel)
     replace_task_worker(

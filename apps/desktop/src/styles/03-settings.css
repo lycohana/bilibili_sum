@@ -1073,6 +1073,61 @@
   padding-right: 42px;
 }
 
+.settings-runtime-toolbar {
+  display: flex;
+  align-items: stretch;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.settings-runtime-toolbar .settings-inline-alert {
+  flex: 1 1 320px;
+}
+
+.settings-runtime-toolbar .primary-button,
+.settings-runtime-toolbar .secondary-button {
+  flex: 0 0 auto;
+  min-height: 40px;
+  white-space: nowrap;
+}
+
+.runtime-channel-list {
+  display: grid;
+  gap: 10px;
+}
+
+.runtime-channel-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--settings-border);
+  background: color-mix(in srgb, var(--bg-card) 82%, var(--settings-muted-bg) 18%);
+}
+
+.runtime-channel-row > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.runtime-channel-row > div:last-child {
+  justify-items: end;
+}
+
+.runtime-channel-row strong {
+  color: var(--text-primary);
+  font-size: 0.94rem;
+}
+
+.runtime-channel-row span {
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+}
+
 .settings-grid {
   grid-template-columns: 1fr;
   gap: 24px;

@@ -9,6 +9,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 
 from video_sum_service.context import settings_manager
+from video_sum_service.runtime_support import detect_environment
 from video_sum_service.knowledge import KnowledgeIndexService, RagService, TagService
 from video_sum_service.knowledge.local_llm import knowledge_llm_available
 from video_sum_service.repository import SqliteTaskRepository
@@ -41,6 +42,9 @@ def _get_queue_item(event_queue: Queue[object], timeout: float) -> object:
 
 def _knowledge_settings_signature(settings) -> tuple[object, ...]:
     return (
+        bool(getattr(settings, "knowledge_enabled", False)),
+        str(getattr(settings, "runtime_channel", "base") or "base"),
+        str(getattr(settings, "knowledge_index_auto_rebuild", "disabled") or "disabled"),
         bool(settings.llm_enabled),
         str(settings.llm_base_url or ""),
         str(settings.llm_model or ""),
@@ -74,6 +78,37 @@ def _get_services(request: Request) -> tuple[TagService, KnowledgeIndexService, 
     return tag_service, index_service, rag_service
 
 
+def _knowledge_runtime_ready() -> bool:
+    environment = detect_environment(settings_manager.current.runtime_channel)
+    return bool(environment.get("knowledgeDependenciesReady"))
+
+
+def _knowledge_enabled() -> bool:
+    return bool(getattr(settings_manager.current, "knowledge_enabled", False))
+
+
+def _index_video_if_ready(index_service: KnowledgeIndexService, video_id: str) -> None:
+    if _knowledge_enabled() and _knowledge_runtime_ready():
+        index_service.index_video(video_id)
+
+
+def _require_knowledge_enabled() -> None:
+    if not _knowledge_enabled():
+        raise HTTPException(
+            status_code=400,
+            detail="知识库当前未启用。请先在设置中的知识库板块开启知识库。",
+        )
+
+
+def _require_knowledge_runtime() -> None:
+    _require_knowledge_enabled()
+    if not _knowledge_runtime_ready():
+        raise HTTPException(
+            status_code=424,
+            detail="知识库依赖未安装。请先到设置中的知识库或运行时板块安装知识库依赖。",
+        )
+
+
 @router.get("/tags", response_model=TagListResponse | VideoTagListResponse)
 def get_tags(request: Request, video_id: str | None = None) -> TagListResponse | VideoTagListResponse:
     tag_service, _index_service, _rag_service = _get_services(request)
@@ -88,7 +123,7 @@ def create_tag(body: KnowledgeTagCreateRequest, request: Request) -> VideoTagLis
     created = tag_service.add_tag(body.video_id, body.tag)
     if not created:
         raise HTTPException(status_code=404, detail="Video not found.")
-    index_service.index_video(body.video_id)
+    _index_video_if_ready(index_service, body.video_id)
     return VideoTagListResponse(video_id=body.video_id, items=tag_service.get_tags_for_video(body.video_id))
 
 
@@ -98,7 +133,7 @@ def delete_tag(video_id: str, tag: str, request: Request) -> VideoTagListRespons
     removed = tag_service.remove_tag(video_id, tag)
     if not removed:
         raise HTTPException(status_code=404, detail="Tag not found.")
-    index_service.index_video(video_id)
+    _index_video_if_ready(index_service, video_id)
     return VideoTagListResponse(video_id=video_id, items=tag_service.get_tags_for_video(video_id))
 
 
@@ -107,7 +142,7 @@ def auto_tag(body: KnowledgeAutoTagRequest, request: Request) -> KnowledgeAutoTa
     tag_service, index_service, _rag_service = _get_services(request)
     response = tag_service.batch_auto_tag(body.video_ids)
     for item in response.items:
-        index_service.index_video(item.video_id)
+        _index_video_if_ready(index_service, item.video_id)
     return response
 
 
@@ -125,6 +160,7 @@ def get_network(
 
 @router.post("/search", response_model=KnowledgeSearchResponse)
 def search_knowledge(body: KnowledgeSearchRequest, request: Request) -> KnowledgeSearchResponse:
+    _require_knowledge_runtime()
     _tag_service, index_service, _rag_service = _get_services(request)
     filters = body.filters.tags if body.filters is not None else []
     results = index_service.search(body.query, limit=body.limit, tag_filter=filters)
@@ -133,6 +169,7 @@ def search_knowledge(body: KnowledgeSearchRequest, request: Request) -> Knowledg
 
 @router.post("/ask", response_model=KnowledgeAskResponse)
 def ask_knowledge(body: KnowledgeAskRequest, request: Request) -> KnowledgeAskResponse:
+    _require_knowledge_runtime()
     _tag_service, _index_service, rag_service = _get_services(request)
     return rag_service.ask(
         body.query,
@@ -143,6 +180,7 @@ def ask_knowledge(body: KnowledgeAskRequest, request: Request) -> KnowledgeAskRe
 
 @router.post("/ask/stream")
 async def ask_knowledge_stream(body: KnowledgeAskRequest, request: Request) -> StreamingResponse:
+    _require_knowledge_runtime()
     _tag_service, _index_service, rag_service = _get_services(request)
 
     async def event_generator():
@@ -223,11 +261,12 @@ def get_knowledge_stats(request: Request) -> KnowledgeStatsResponse:
         indexed_chunk_count=task_store.get_knowledge_chunk_count(),
         tag_count=len(tag_service.get_all_tags()),
         untagged_video_count=len(task_store.list_untagged_video_ids()),
-        knowledge_llm_available=knowledge_llm_available(settings),
+        knowledge_llm_available=bool(settings.knowledge_enabled and knowledge_llm_available(settings)),
     )
 
 
 @router.post("/rebuild-index", response_model=KnowledgeRebuildResponse)
 def rebuild_index(request: Request) -> KnowledgeRebuildResponse:
+    _require_knowledge_runtime()
     _tag_service, index_service, _rag_service = _get_services(request)
     return KnowledgeRebuildResponse(indexed_videos=index_service.rebuild_index(force=True))

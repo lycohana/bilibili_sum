@@ -16,7 +16,7 @@ import {
 } from "../appModel";
 import { api } from "../api";
 import { FloatingNoticeStack } from "../components/FloatingNoticeStack";
-import type { EnvironmentInfo, ServiceSettings, StorageLocationKind, StorageDirectoryStat, StorageOverview, TaskSummary } from "../types";
+import type { EnvironmentInfo, RuntimeStatus, ServiceSettings, StorageLocationKind, StorageDirectoryStat, StorageOverview, TaskSummary } from "../types";
 import { formatDateTime, taskStatusLabel } from "../utils";
 import { settingsCategories, type SettingsCategory } from "./settingsConfig";
 
@@ -123,6 +123,10 @@ export function SettingsPage({
   const [knowledgeDepsStatus, setKnowledgeDepsStatus] = useState("");
   const [knowledgeDepsOutput, setKnowledgeDepsOutput] = useState("");
   const [knowledgeDepsInstalling, setKnowledgeDepsInstalling] = useState(false);
+  const [runtimeStatus, setRuntimeStatus] = useState<RuntimeStatus | null>(null);
+  const [runtimeStatusMessage, setRuntimeStatusMessage] = useState("");
+  const [runtimeStatusLoading, setRuntimeStatusLoading] = useState(false);
+  const [runtimeSyncing, setRuntimeSyncing] = useState(false);
   const [logOutput, setLogOutput] = useState("");
   const [logPath, setLogPath] = useState(snapshot.systemInfo?.service?.log_file || desktop.logPath || "");
   const [serviceStatus, setServiceStatus] = useState("");
@@ -161,6 +165,14 @@ export function SettingsPage({
 
   useEffect(() => {
     void refreshLogs();
+    void refreshRuntimeStatus({ silent: true });
+  }, []);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      void refreshRuntimeStatus({ silent: true });
+    }, 30 * 60 * 1000);
+    return () => window.clearInterval(timer);
   }, []);
 
   async function refreshLogs() {
@@ -179,6 +191,53 @@ export function SettingsPage({
         }
       } catch {}
       setLogOutput(error instanceof Error ? error.message : "读取日志失败");
+    }
+  }
+
+  async function refreshRuntimeStatus(options: { silent?: boolean } = {}) {
+    try {
+      setRuntimeStatusLoading(true);
+      if (!options.silent) {
+        setRuntimeStatusMessage("正在检查所有运行时...");
+      }
+      const status = await api.getRuntimeStatus();
+      setRuntimeStatus(status);
+      const outdatedCount = status.channels.filter((channel) => channel.needsUpdate).length;
+      if (!options.silent) {
+        setRuntimeStatusMessage(outdatedCount > 0 ? `${outdatedCount} 个运行时需要同步基础版本。` : "所有已安装运行时均为最新基础版本。");
+      }
+    } catch (error) {
+      if (!options.silent) {
+        setRuntimeStatusMessage(error instanceof Error ? error.message : "运行时检查失败");
+      }
+    } finally {
+      setRuntimeStatusLoading(false);
+    }
+  }
+
+  async function syncRuntimeChannels() {
+    if (!form || runtimeSyncing) {
+      return;
+    }
+    try {
+      setRuntimeSyncing(true);
+      setRuntimeStatusMessage("正在同步需要更新的运行时...");
+      const response = await api.syncRuntime();
+      if (response.runtimeStatus) {
+        setRuntimeStatus(response.runtimeStatus);
+      } else {
+        await refreshRuntimeStatus({ silent: true });
+      }
+      const nextEnvironment = response.environment || (await api.getEnvironment({ runtimeChannel: form.runtime_channel, refresh: true }));
+      setEnvironment(nextEnvironment);
+      onSettingsSaved(form, nextEnvironment);
+      const syncedCount = response.channels?.filter((channel) => channel.synced).length ?? 0;
+      setRuntimeStatusMessage(syncedCount > 0 ? `已同步 ${syncedCount} 个运行时，保留 CUDA / ASR / 知识库扩展包。` : "运行时已检查，无需同步。");
+      onRefresh();
+    } catch (error) {
+      setRuntimeStatusMessage(error instanceof Error ? error.message : "运行时同步失败");
+    } finally {
+      setRuntimeSyncing(false);
     }
   }
 
@@ -414,6 +473,11 @@ export function SettingsPage({
     environment?.chromadbInstalled ? null : "chromadb",
     environment?.sentenceTransformersInstalled ? null : "sentence-transformers",
   ].filter(Boolean) as string[];
+  const outdatedRuntimeChannels = runtimeStatus?.channels.filter((channel) => channel.needsUpdate) || [];
+  const activeRuntimeStatus = runtimeStatus?.channels.find(
+    (channel) => channel.runtimeChannel === (environment?.runtimeChannel || form.runtime_channel),
+  ) || null;
+  const pipIndexSummary = runtimeStatus?.pipIndexes.map((item) => item.label).join(" / ") || "official / tsinghua / aliyun";
   const storageDirectoryMap = new Map((storageOverview?.directories || []).map((entry) => [entry.key, entry]));
   const cacheDirectory = storageDirectoryMap.get("cache") || null;
   const tasksDirectory = storageDirectoryMap.get("tasks") || null;
@@ -665,20 +729,20 @@ export function SettingsPage({
       return { category: "llm", targetKey: "llm_enabled" };
     }
     if (issueKey === "knowledge_dependencies") {
-      return { category: "environment", targetKey: "knowledge_dependencies" };
+      return { category: "knowledge", targetKey: "knowledge_dependencies" };
     }
     if (issueKey === "knowledge_llm_configuration") {
       if (String(form.knowledge_llm_mode || "same_as_main").trim().toLowerCase() === "custom") {
         if (!form.knowledge_llm_enabled) {
-          return { category: "llm", targetKey: "knowledge_llm_enabled" };
+          return { category: "knowledge", targetKey: "knowledge_llm_enabled" };
         }
         if (!String(form.knowledge_llm_base_url || "").trim()) {
-          return { category: "llm", targetKey: "knowledge_llm_base_url" };
+          return { category: "knowledge", targetKey: "knowledge_llm_base_url" };
         }
         if (!String(form.knowledge_llm_model || "").trim()) {
-          return { category: "llm", targetKey: "knowledge_llm_model" };
+          return { category: "knowledge", targetKey: "knowledge_llm_model" };
         }
-        return { category: "llm", targetKey: "knowledge_llm_base_url" };
+        return { category: "knowledge", targetKey: "knowledge_llm_base_url" };
       }
       if (!form.llm_enabled) {
         return { category: "llm", targetKey: "llm_enabled" };
@@ -689,7 +753,7 @@ export function SettingsPage({
       if (!String(form.llm_model || "").trim()) {
         return { category: "llm", targetKey: "llm_model" };
       }
-      return { category: "llm", targetKey: "knowledge_llm_mode" };
+      return { category: "knowledge", targetKey: "knowledge_llm_mode" };
     }
     if (issueKey === "llm_configuration") {
       if (!String(form.llm_base_url || "").trim()) {
@@ -714,6 +778,7 @@ export function SettingsPage({
           { id: "settings-cuda-status", message: cudaStatus },
           { id: "settings-local-asr-status", message: localAsrStatus },
           { id: "settings-knowledge-deps-status", message: knowledgeDepsStatus },
+          { id: "settings-runtime-status", message: runtimeStatusMessage },
           { id: "settings-asr-test-status", message: asrTestStatus },
           { id: "settings-llm-test-status", message: llmTestStatus },
           { id: "settings-storage-status", message: storageStatus },
@@ -799,6 +864,10 @@ export function SettingsPage({
               <span>自动导图</span>
               <strong>{form.auto_generate_mindmap ? "开启" : "关闭"}</strong>
             </div>
+            <div className="settings-nav-summary-row">
+              <span>知识库</span>
+              <strong>{form.knowledge_enabled ? (knowledgeDepsReady ? "就绪" : "待安装") : "关闭"}</strong>
+            </div>
           </div>
         </div>
       </aside>
@@ -827,8 +896,8 @@ export function SettingsPage({
               <span className={`settings-hero-chip ${llmReady ? "is-success" : ""}`}>
                 {llmReady ? "LLM 已配置" : form.llm_enabled ? "LLM 待补全" : "LLM 关闭"}
               </span>
-              <span className={`settings-hero-chip ${environment?.knowledgeDependenciesReady ? "is-success" : "is-warning"}`}>
-                {environment?.knowledgeDependenciesReady ? "知识库依赖就绪" : "知识库依赖缺失"}
+              <span className={`settings-hero-chip ${form.knowledge_enabled && environment?.knowledgeDependenciesReady ? "is-success" : form.knowledge_enabled ? "is-warning" : ""}`}>
+                {form.knowledge_enabled ? (environment?.knowledgeDependenciesReady ? "知识库就绪" : "知识库待安装") : "知识库关闭"}
               </span>
             </div>
           </header>
@@ -1378,22 +1447,82 @@ export function SettingsPage({
                     </div>
                   </>
                 )}
-                <div className="settings-inline-alert info">
-                  <strong>知识库 LLM</strong>
-                  <span>自动打标和知识库问答可以跟随主 LLM，也可以使用独立配置；不再限制为本地地址。</span>
+              </div>
+            </section>
+          )}
+
+          {activeCategory === "knowledge" && (
+            <section className="settings-category-section">
+              <header className="settings-category-header">
+                <h2>知识库</h2>
+                <p>知识库默认关闭，依赖按需安装到当前运行时，不进入默认安装包。</p>
+              </header>
+              <div className="settings-form-group">
+                <label className="settings-input-group">
+                  <span className="settings-input-label">启用知识库</span>
+                  <select
+                    className="settings-select-field"
+                    value={form.knowledge_enabled ? "true" : "false"}
+                    onChange={(e) => updateForm({ ...form, knowledge_enabled: e.target.value === "true" })}
+                  >
+                    <option value="false">关闭</option>
+                    <option value="true">开启</option>
+                  </select>
+                  <span className="settings-input-caption">关闭时不会自动构建索引；标签管理仍可使用。</span>
+                </label>
+                <div
+                  className={`settings-inline-alert ${knowledgeDepsReady ? "success" : "warning"} settings-focus-target ${activeFocusTarget === "knowledge_dependencies" ? "is-highlighted" : ""}`}
+                  ref={registerFocusTarget("knowledge_dependencies_alert") as (node: HTMLDivElement | null) => void}
+                >
+                  <strong>{knowledgeDepsReady ? "知识库依赖已就绪" : "知识库依赖未安装"}</strong>
+                  <span>
+                    {knowledgeDepsReady
+                      ? `chromadb${environment?.chromadbVersion ? ` ${environment.chromadbVersion}` : ""} 与 sentence-transformers${environment?.sentenceTransformersVersion ? ` ${environment.sentenceTransformersVersion}` : ""} 已在当前运行时可用。`
+                      : `默认安装包不包含知识库重依赖。将使用 ${pipIndexSummary} 源依次尝试安装 ${missingKnowledgeDeps.join("、") || "chromadb 与 sentence-transformers"}。`}
+                  </span>
+                </div>
+                <div className="settings-input-group">
+                  <span className="settings-input-label">知识库运行时依赖</span>
+                  <div
+                    className={`settings-actions settings-focus-target ${activeFocusTarget === "knowledge_dependencies" ? "is-highlighted" : ""}`}
+                    ref={registerFocusTarget("knowledge_dependencies") as (node: HTMLDivElement | null) => void}
+                  >
+                    <button className="secondary-button" type="button" disabled={knowledgeDepsInstalling} onClick={() => void installKnowledgeDependencies()}>
+                      {knowledgeDepsInstalling ? "安装中..." : knowledgeDepsReady ? "重新安装知识库依赖" : "安装知识库依赖"}
+                    </button>
+                    <button
+                      className="ghost-button"
+                      type="button"
+                      disabled={runtimeStatusLoading}
+                      onClick={() => void refreshRuntimeStatus()}
+                    >
+                      {runtimeStatusLoading ? "检查中..." : "检查运行时"}
+                    </button>
+                  </div>
+                  <span className="settings-input-caption">
+                    依赖只安装到当前 runtime，不会写入默认安装包；更新应用时已安装的 runtime 会保留。
+                  </span>
+                  {knowledgeDepsOutput ? (
+                    <textarea className="textarea-field log-viewer" rows={8} readOnly value={knowledgeDepsOutput}></textarea>
+                  ) : null}
                 </div>
                 <label className="settings-input-group">
                   <span className="settings-input-label">自动维护知识库索引</span>
                   <select
                     className="settings-select-field"
                     value={form.knowledge_index_auto_rebuild || "disabled"}
+                    disabled={!form.knowledge_enabled}
                     onChange={(e) => updateForm({ ...form, knowledge_index_auto_rebuild: e.target.value })}
                   >
                     <option value="disabled">关闭自动维护</option>
                     <option value="on_task_completed">视频生成结束后更新索引</option>
                   </select>
-                  <span className="settings-input-caption">开启后，每次摘要任务完成都会后台刷新该视频的知识库索引；关闭后可在知识库页手动维护。</span>
+                  <span className="settings-input-caption">开启知识库并安装依赖后，才会在任务完成时自动刷新索引。</span>
                 </label>
+                <div className="settings-inline-alert info">
+                  <strong>知识库 LLM</strong>
+                  <span>自动打标和知识库问答可以跟随主 LLM，也可以使用独立配置；不再限制为本地地址。</span>
+                </div>
                 <label
                   className={`settings-input-group settings-focus-target ${activeFocusTarget === "knowledge_llm_mode" ? "is-highlighted" : ""}`}
                   ref={registerFocusTarget("knowledge_llm_mode") as (node: HTMLLabelElement | null) => void}
@@ -1402,12 +1531,13 @@ export function SettingsPage({
                   <select
                     className="settings-select-field"
                     value={form.knowledge_llm_mode || "same_as_main"}
+                    disabled={!form.knowledge_enabled}
                     onChange={(e) => updateForm({ ...form, knowledge_llm_mode: e.target.value })}
                   >
                     <option value="same_as_main">跟随主 LLM</option>
                     <option value="custom">使用独立配置</option>
                   </select>
-                  <span className="settings-input-caption">“跟随主 LLM”会直接复用上方的 Base URL、API Key 与模型名。</span>
+                  <span className="settings-input-caption">“跟随主 LLM”会直接复用摘要 LLM 的 Base URL、API Key 与模型名。</span>
                 </label>
                 {knowledgeLlmUsesCustom ? (
                   <>
@@ -1419,6 +1549,7 @@ export function SettingsPage({
                       <select
                         className="settings-select-field"
                         value={form.knowledge_llm_enabled ? "true" : "false"}
+                        disabled={!form.knowledge_enabled}
                         onChange={(e) => updateForm({ ...form, knowledge_llm_enabled: e.target.value === "true" })}
                       >
                         <option value="false">关闭</option>
@@ -1435,6 +1566,7 @@ export function SettingsPage({
                           <input
                             className="settings-input-field"
                             value={form.knowledge_llm_base_url}
+                            disabled={!form.knowledge_enabled}
                             onChange={(e) => updateForm({ ...form, knowledge_llm_base_url: e.target.value })}
                             placeholder="https://api.openai.com/v1"
                           />
@@ -1448,6 +1580,7 @@ export function SettingsPage({
                             className="settings-input-field"
                             type="password"
                             value={form.knowledge_llm_api_key}
+                            disabled={!form.knowledge_enabled}
                             onChange={(e) => updateForm({ ...form, knowledge_llm_api_key: e.target.value })}
                             placeholder="sk-..."
                           />
@@ -1460,12 +1593,13 @@ export function SettingsPage({
                           <input
                             className="settings-input-field"
                             value={form.knowledge_llm_model}
+                            disabled={!form.knowledge_enabled}
                             onChange={(e) => updateForm({ ...form, knowledge_llm_model: e.target.value })}
                             placeholder="gpt-4o-mini / qwen-plus"
                           />
                         </label>
                         <div className="settings-inline-actions">
-                          <button className="secondary-button" type="button" disabled={llmTestBusy} onClick={() => void testKnowledgeLlmConnection()}>
+                          <button className="secondary-button" type="button" disabled={llmTestBusy || !form.knowledge_enabled} onClick={() => void testKnowledgeLlmConnection()}>
                             {llmTestBusy ? "测试中..." : "测试知识库 LLM"}
                           </button>
                           <span className="settings-input-caption">使用当前独立知识库配置发起一次临时测试，不会保存设置。</span>
@@ -1738,37 +1872,53 @@ export function SettingsPage({
                   </button>
                 </div>
               </div>
-              <div className="settings-form-group">
-                <div
-                  className={`settings-inline-alert ${knowledgeDepsReady ? "success" : "warning"} settings-focus-target ${activeFocusTarget === "knowledge_dependencies" ? "is-highlighted" : ""}`}
-                  ref={registerFocusTarget("knowledge_dependencies_alert") as (node: HTMLDivElement | null) => void}
-                >
-                  <strong>{knowledgeDepsReady ? "知识库依赖已就绪" : "知识库依赖未就绪"}</strong>
-                  <span>
-                    {knowledgeDepsReady
-                      ? `chromadb${environment?.chromadbVersion ? ` ${environment.chromadbVersion}` : ""} 与 sentence-transformers${environment?.sentenceTransformersVersion ? ` ${environment.sentenceTransformersVersion}` : ""} 已可用。`
-                      : `当前运行时缺少 ${missingKnowledgeDeps.join("、") || "知识库依赖"}，知识库索引暂时无法构建。若刚更新依赖，请点击“重新检测”确认运行时状态。`}
+              <div className="settings-cuda-section">
+                <h3 className="settings-cuda-title">运行时更新检查</h3>
+                <div className="settings-runtime-toolbar">
+                  <span className={`settings-inline-alert ${outdatedRuntimeChannels.length > 0 ? "warning" : "success"}`}>
+                    <strong>{outdatedRuntimeChannels.length > 0 ? "有运行时需要同步" : "运行时基础版本一致"}</strong>
+                    <span>
+                      {outdatedRuntimeChannels.length > 0
+                        ? `${outdatedRuntimeChannels.map((channel) => channel.runtimeChannel).join("、")} 需要同步基础文件；同步会保留 CUDA / ASR / 知识库扩展包。`
+                        : `当前基础版本 ${runtimeStatus?.baseAppVersion || "-"}，每 30 分钟自动检查一次。`}
+                    </span>
                   </span>
-                </div>
-                <div className="settings-input-group">
-                  <span className="settings-input-label">知识库运行时依赖</span>
-                  <div
-                    className={`settings-actions settings-focus-target ${activeFocusTarget === "knowledge_dependencies" ? "is-highlighted" : ""}`}
-                    ref={registerFocusTarget("knowledge_dependencies") as (node: HTMLDivElement | null) => void}
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    disabled={runtimeStatusLoading}
+                    onClick={() => void refreshRuntimeStatus()}
                   >
-                    <button className="secondary-button" type="button" disabled={knowledgeDepsInstalling} onClick={() => void installKnowledgeDependencies()}>
-                      {knowledgeDepsInstalling ? "安装中..." : knowledgeDepsReady ? "重新安装知识库依赖" : "安装知识库依赖"}
-                    </button>
-                  </div>
-                  <span className="settings-input-caption">
-                    {knowledgeDepsReady
-                      ? "当前运行时已经具备知识库索引所需依赖；如版本异常或刚升级环境，可重新安装后再检测。"
-                      : `将补装 ${missingKnowledgeDeps.join("、") || "chromadb 与 sentence-transformers"} 到当前运行时，不会影响你已有的数据目录。`}
-                  </span>
-                  {knowledgeDepsOutput ? (
-                    <textarea className="textarea-field log-viewer" rows={8} readOnly value={knowledgeDepsOutput}></textarea>
-                  ) : null}
+                    {runtimeStatusLoading ? "检查中..." : "检查所有 runtime"}
+                  </button>
+                  <button
+                    className="primary-button compact"
+                    type="button"
+                    disabled={runtimeSyncing || runtimeStatusLoading || outdatedRuntimeChannels.length === 0}
+                    onClick={() => void syncRuntimeChannels()}
+                  >
+                    {runtimeSyncing ? "同步中..." : "同步需要更新的 runtime"}
+                  </button>
                 </div>
+                <div className="runtime-channel-list" role="list">
+                  {(runtimeStatus?.channels || []).map((channel) => (
+                    <div className="runtime-channel-row" key={channel.runtimeChannel} role="listitem">
+                      <div>
+                        <strong>{channel.runtimeChannel}</strong>
+                        <span>{channel.ready ? "已就绪" : channel.exists ? "缺少 Python" : "未创建"}</span>
+                      </div>
+                      <div>
+                        <span>{channel.appVersion || "-"}</span>
+                        <span>{channel.needsUpdate ? "需同步" : channel.exists ? "最新" : "按需创建"}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <span className="settings-input-caption">
+                  已启用国内镜像回退：{pipIndexSummary}。安装失败时会自动从官方源切换到国内镜像继续尝试。
+                </span>
+              </div>
+              <div className="settings-form-group">
                 <div className="settings-input-group">
                   <span className="settings-input-label">本地 ASR 运行时</span>
                   <div

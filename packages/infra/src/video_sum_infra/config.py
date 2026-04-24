@@ -306,6 +306,7 @@ class ServiceSettings(BaseSettings):
     knowledge_llm_api_key: str = ""
     knowledge_llm_base_url: str = ""
     knowledge_llm_model: str = ""
+    knowledge_enabled: bool = False
     knowledge_index_auto_rebuild: str = "disabled"
     summary_system_prompt: str = DEFAULT_SUMMARY_SYSTEM_PROMPT
     summary_user_prompt_template: str = DEFAULT_SUMMARY_USER_PROMPT_TEMPLATE

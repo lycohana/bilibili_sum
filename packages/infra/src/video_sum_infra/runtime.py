@@ -11,6 +11,7 @@ from pathlib import Path
 
 APP_SLUG = "briefvid"
 DOCKER_DATA_ROOT = Path("/data")
+_DLL_DIRECTORY_HANDLES: dict[str, object] = {}
 
 
 def _env_flag(name: str) -> bool:
@@ -152,6 +153,25 @@ def runtime_scripts_dir(runtime_dir: Path) -> Path:
     return runtime_dir
 
 
+def runtime_site_packages_dir(runtime_channel: str) -> Path:
+    return managed_runtime_dir(runtime_channel) / "Lib" / "site-packages"
+
+
+def runtime_stdlib_dir(runtime_channel: str) -> Path:
+    return managed_runtime_dir(runtime_channel) / "stdlib"
+
+
+def runtime_pythonpath_dirs(runtime_channel: str) -> list[Path]:
+    runtime_dir = managed_runtime_dir(runtime_channel)
+    candidates = [
+        runtime_stdlib_dir(runtime_channel),
+        runtime_dir / "DLLs",
+        runtime_site_packages_dir(runtime_channel),
+        runtime_dir,
+    ]
+    return [candidate for candidate in candidates if candidate.exists()]
+
+
 def runtime_library_dirs(runtime_channel: str) -> list[Path]:
     runtime_dir = managed_runtime_dir(runtime_channel)
     candidates: list[Path] = []
@@ -262,6 +282,96 @@ def prepend_runtime_path(runtime_channel: str) -> None:
         if value and value not in current_path:
             current_path = f"{value}{os.pathsep}{current_path}" if current_path else value
     os.environ["PATH"] = current_path
+    activate_runtime_dll_directories(runtime_channel)
+
+
+def activate_runtime_pythonpath(runtime_channel: str) -> None:
+    runtime_paths = runtime_pythonpath_dirs(runtime_channel)
+    if not runtime_paths:
+        return
+
+    runtime_root = managed_runtime_root()
+    try:
+        resolved_runtime_root = runtime_root.resolve()
+    except OSError:
+        resolved_runtime_root = runtime_root
+
+    filtered: list[str] = []
+    for entry in sys.path:
+        if not entry:
+            filtered.append(entry)
+            continue
+        try:
+            entry_path = Path(entry).resolve()
+        except OSError:
+            filtered.append(entry)
+            continue
+        try:
+            inside_runtime_root = entry_path.is_relative_to(resolved_runtime_root)
+        except ValueError:
+            inside_runtime_root = False
+        is_managed_runtime_path = inside_runtime_root and (
+            entry_path.name in {"stdlib", "DLLs"}
+            or entry_path.parent == resolved_runtime_root
+            or (entry_path.name == "site-packages" and entry_path.parent.name == "Lib")
+        )
+        if not is_managed_runtime_path:
+            filtered.append(entry)
+
+    for runtime_path in runtime_paths:
+        value = str(runtime_path)
+        if value not in filtered:
+            filtered.append(value)
+    sys.path[:] = filtered
+
+
+def activate_runtime_dll_directories(runtime_channel: str) -> None:
+    if os.name != "nt":
+        return
+    add_dll_directory = getattr(os, "add_dll_directory", None)
+    if add_dll_directory is None:
+        return
+
+    try:
+        resolved_runtime_root = managed_runtime_root().resolve()
+    except OSError:
+        resolved_runtime_root = managed_runtime_root()
+
+    desired_dirs: list[Path] = runtime_library_dirs(runtime_channel)
+    desired_keys: set[str] = set()
+    for directory in desired_dirs:
+        try:
+            resolved = directory.resolve()
+        except OSError:
+            resolved = directory
+        desired_keys.add(str(resolved).lower())
+
+    for key, handle in list(_DLL_DIRECTORY_HANDLES.items()):
+        path = Path(key)
+        try:
+            inside_runtime_root = path.is_relative_to(resolved_runtime_root)
+        except ValueError:
+            inside_runtime_root = False
+        if inside_runtime_root and key not in desired_keys:
+            close = getattr(handle, "close", None)
+            if close is not None:
+                close()
+            _DLL_DIRECTORY_HANDLES.pop(key, None)
+
+    for directory in desired_dirs:
+        if not directory.exists():
+            continue
+        try:
+            resolved = directory.resolve()
+        except OSError:
+            resolved = directory
+        key = str(resolved).lower()
+        if key in _DLL_DIRECTORY_HANDLES:
+            continue
+        try:
+            _DLL_DIRECTORY_HANDLES[key] = add_dll_directory(str(resolved))
+        except OSError:
+            continue
 
 
 def bootstrap_managed_runtime(runtime_channel: str = "base") -> Path | None:
@@ -299,7 +409,11 @@ def runtime_metadata_path(runtime_channel: str) -> Path:
 def write_runtime_metadata(runtime_channel: str, payload: dict[str, object]) -> None:
     target = runtime_metadata_path(runtime_channel)
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    current = read_runtime_metadata(target.parent)
+    target.write_text(
+        json.dumps({**current, **payload}, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
 
 
 def _get_windows_dll_directory() -> str | None:

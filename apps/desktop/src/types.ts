@@ -201,6 +201,29 @@ export type EnvironmentInfo = {
   runtimeError?: string;
 };
 
+export type RuntimeChannelStatus = {
+  runtimeChannel: string;
+  path: string;
+  exists: boolean;
+  ready: boolean;
+  python: string;
+  appVersion: string;
+  runtimeLayout: string;
+  targetAppVersion: string;
+  targetRuntimeLayout: string;
+  needsUpdate: boolean;
+  cudaVariant: string;
+  localAsrInstalled: boolean;
+  knowledgeDependenciesReady: boolean;
+};
+
+export type RuntimeStatus = {
+  baseAppVersion: string;
+  baseRuntimeLayout: string;
+  pipIndexes: Array<{ label: string; url: string }>;
+  channels: RuntimeChannelStatus[];
+};
+
 export type ServiceSettings = {
   host: string;
   port: number;
@@ -240,6 +263,7 @@ export type ServiceSettings = {
   knowledge_llm_base_url: string;
   knowledge_llm_model: string;
   knowledge_llm_api_key_configured?: boolean;
+  knowledge_enabled: boolean;
   knowledge_index_auto_rebuild: string;
   summary_system_prompt: string;
   summary_user_prompt_template: string;

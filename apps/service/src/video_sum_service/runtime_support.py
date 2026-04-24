@@ -13,9 +13,11 @@ from fastapi import HTTPException
 from video_sum_core.pipeline.real import PipelineSettings, RealPipelineRunner
 from video_sum_infra.config import ServiceSettings
 from video_sum_infra.runtime import (
+    activate_runtime_pythonpath,
     bootstrap_managed_runtime,
     ffmpeg_location,
     is_frozen,
+    managed_runtime_root,
     managed_runtime_dir,
     prepend_runtime_path,
     read_runtime_metadata,
@@ -39,6 +41,22 @@ _PIP_INDEX_CANDIDATES: tuple[tuple[str, str | None], ...] = (
     ("tsinghua", "https://pypi.tuna.tsinghua.edu.cn/simple"),
     ("aliyun", "https://mirrors.aliyun.com/pypi/simple"),
 )
+_KNOWN_RUNTIME_CHANNELS: tuple[str, ...] = ("base", "gpu-cu128", "gpu-cu126", "gpu-cu124")
+_RUNTIME_EXTENSION_PACKAGE_KEYS: set[str] = {
+    "torch",
+    "torchvision",
+    "torchaudio",
+    "nvidia",
+    "triton",
+    "faster_whisper",
+    "ctranslate2",
+    "onnxruntime",
+    "tokenizers",
+    "huggingface_hub",
+    "hf_xet",
+    "chromadb",
+    "sentence_transformers",
+}
 
 
 def _split_env_urls(raw_value: str | None) -> list[str]:
@@ -213,6 +231,8 @@ def pip_install_with_fallbacks(
             "install",
             "--disable-pip-version-check",
             "--upgrade",
+            "--upgrade-strategy",
+            "only-if-needed",
         ]
         if reinstall:
             command.append("--force-reinstall")
@@ -226,6 +246,13 @@ def pip_install_with_fallbacks(
             attempts.append((label, exc))
 
     raise HTTPException(status_code=500, detail=pip_install_error_detail(package_label, attempts))
+
+
+def pip_index_options() -> list[dict[str, str]]:
+    return [
+        {"label": label, "url": index_url or "https://pypi.org/simple"}
+        for label, index_url in _PIP_INDEX_CANDIDATES
+    ]
 
 
 def torch_install_with_fallbacks(
@@ -293,20 +320,23 @@ def install_workspace_packages(python_executable: Path, runtime_channel: str) ->
         runtime_channel=runtime_channel,
         timeout=900,
     )
-    run_command(
+    command = [
+        str(python_executable),
+        "-m",
+        "pip",
+        "install",
+        "--no-build-isolation",
+    ]
+    if runtime_channel != "base":
+        command.append("--no-deps")
+    command.extend(
         [
-            str(python_executable),
-            "-m",
-            "pip",
-            "install",
-            "--no-build-isolation",
             str(root / "packages" / "infra"),
             str(root / "packages" / "core"),
             str(root / "apps" / "service"),
-        ],
-        runtime_channel=runtime_channel,
-        timeout=1800,
+        ]
     )
+    run_command(command, runtime_channel=runtime_channel, timeout=1800)
 
 
 def create_source_runtime(runtime_channel: str) -> Path:
@@ -344,11 +374,196 @@ def ensure_runtime_channel(runtime_channel: str) -> Path | None:
     if target_ready and target_matches_base:
         return target_dir
 
+    if target_ready and target_dir.exists():
+        sync_runtime_base(target_dir, base_dir, runtime_channel)
+        return target_dir
+
     if target_dir.exists():
         shutil.rmtree(target_dir)
 
     shutil.copytree(base_dir, target_dir, dirs_exist_ok=True)
     return target_dir
+
+
+def inspect_runtime_channels() -> dict[str, object]:
+    root = managed_runtime_root()
+    discovered = set(_KNOWN_RUNTIME_CHANNELS)
+    if root.exists():
+        discovered.update(item.name for item in root.iterdir() if item.is_dir())
+
+    base_dir = managed_runtime_dir("base")
+    base_metadata = read_runtime_metadata(base_dir)
+    base_app_version = str(base_metadata.get("appVersion") or "")
+    base_layout = str(base_metadata.get("runtimeLayout") or "")
+    channels: list[dict[str, object]] = []
+
+    for runtime_channel in sorted(discovered, key=lambda item: (item != "base", item)):
+        runtime_dir = managed_runtime_dir(runtime_channel)
+        metadata = read_runtime_metadata(runtime_dir)
+        python_executable = runtime_python_executable(runtime_channel)
+        exists = runtime_dir.exists()
+        ready = python_executable is not None
+        app_version = str(metadata.get("appVersion") or "")
+        layout = str(metadata.get("runtimeLayout") or "")
+        needs_update = bool(
+            exists
+            and runtime_channel != "base"
+            and ready
+            and (
+                (base_app_version and app_version != base_app_version)
+                or (base_layout and layout != base_layout)
+            )
+        )
+        channels.append(
+            {
+                "runtimeChannel": runtime_channel,
+                "path": str(runtime_dir),
+                "exists": exists,
+                "ready": ready,
+                "python": str(python_executable or ""),
+                "appVersion": app_version,
+                "runtimeLayout": layout,
+                "targetAppVersion": base_app_version,
+                "targetRuntimeLayout": base_layout,
+                "needsUpdate": needs_update,
+                "cudaVariant": str(metadata.get("cudaVariant") or ""),
+                "localAsrInstalled": bool(metadata.get("localAsrInstalled")),
+                "knowledgeDependenciesReady": bool(metadata.get("knowledgeDependenciesReady")),
+            }
+        )
+
+    return {
+        "baseAppVersion": base_app_version,
+        "baseRuntimeLayout": base_layout,
+        "pipIndexes": pip_index_options(),
+        "channels": channels,
+    }
+
+
+def sync_runtime_channel(runtime_channel: str) -> dict[str, object]:
+    if runtime_channel == "base":
+        runtime_dir = ensure_runtime_channel("base")
+    else:
+        runtime_dir = ensure_runtime_channel(runtime_channel)
+    clear_environment_probe_cache(runtime_channel)
+    environment = detect_environment(runtime_channel)
+    return {
+        "synced": runtime_dir is not None,
+        "runtimeChannel": runtime_channel,
+        "path": str(runtime_dir or ""),
+        "environment": environment,
+    }
+
+
+def sync_all_runtime_channels() -> dict[str, object]:
+    status = inspect_runtime_channels()
+    channels = [
+        str(channel["runtimeChannel"])
+        for channel in status["channels"]
+        if channel.get("exists") and channel.get("runtimeChannel") != "base"
+        and (channel.get("needsUpdate") or not channel.get("ready"))
+    ]
+    results = [sync_runtime_channel(runtime_channel) for runtime_channel in channels]
+    return {
+        "synced": True,
+        "channels": results,
+        "runtimeStatus": inspect_runtime_channels(),
+    }
+
+
+def sync_runtime_base(target_dir: Path, base_dir: Path, runtime_channel: str) -> None:
+    target_metadata = read_runtime_metadata(target_dir)
+    copy_runtime_item(base_dir / "stdlib", target_dir / "stdlib")
+    copy_runtime_item(base_dir / "DLLs", target_dir / "DLLs")
+    sync_runtime_lib(target_dir / "Lib", base_dir / "Lib")
+    sync_runtime_scripts(target_dir / "Scripts", base_dir / "Scripts")
+
+    base_metadata = read_runtime_metadata(base_dir)
+    (target_dir / "video_sum_runtime.json").write_text(
+        json.dumps(
+            {
+                **target_metadata,
+                "runtimeChannel": runtime_channel,
+                "runtimeLayout": base_metadata.get("runtimeLayout"),
+                "appVersion": base_metadata.get("appVersion"),
+                "pythonVersion": base_metadata.get("pythonVersion"),
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+
+def sync_runtime_scripts(target_scripts_dir: Path, base_scripts_dir: Path) -> None:
+    if not base_scripts_dir.exists():
+        return
+    target_scripts_dir.mkdir(parents=True, exist_ok=True)
+    for pattern in ("video-sum-service*", "video-sum-transcribe-worker*"):
+        for item in base_scripts_dir.glob(pattern):
+            copy_runtime_item(item, target_scripts_dir / item.name)
+
+
+def sync_runtime_lib(target_lib_dir: Path, base_lib_dir: Path) -> None:
+    if not base_lib_dir.exists():
+        return
+    target_lib_dir.mkdir(parents=True, exist_ok=True)
+    for item in base_lib_dir.iterdir():
+        if item.name == "site-packages":
+            sync_runtime_site_packages(target_lib_dir / "site-packages", item)
+            continue
+        copy_runtime_item(item, target_lib_dir / item.name)
+
+
+def sync_runtime_site_packages(
+    target_site_packages: Path,
+    base_site_packages: Path,
+) -> None:
+    target_site_packages.mkdir(parents=True, exist_ok=True)
+    for item in base_site_packages.iterdir():
+        if runtime_site_package_item_protected(item):
+            continue
+        remove_matching_dist_info(target_site_packages, item)
+        copy_runtime_item(item, target_site_packages / item.name)
+
+
+def runtime_site_package_item_protected(item: Path) -> bool:
+    package_key = runtime_site_package_key(item)
+    return package_key in _RUNTIME_EXTENSION_PACKAGE_KEYS or package_key.startswith("nvidia_")
+
+
+def runtime_site_package_key(item: Path) -> str:
+    name = item.name
+    for suffix in (".dist-info", ".egg-info"):
+        if name.endswith(suffix):
+            name = name[: -len(suffix)]
+            break
+    if "-" in name:
+        parts = name.split("-")
+        version_index = next((index for index, part in enumerate(parts) if part[:1].isdigit()), len(parts))
+        name = "-".join(parts[:version_index]) or parts[0]
+    return name.replace("-", "_").lower()
+
+
+def remove_matching_dist_info(target_site_packages: Path, source: Path) -> None:
+    if not (source.name.endswith(".dist-info") or source.name.endswith(".egg-info")):
+        return
+    source_key = runtime_site_package_key(source)
+    for target in list(target_site_packages.glob("*.dist-info")) + list(target_site_packages.glob("*.egg-info")):
+        if runtime_site_package_key(target) == source_key and target.name != source.name:
+            shutil.rmtree(target) if target.is_dir() else target.unlink()
+
+
+def copy_runtime_item(source: Path, target: Path) -> None:
+    if not source.exists():
+        return
+    if source.is_dir():
+        if target.exists():
+            shutil.rmtree(target)
+        shutil.copytree(source, target, dirs_exist_ok=True)
+        return
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source, target)
 
 
 def detect_environment(runtime_channel: str | None = None) -> dict[str, object]:
@@ -521,6 +736,7 @@ def build_worker(
 
     bootstrap_managed_runtime(selected_runtime_channel)
     prepend_runtime_path(selected_runtime_channel)
+    activate_runtime_pythonpath(selected_runtime_channel)
     environment = environment_info or detect_environment(selected_runtime_channel)
     runtime_settings = current_settings.with_resolved_runtime(cuda_available=bool(environment.get("cudaAvailable")))
     pipeline_settings = PipelineSettings(
@@ -551,7 +767,11 @@ def build_worker(
         repository=repository,
         pipeline_runner=RealPipelineRunner(pipeline_settings),
         auto_generate_mindmap=current_settings.auto_generate_mindmap,
-        knowledge_index_auto_rebuild=current_settings.knowledge_index_auto_rebuild,
+        knowledge_index_auto_rebuild=(
+            current_settings.knowledge_index_auto_rebuild
+            if current_settings.knowledge_enabled
+            else "disabled"
+        ),
         knowledge_index_settings=current_settings,
         task_concurrency=current_settings.task_concurrency,
         mindmap_concurrency=current_settings.mindmap_concurrency,
@@ -611,6 +831,7 @@ def serialize_settings(
         "knowledge_llm_model": current_settings.knowledge_llm_model,
         "knowledge_llm_api_key": current_settings.knowledge_llm_api_key,
         "knowledge_llm_api_key_configured": bool(current_settings.knowledge_llm_api_key),
+        "knowledge_enabled": current_settings.knowledge_enabled,
         "knowledge_index_auto_rebuild": current_settings.knowledge_index_auto_rebuild,
         "summary_system_prompt": current_settings.summary_system_prompt,
         "summary_user_prompt_template": current_settings.summary_user_prompt_template,
@@ -758,6 +979,7 @@ def install_knowledge_dependencies(
         raise
 
     importlib.invalidate_caches()
+    activate_runtime_pythonpath(runtime_channel)
     clear_environment_probe_cache(runtime_channel)
     environment = detect_environment(runtime_channel)
     worker = build_worker(repository, current_settings, environment_info=environment)

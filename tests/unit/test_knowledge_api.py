@@ -1,11 +1,11 @@
 import sqlite3
-
 import httpx
 from fastapi import HTTPException
 
 from video_sum_core.models.tasks import TaskResult
 from video_sum_infra.config import ServiceSettings
 from video_sum_service.app import app
+from video_sum_service.context import settings_manager
 from video_sum_service.knowledge.index_service import KnowledgeIndexService
 from video_sum_service.knowledge.local_llm import _extract_stream_delta, chat_knowledge_llm
 from video_sum_service.knowledge.rag_service import (
@@ -94,6 +94,13 @@ def create_repository() -> SqliteTaskRepository:
 def create_request(repository: SqliteTaskRepository):
     app.state.task_repository = repository
     return type("Request", (), {"app": app})()
+
+
+def enable_knowledge_for_router_tests(settings: ServiceSettings, monkeypatch) -> ServiceSettings:
+    enabled = settings.model_copy(update={"knowledge_enabled": True})
+    settings_manager._settings = enabled
+    monkeypatch.setattr(knowledge_router, "_knowledge_runtime_ready", lambda: True)
+    return enabled
 
 
 def seed_video(repository: SqliteTaskRepository, video_id_suffix: str = "knowledge") -> VideoAssetRecord:
@@ -199,12 +206,12 @@ def test_knowledge_tag_crud_and_network() -> None:
     assert all(item.tag != "OpenCV" for item in deleted.items)
 
 
-def test_knowledge_search_returns_snippet_and_timestamp() -> None:
+def test_knowledge_search_returns_snippet_and_timestamp(monkeypatch) -> None:
     repository = create_repository()
     video = seed_video_with_real_task(repository, "search")
     repository.add_video_tag(video.video_id, "CV")
     request = create_request(repository)
-    settings = ServiceSettings(llm_enabled=False)
+    settings = enable_knowledge_for_router_tests(ServiceSettings(llm_enabled=False), monkeypatch)
     tag_service = TagService(repository, settings)
     index_service = FakeKnowledgeIndexService(repository, settings)
     rag_service = RagService(repository, index_service, tag_service, settings)
@@ -221,17 +228,98 @@ def test_knowledge_search_returns_snippet_and_timestamp() -> None:
     assert response.results[0].timestamp is not None
 
 
+def test_knowledge_search_requires_enabled_knowledge(monkeypatch) -> None:
+    repository = create_repository()
+    request = create_request(repository)
+    settings_manager._settings = ServiceSettings(knowledge_enabled=False)
+    monkeypatch.setattr(knowledge_router, "_knowledge_runtime_ready", lambda: True)
+
+    try:
+        knowledge_router.search_knowledge(
+            type("Body", (), {"query": "测试", "limit": 10, "filters": None})(),
+            request,
+        )
+    except HTTPException as exc:
+        assert exc.status_code == 400
+        assert "知识库当前未启用" in str(exc.detail)
+    else:
+        raise AssertionError("expected HTTPException")
+
+
+def test_knowledge_index_adds_runtime_site_packages_to_import_path(monkeypatch) -> None:
+    repository = create_repository()
+    settings = ServiceSettings(runtime_channel="gpu-cu128")
+    calls: list[str] = []
+    monkeypatch.setattr("video_sum_service.knowledge.index_service.activate_runtime_pythonpath", calls.append)
+
+    service = KnowledgeIndexService(repository, settings)
+    service._ensure_runtime_import_path()
+
+    assert calls == ["gpu-cu128"]
+
+
+def test_knowledge_index_reports_missing_sentence_transformers(monkeypatch) -> None:
+    repository = create_repository()
+    settings = ServiceSettings(runtime_channel="gpu-cu128")
+    monkeypatch.setattr("video_sum_service.knowledge.index_service.activate_runtime_pythonpath", lambda _channel: None)
+    monkeypatch.setattr("video_sum_service.knowledge.index_service.importlib.util.find_spec", lambda _name: None)
+
+    service = KnowledgeIndexService(repository, settings)
+
+    try:
+        service._get_embedder()
+    except HTTPException as exc:
+        assert exc.status_code == 500
+        assert "缺少 sentence-transformers" in str(exc.detail)
+    else:
+        raise AssertionError("expected HTTPException")
+
+
+def test_knowledge_index_reports_broken_sentence_transformers_import(monkeypatch) -> None:
+    repository = create_repository()
+    settings = ServiceSettings(runtime_channel="gpu-cu128")
+    spec = type("Spec", (), {"origin": "runtime-site-packages"})()
+    monkeypatch.setattr("video_sum_service.knowledge.index_service.activate_runtime_pythonpath", lambda _channel: None)
+    monkeypatch.setattr("video_sum_service.knowledge.index_service.importlib.util.find_spec", lambda _name: spec)
+
+    def fail_import(_name):
+        raise ImportError("No module named 'transformers'")
+
+    monkeypatch.setattr("video_sum_service.knowledge.index_service.importlib.import_module", fail_import)
+    service = KnowledgeIndexService(repository, settings)
+
+    try:
+        service._get_embedder()
+    except HTTPException as exc:
+        assert exc.status_code == 500
+        assert "已安装但加载失败" in str(exc.detail)
+        assert "transformers" in str(exc.detail)
+    else:
+        raise AssertionError("expected HTTPException")
+
+
+def test_knowledge_service_signature_changes_with_runtime_channel() -> None:
+    base_signature = knowledge_router._knowledge_settings_signature(
+        ServiceSettings(runtime_channel="base", knowledge_enabled=True)
+    )
+    gpu_signature = knowledge_router._knowledge_settings_signature(
+        ServiceSettings(runtime_channel="gpu-cu128", knowledge_enabled=True)
+    )
+
+    assert base_signature != gpu_signature
+
+
 def test_knowledge_sources_prefer_multi_page_title(monkeypatch) -> None:
     repository = create_repository()
     page_title = "P72 项目实战-答题卡识别判卷：3-填涂轮廓检测"
     video = seed_video_with_real_task(repository, "ask-page-title", page_number=72, page_title=page_title)
     request = create_request(repository)
-    settings = ServiceSettings(
+    settings = enable_knowledge_for_router_tests(ServiceSettings(
         knowledge_llm_mode="custom",
         knowledge_llm_enabled=True,
         knowledge_llm_base_url="https://api.example.com/v1",
         knowledge_llm_model="remote-model",
-    )
+    ), monkeypatch)
     tag_service = TagService(repository, settings)
     index_service = FakeKnowledgeIndexService(repository, settings)
     rag_service = RagService(repository, index_service, tag_service, settings)
@@ -261,12 +349,12 @@ def test_knowledge_ask_accepts_remote_custom_llm(monkeypatch) -> None:
     repository = create_repository()
     video = seed_video_with_real_task(repository, "ask")
     request = create_request(repository)
-    settings = ServiceSettings(
+    settings = enable_knowledge_for_router_tests(ServiceSettings(
         knowledge_llm_mode="custom",
         knowledge_llm_enabled=True,
         knowledge_llm_base_url="https://api.example.com/v1",
         knowledge_llm_model="remote-model",
-    )
+    ), monkeypatch)
     tag_service = TagService(repository, settings)
     index_service = FakeKnowledgeIndexService(repository, settings)
     rag_service = RagService(repository, index_service, tag_service, settings)

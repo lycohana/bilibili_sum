@@ -55,6 +55,7 @@ class SettingsUpdatePayload(BaseModel):
     knowledge_llm_model: str | None = None
     knowledge_llm_api_key: str | None = None
     knowledge_index_auto_rebuild: str | None = None
+    knowledge_enabled: bool | None = None
     summary_system_prompt: str | None = None
     summary_user_prompt_template: str | None = None
     summary_chunk_target_chars: int | None = None

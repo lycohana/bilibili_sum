@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import importlib
+import importlib.util
 import json
+import logging
 import re
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -9,9 +13,11 @@ from typing import Any
 from fastapi import HTTPException
 
 from video_sum_infra.config import ServiceSettings
-from video_sum_infra.runtime import app_data_root
+from video_sum_infra.runtime import activate_runtime_pythonpath, app_data_root
 from video_sum_service.repository import SqliteTaskRepository
 from video_sum_service.schemas import KnowledgeIndexChunkRecord, KnowledgeSearchResult
+
+logger = logging.getLogger("video_sum_service.knowledge")
 
 
 def format_anchor_seconds(seconds: float | None) -> str | None:
@@ -40,27 +46,92 @@ class KnowledgeIndexService:
         self._embedder = None
         self._collection = None
 
+    def _ensure_runtime_import_path(self) -> None:
+        activate_runtime_pythonpath(self._settings.runtime_channel)
+
+    def _short_error(self, exc: BaseException, *, limit: int = 500) -> str:
+        message = str(exc).strip() or exc.__class__.__name__
+        return message if len(message) <= limit else f"{message[:limit]}..."
+
+    def _import_runtime_dependency(self, module_name: str, package_label: str, missing_detail: str):
+        self._ensure_runtime_import_path()
+        spec = importlib.util.find_spec(module_name)
+        if spec is None:
+            logger.warning(
+                "knowledge dependency missing package=%s module=%s runtime_channel=%s sys_path_tail=%s",
+                package_label,
+                module_name,
+                self._settings.runtime_channel,
+                sys.path[-5:],
+            )
+            raise HTTPException(status_code=500, detail=missing_detail)
+        try:
+            return importlib.import_module(module_name)
+        except Exception as exc:
+            logger.exception(
+                "knowledge dependency import failed package=%s module=%s runtime_channel=%s origin=%s sys_path_tail=%s",
+                package_label,
+                module_name,
+                self._settings.runtime_channel,
+                getattr(spec, "origin", ""),
+                sys.path[-5:],
+            )
+            raise HTTPException(
+                status_code=500,
+                detail=(
+                    f"{package_label} 已安装但加载失败：{self._short_error(exc)}。"
+                    "请在设置的知识库板块重新安装依赖，或先同步当前 runtime。"
+                ),
+            ) from exc
+
     def _get_embedder(self):
         if self._embedder is None:
+            sentence_transformers = self._import_runtime_dependency(
+                "sentence_transformers",
+                "sentence-transformers",
+                "缺少 sentence-transformers 依赖，无法构建知识库索引。",
+            )
             try:
-                from sentence_transformers import SentenceTransformer
-            except ImportError as exc:
-                raise HTTPException(status_code=500, detail="缺少 sentence-transformers 依赖，无法构建知识库索引。") from exc
-            self._embedder = SentenceTransformer(self._model_name)
+                self._embedder = sentence_transformers.SentenceTransformer(self._model_name)
+            except Exception as exc:
+                logger.exception(
+                    "knowledge embedding model load failed model=%s runtime_channel=%s",
+                    self._model_name,
+                    self._settings.runtime_channel,
+                )
+                raise HTTPException(
+                    status_code=500,
+                    detail=(
+                        f"知识库向量模型加载失败：{self._short_error(exc)}。"
+                        "请检查网络 / HuggingFace 缓存，或稍后重试。"
+                    ),
+                ) from exc
         return self._embedder
 
     def _get_collection(self):
         if self._collection is None:
-            try:
-                import chromadb
-            except ImportError as exc:
-                raise HTTPException(status_code=500, detail="缺少 chromadb 依赖，无法构建知识库索引。") from exc
-            self._chroma_path.mkdir(parents=True, exist_ok=True)
-            client = chromadb.PersistentClient(path=str(self._chroma_path))
-            self._collection = client.get_or_create_collection(
-                name="briefvid_knowledge",
-                metadata={"hnsw:space": "cosine"},
+            chromadb = self._import_runtime_dependency(
+                "chromadb",
+                "chromadb",
+                "缺少 chromadb 依赖，无法构建知识库索引。",
             )
+            try:
+                self._chroma_path.mkdir(parents=True, exist_ok=True)
+                client = chromadb.PersistentClient(path=str(self._chroma_path))
+                self._collection = client.get_or_create_collection(
+                    name="briefvid_knowledge",
+                    metadata={"hnsw:space": "cosine"},
+                )
+            except Exception as exc:
+                logger.exception(
+                    "knowledge chromadb collection init failed path=%s runtime_channel=%s",
+                    self._chroma_path,
+                    self._settings.runtime_channel,
+                )
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"知识库索引存储初始化失败：{self._short_error(exc)}。",
+                ) from exc
         return self._collection
 
     def _embed_texts(self, texts: list[str]) -> list[list[float]]:
