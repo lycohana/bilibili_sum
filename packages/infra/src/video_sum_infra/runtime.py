@@ -326,8 +326,6 @@ def activate_runtime_pythonpath(runtime_channel: str) -> None:
 
 
 def activate_runtime_dll_directories(runtime_channel: str) -> None:
-    if os.name != "nt":
-        return
     add_dll_directory = getattr(os, "add_dll_directory", None)
     if add_dll_directory is None:
         return
