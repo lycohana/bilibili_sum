@@ -11,7 +11,7 @@ from video_sum_core.utils import sanitize_filename
 def build_export_filename(title: str, export_time: datetime) -> str:
     safe_title = re.sub(r"\s+", " ", sanitize_filename(str(title or "").strip())).strip(" .")
     if not safe_title:
-        safe_title = "BriefVid Note"
+        safe_title = "BiliSum Note"
     return f"{safe_title} {export_time.date().isoformat()}.md"
 
 
@@ -33,7 +33,7 @@ def build_task_markdown_export(
     target: str = "obsidian",
     mindmap_path: str | None = None,
 ) -> str:
-    normalized_title = str(title or "").strip() or "BriefVid 知识笔记"
+    normalized_title = str(title or "").strip() or "BiliSum 知识笔记"
     body = _build_markdown_body(
         title=normalized_title,
         overview=overview,

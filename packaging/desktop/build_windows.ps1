@@ -12,7 +12,7 @@ $winCodeSignVersion = "2.6.0"
 $winCodeSignArchiveName = "winCodeSign-$winCodeSignVersion.7z"
 $winCodeSignUrl = "https://github.com/electron-userland/electron-builder-binaries/releases/download/winCodeSign-$winCodeSignVersion/$winCodeSignArchiveName"
 $winCodeSignCacheDir = "$env:LOCALAPPDATA\electron-builder\Cache\winCodeSign"
-$localRceditDir = Join-Path $winCodeSignCacheDir "briefvid-rcedit"
+$localRceditDir = Join-Path $winCodeSignCacheDir "bilisum-rcedit"
 
 function Ensure-PythonPip {
     param(
@@ -140,7 +140,7 @@ try {
         npm run build:renderer
         & $python312 (Join-Path $repoRoot "packaging\pyinstaller\build_onedir.py")
 
-        $backendExe = Join-Path $repoRoot "dist\BriefVid\BriefVid.exe"
+        $backendExe = Join-Path $repoRoot "dist\BiliSum\BiliSum.exe"
         if (-not (Test-Path $backendExe)) {
             throw "Packaged backend was not produced: $backendExe"
         }
@@ -163,7 +163,7 @@ try {
 
     $localRcedit = Ensure-LocalRcedit
     Write-Host "Using local rcedit:" $localRcedit
-    $env:BRIEFVID_RCEDIT_PATH = $localRcedit
+    $env:BILISUM_RCEDIT_PATH = $localRcedit
 
     # Disable code signing on Windows to avoid symlink issues with darwin libraries
     Write-Host "Building with code signing disabled..."

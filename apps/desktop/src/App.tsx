@@ -547,12 +547,12 @@ export function App() {
   }
 
   const pageMeta = location.pathname.startsWith("/settings")
-    ? { eyebrow: "设置中心", title: "运行配置、环境检测与日志", description: "围绕本地推理环境、模型配置与桌面端服务控制，统一管理 BriefVid 的运行能力。" }
+    ? { eyebrow: "设置中心", title: "运行配置、环境检测与日志", description: "围绕本地推理环境、模型配置与桌面端服务控制，统一管理 BiliSum 的运行能力。" }
     : location.pathname.startsWith("/library")
       ? { eyebrow: "视频库", title: "视频资产与摘要结果", description: "集中管理已抓取的视频、摘要结果与当前处理状态。" }
       : location.pathname.startsWith("/videos/")
         ? { eyebrow: "视频详情", title: "本地摘要结果与任务记录", description: "围绕单个视频集中查看摘要、时间轴、转写全文与任务处理进度。" }
-        : { eyebrow: "BriefVid Workspace", title: "懒得看视频？一键省流！", description: "把时间留给真正有质量的视频" };
+        : { eyebrow: "BiliSum Workspace", title: "懒得看视频？一键省流！", description: "把时间留给真正有质量的视频" };
 
   const isSettingsRoute = location.pathname.startsWith("/settings");
   const isLibraryRoute = location.pathname.startsWith("/library");

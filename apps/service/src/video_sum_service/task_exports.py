@@ -47,11 +47,11 @@ def export_task_markdown(
     title = (
         str(record.task_input.title or "").strip()
         or str(video.title if video else "").strip()
-        or "BriefVid 知识笔记"
+        or "BiliSum 知识笔记"
     )
     preferred_file_name = build_export_filename(title, export_time)
     platform = str(video.platform if video else record.task_input.platform_hint or "").strip().lower() or "unknown"
-    tags = ["briefvid", platform, "video-summary"]
+    tags = ["bilisum", platform, "video-summary"]
     markdown = build_task_markdown_export(
         title=title,
         overview=result.overview,

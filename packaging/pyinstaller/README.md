@@ -4,11 +4,11 @@ Windows 打包主路线已经切到 `PyInstaller onedir`。
 
 ## 产物形态
 
-- `dist/BriefVid/BriefVid.exe`
-- `dist/BriefVid/_internal/...`
-- `dist/BriefVid/web/static/...`
-- `dist/BriefVid/runtime/base/...`
-- `dist/BriefVid/bin/ffmpeg.exe`
+- `dist/BiliSum/BiliSum.exe`
+- `dist/BiliSum/_internal/...`
+- `dist/BiliSum/web/static/...`
+- `dist/BiliSum/runtime/base/...`
+- `dist/BiliSum/bin/ffmpeg.exe`
 
 ## 构建前提
 
@@ -35,11 +35,17 @@ python .\packaging\pyinstaller\build_onedir.py
 - `onedir` 基础包默认只保证 CPU 路径可运行
 - 设置页的一键安装会把 CUDA 版 `torch` 装到用户目录下的 managed runtime
 - 本地 ASR 默认不随基础包分发；如用户需要，可在设置页按需安装到当前 runtime
-- 安装路径默认在 `%LOCALAPPDATA%/briefvid/runtime/gpu-cu12x`
+- 安装路径默认在 `%LOCALAPPDATA%/bilisum/runtime/gpu-cu12x`
 - 安装完成后需要重启应用生效
 
 ## 运行时目录
 
-- 用户数据目录：`%LOCALAPPDATA%/briefvid/data`
-- managed runtime：`%LOCALAPPDATA%/briefvid/runtime`
-- 打包内置 seed runtime：`dist/BriefVid/runtime/base`
+- 用户数据目录：`%LOCALAPPDATA%/bilisum/data`
+- managed runtime：`%LOCALAPPDATA%/bilisum/runtime`
+- 打包内置 seed runtime：`dist/BiliSum/runtime/base`
+
+## 旧版本迁移
+
+- BiliSum 会在首次启动时从旧目录 `%LOCALAPPDATA%/briefvid` 复制缺失的数据、任务产物、Cookies 和 managed runtime 到 `%LOCALAPPDATA%/bilisum`
+- 迁移采用“只补缺、不覆盖、不删除旧目录”的策略，避免覆盖用户已经在新目录中产生的数据
+- 桌面端偏好和登录会话会从旧的 Electron `BriefVid` userData 目录迁移到新的 `BiliSum` userData 目录

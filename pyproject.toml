@@ -3,9 +3,9 @@ requires = ["hatchling>=1.27.0"]
 build-backend = "hatchling.build"
 
 [project]
-name = "briefvid-workspace"
+name = "bilisum-workspace"
 version = "1.12.0"
-description = "BriefVid local-first video summarizer workspace."
+description = "BiliSum local-first video summarizer workspace."
 requires-python = ">=3.12"
 dependencies = []
 

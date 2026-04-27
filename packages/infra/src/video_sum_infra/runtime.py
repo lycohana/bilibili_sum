@@ -9,9 +9,11 @@ import sys
 from pathlib import Path
 
 
-APP_SLUG = "briefvid"
+APP_SLUG = "bilisum"
+LEGACY_APP_SLUG = "briefvid"
 DOCKER_DATA_ROOT = Path("/data")
 _DLL_DIRECTORY_HANDLES: dict[str, object] = {}
+_LEGACY_APP_DATA_MIGRATION_DONE = False
 
 
 def _env_flag(name: str) -> bool:
@@ -62,12 +64,44 @@ def local_appdata_dir() -> Path:
     return Path.home() / "AppData" / "Local"
 
 
+def _copy_missing_tree(source: Path, destination: Path) -> None:
+    if not source.exists():
+        return
+    if source.is_dir():
+        destination.mkdir(parents=True, exist_ok=True)
+        for child in source.iterdir():
+            _copy_missing_tree(child, destination / child.name)
+        return
+    if source.is_file() and not destination.exists():
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, destination)
+
+
+def migrate_legacy_app_data_root() -> None:
+    global _LEGACY_APP_DATA_MIGRATION_DONE
+    if _LEGACY_APP_DATA_MIGRATION_DONE:
+        return
+    _LEGACY_APP_DATA_MIGRATION_DONE = True
+    if is_running_in_docker() or os.environ.get("VIDEO_SUM_APP_DATA_ROOT", "").strip():
+        return
+
+    source = local_appdata_dir() / LEGACY_APP_SLUG
+    destination = local_appdata_dir() / APP_SLUG
+    if not source.exists() or source == destination:
+        return
+    try:
+        _copy_missing_tree(source, destination)
+    except OSError:
+        return
+
+
 def app_data_root() -> Path:
     override = os.environ.get("VIDEO_SUM_APP_DATA_ROOT", "").strip()
     if override:
         return Path(override).resolve()
     if is_running_in_docker():
         return DOCKER_DATA_ROOT
+    migrate_legacy_app_data_root()
     return local_appdata_dir() / APP_SLUG
 
 

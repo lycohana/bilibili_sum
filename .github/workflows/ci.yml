@@ -192,4 +192,4 @@ jobs:
           context: .
           file: ./Dockerfile
           push: false
-          tags: briefvid:ci
+          tags: bilisum:ci

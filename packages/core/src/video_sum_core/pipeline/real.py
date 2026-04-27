@@ -521,17 +521,17 @@ class RealPipelineRunner(PipelineRunner):
         if "Could not copy Chrome cookie database" in message:
             raise VideoSumError(
                 "无法读取 Chrome 登录态：yt-dlp 不能复制 Chrome Cookie 数据库。"
-                "请通过 BriefVid 的 B 站登录窗口重新捕获登录态，或按教程导出 cookies.txt 并填写 yt-dlp Cookies 文件。"
+                "请通过 BiliSum 的 B 站登录窗口重新捕获登录态，或按教程导出 cookies.txt 并填写 yt-dlp Cookies 文件。"
             ) from error
         if "Failed to decrypt with DPAPI" in message:
             raise VideoSumError(
                 "无法读取浏览器登录态：yt-dlp 解密 Windows 浏览器 Cookie 失败（DPAPI）。"
-                "请通过 BriefVid 的 B 站登录窗口重新捕获登录态，或按教程导出 cookies.txt 并填写 yt-dlp Cookies 文件。"
+                "请通过 BiliSum 的 B 站登录窗口重新捕获登录态，或按教程导出 cookies.txt 并填写 yt-dlp Cookies 文件。"
             ) from error
         if "HTTP Error 412" in message and "BiliBili" in message:
             raise VideoSumError(
                 "B 站返回 HTTP 412，当前请求可能被风控拦截。请稍后重试、切换网络/IP，"
-                "或通过 BriefVid 的 B 站登录窗口捕获登录态；也可以填写 yt-dlp Cookies 文件 "
+                "或通过 BiliSum 的 B 站登录窗口捕获登录态；也可以填写 yt-dlp Cookies 文件 "
                 "/ VIDEO_SUM_YTDLP_COOKIES_FILE。"
             ) from error
         raise VideoSumError(f"Failed to read or download video with yt-dlp: {message}") from error

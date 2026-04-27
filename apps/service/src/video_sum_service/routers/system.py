@@ -37,7 +37,7 @@ from video_sum_service.runtime_support import (
 from video_sum_service.settings_manager import SettingsUpdatePayload
 
 router = APIRouter(prefix="/api/v1")
-LATEST_RELEASE_URL = "https://api.github.com/repos/lycohana/BriefVid/releases/latest"
+LATEST_RELEASE_URL = "https://api.github.com/repos/lycohana/BiliSum/releases/latest"
 
 
 def _clear_knowledge_service_cache(app_state) -> None:

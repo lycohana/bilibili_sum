@@ -233,7 +233,7 @@ def probe_asr_connection(payload: SettingsUpdatePayload | None = None) -> dict[s
                 request_url,
                 headers=headers,
                 data={"model": model},
-                files={"file": ("briefvid-asr-test.wav", audio_bytes, "audio/wav")},
+                files={"file": ("bilisum-asr-test.wav", audio_bytes, "audio/wav")},
             )
     except httpx.HTTPError as exc:
         raise HTTPException(status_code=502, detail=f"ASR 连接失败：{exc}") from exc

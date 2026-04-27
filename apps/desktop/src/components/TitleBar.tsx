@@ -108,7 +108,7 @@ export function TitleBar({
         <div className="title-bar-brand-mark">
           <img src="/static/assets/icons/icon.svg" alt="" />
         </div>
-        <span className="title-bar-brand-text">BriefVid</span>
+        <span className="title-bar-brand-text">BiliSum</span>
       </div>
       <div className="title-bar-drag-region" />
       <div className="title-bar-controls">

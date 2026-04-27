@@ -36,6 +36,29 @@ def test_web_static_dir_prefers_explicit_override(monkeypatch, tmp_path: Path) -
     assert web_static_dir() == static_dir.resolve()
 
 
+def test_app_data_root_migrates_legacy_briefvid_files(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    monkeypatch.delenv("VIDEO_SUM_APP_DATA_ROOT", raising=False)
+    monkeypatch.delenv("VIDEO_SUM_DOCKER", raising=False)
+    monkeypatch.setattr(runtime_module, "is_running_in_docker", lambda: False)
+    monkeypatch.setattr(runtime_module, "_LEGACY_APP_DATA_MIGRATION_DONE", False)
+
+    legacy_root = tmp_path / "briefvid"
+    current_root = tmp_path / "bilisum"
+    (legacy_root / "data" / "tasks" / "task-1").mkdir(parents=True)
+    (legacy_root / "runtime" / "gpu-cu128").mkdir(parents=True)
+    (legacy_root / "data" / "video_sum.db").write_text("legacy-db", encoding="utf-8")
+    (legacy_root / "data" / "tasks" / "task-1" / "summary.json").write_text("legacy-task", encoding="utf-8")
+    (legacy_root / "runtime" / "gpu-cu128" / "python.exe").write_text("legacy-python", encoding="utf-8")
+    (current_root / "data").mkdir(parents=True)
+    (current_root / "data" / "video_sum.db").write_text("current-db", encoding="utf-8")
+
+    assert app_data_root() == current_root
+    assert (current_root / "data" / "video_sum.db").read_text(encoding="utf-8") == "current-db"
+    assert (current_root / "data" / "tasks" / "task-1" / "summary.json").read_text(encoding="utf-8") == "legacy-task"
+    assert (current_root / "runtime" / "gpu-cu128" / "python.exe").read_text(encoding="utf-8") == "legacy-python"
+
+
 def test_write_runtime_metadata_merges_existing_payload(monkeypatch, tmp_path: Path) -> None:
     runtime_root = tmp_path / "runtime"
     runtime_dir = runtime_root / "gpu-cu128"

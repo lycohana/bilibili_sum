@@ -1,5 +1,5 @@
 {
-  "name": "briefvid-workspace",
+  "name": "bilisum-workspace",
   "private": true,
   "scripts": {
     "dev": "npm --prefix apps/desktop run dev",
@@ -7,7 +7,7 @@
     "build:web": "npm --prefix apps/desktop run build:renderer",
     "build": "npm --prefix apps/desktop run build",
     "build:desktop": "npm --prefix apps/desktop run build",
-    "docker:build": "npm run build:web && docker build -t briefvid:local .",
+    "docker:build": "npm run build:web && docker build -t bilisum:local .",
     "package:win": "npm --prefix apps/desktop run package:win",
     "package:win-notfront": "npm --prefix apps/desktop run package:win-notfront",
     "build:win": "npm --prefix apps/desktop run package:win"

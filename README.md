@@ -1,8 +1,12 @@
 <div align="center">
 
-![BriefVid Banner](docs/pic/banner.svg)
+![BiliSum Banner](docs/pic/banner.svg)
 
-**本地优先的视频知识工作台**
+# BiliSum
+
+**AI 视频总结与知识库工具**
+
+把 B 站、YouTube 和本地视频，沉淀成可检索、可追问、可导出的知识笔记。
 
 [![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -14,13 +18,13 @@
 
 ---
 
-> 输入一个 B 站或 YouTube 链接（或本地视频），收获的不仅是字幕和摘要，而是一套可回溯、可复用、可生长的知识体系。
+> 深度优化 B 站体验，同时支持 YouTube 与本地视频；自动转写、总结、生成知识卡片，并支持 RAG 问答与 Markdown / Obsidian 导出。
 
-## 🌟 为什么需要 BriefVid
+## 🌟 为什么需要 BiliSum
 
 市面上的视频转写工具不少，但大多止步于"把话说完"——丢给你一段 transcript，或者一段泛泛的摘要。
 
-**BriefVid 想做得更多：**
+**BiliSum 想做得更多：**
 
 - 📚 **不止是转写** —— 自动拆解章节、提炼要点，生成结构化的知识卡片
 - 🧠 **不止于单视频** —— 跨视频知识库，用 AI Agent 对整库内容进行检索与问答
@@ -33,35 +37,35 @@
 ### 知识卡片视图
 
 <div align="center">
-  <img src="docs/pic/cardpage.png" alt="BriefVid 知识卡片" width="800"/>
+  <img src="docs/pic/cardpage.png" alt="BiliSum 知识卡片" width="800"/>
   <p><i>核心概览 + 关键要点 + 章节时间轴，三栏布局清晰呈现</i></p>
 </div>
 
 ### 笔记视图
 
 <div align="center">
-  <img src="docs/pic/notepage.png" alt="BriefVid 笔记视图" width="800"/>
+  <img src="docs/pic/notepage.png" alt="BiliSum 笔记视图" width="800"/>
   <p><i>完整转写内容，支持数学公式、代码块等富文本格式</i></p>
 </div>
 
 ### 思维导图视图
 
 <div align="center">
-  <img src="docs/pic/mindmappage.png" alt="BriefVid 思维导图" width="800"/>
+  <img src="docs/pic/mindmappage.png" alt="BiliSum 思维导图" width="800"/>
   <p><i>放射状知识网络，内容结构和逻辑脉络一目了然</i></p>
 </div>
 
 ### 知识库
 
 <div align="center">
-  <img src="docs/pic/knowledge.png" alt="BriefVid 知识库" width="800"/>
+  <img src="docs/pic/knowledge.png" alt="BiliSum 知识库" width="800"/>
   <p><i>跨视频 AI 检索与问答，标签化管理，构建可生长的知识体系</i></p>
 </div>
 
 ### 视频库首页
 
 <div align="center">
-  <img src="docs/pic/mainpage.png" alt="BriefVid 首页" width="800"/>
+  <img src="docs/pic/mainpage.png" alt="BiliSum 首页" width="800"/>
   <p><i>统一管理已探测和已处理的视频，支持收藏与筛选</i></p>
 </div>
 
@@ -226,13 +230,13 @@ npm run docker:build
 ```powershell
 docker run --rm ^
   -p 3838:3838 ^
-  -v briefvid-data:/data ^
+  -v bilisum-data:/data ^
   -e VIDEO_SUM_LLM_ENABLED=true ^
   -e VIDEO_SUM_LLM_BASE_URL=https://coding.dashscope.aliyuncs.com/v1 ^
   -e VIDEO_SUM_LLM_MODEL=qwen3.5-plus ^
   -e VIDEO_SUM_LLM_API_KEY=your-llm-api-key ^
   -e VIDEO_SUM_SILICONFLOW_ASR_API_KEY=your-siliconflow-api-key ^
-  lycohana/briefvid:latest
+  lycohana/bilisum:latest
 ```
 
 启动后直接访问 `http://127.0.0.1:3838`。
@@ -249,15 +253,25 @@ docker run --rm ^
 每次 tag 发版都会同步发布 Docker Hub 镜像：
 
 ```powershell
-docker pull lycohana/briefvid:latest
+docker pull lycohana/bilisum:latest
 # 或者使用带版本号的 tag
-docker pull lycohana/briefvid:v1.11.0
+docker pull lycohana/bilisum:v1.11.0
 ```
+
+### 从旧版迁移
+
+BiliSum 会在首次启动时自动从旧的 BriefVid 目录迁移本地数据：
+
+- `%LOCALAPPDATA%\briefvid\data` → `%LOCALAPPDATA%\bilisum\data`
+- `%LOCALAPPDATA%\briefvid\runtime` → `%LOCALAPPDATA%\bilisum\runtime`
+- 旧桌面端偏好、B 站登录态和 cookies 会复制到新的 BiliSum 用户目录
+
+迁移只复制新目录中缺失的文件，不覆盖已有数据，也不会删除旧目录。
 
 ## 📦 项目结构
 
 ```
-bilibili_sum/
+BiliSum/
 ├── apps/
 │   ├── desktop/       # Electron + React 桌面端
 │   │   ├── src/
@@ -305,14 +319,14 @@ bilibili_sum/
 
 ## 🤝 贡献指南
 
-欢迎以任意方式参与 BriefVid 的成长：
+欢迎以任意方式参与 BiliSum 的成长：
 
 ### 你可以贡献什么
 
 - 🐛 **提交 Issue**：遇到 Bug 或有功能建议，直接开 Issue
 - 🔧 **提交 PR**：修复 Bug、新增功能、优化体验均可
 - 📝 **完善文档**：补充使用说明、优化文案、增加示例
-- 💡 **分享用例**：在你的工作流中使用 BriefVid，欢迎分享经验
+- 💡 **分享用例**：在你的工作流中使用 BiliSum，欢迎分享经验
 
 
 ### 代码风格

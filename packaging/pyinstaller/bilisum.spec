@@ -171,7 +171,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name="BriefVid",
+    name="BiliSum",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -240,5 +240,5 @@ coll = COLLECT(
         '.json',
         '.md',
     ],
-    name="BriefVid",
+    name="BiliSum",
 )

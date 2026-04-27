@@ -8,9 +8,9 @@ export function escapeHtml(value) {
 
 export function routeMeta(route) {
   if (route === "settings") {
-    return { eyebrow: "设置页", title: "BriefVid 配置与后端信息" };
+    return { eyebrow: "设置页", title: "BiliSum 配置与后端信息" };
   }
-  return { eyebrow: "视频库", title: "BriefVid 视频库" };
+  return { eyebrow: "视频库", title: "BiliSum 视频库" };
 }
 
 export function formatDateTime(value) {

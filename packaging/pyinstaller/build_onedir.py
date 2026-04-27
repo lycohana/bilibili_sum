@@ -16,7 +16,7 @@ BUILD_VENV_DIR = BUILD_ROOT / "build-venv"
 RUNTIME_DIR = BUILD_ROOT / "runtime" / "base"
 BIN_DIR = BUILD_ROOT / "bin"
 PROJECT_FFMPEG_DIR = ROOT / "tools" / "ffmpeg" / "win-x64"
-SPEC_PATH = ROOT / "packaging" / "pyinstaller" / "briefvid.spec"
+SPEC_PATH = ROOT / "packaging" / "pyinstaller" / "bilisum.spec"
 VERSION_FILE = ROOT / "VERSION"
 
 

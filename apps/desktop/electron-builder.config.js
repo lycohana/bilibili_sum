@@ -1,6 +1,6 @@
 module.exports = {
-  appId: "com.briefvid.desktop",
-  productName: "BriefVid",
+  appId: "com.bilisum.desktop",
+  productName: "BiliSum",
   artifactName: "${productName}-${version}-${os}-${arch}-Setup.${ext}",
   directories: {
     output: "../../dist/desktop"
@@ -10,8 +10,8 @@ module.exports = {
   ],
   extraResources: [
     {
-      "from": "../../dist/BriefVid",
-      "to": "backend/BriefVid"
+      "from": "../../dist/BiliSum",
+      "to": "backend/BiliSum"
     },
     {
       "from": "../../apps/desktop/build/icon.ico",
@@ -40,15 +40,15 @@ module.exports = {
     allowElevation: true,
     createDesktopShortcut: true,
     perMachine: false,
-    shortcutName: "BriefVid",
-    uninstallDisplayName: "BriefVid",
+    shortcutName: "BiliSum",
+    uninstallDisplayName: "BiliSum",
     installerIcon: "../../apps/desktop/build/icon.ico",
     uninstallerIcon: "../../apps/desktop/build/icon.ico"
   },
   publish: {
     provider: "github",
     owner: "lycohana",
-    repo: "BriefVid",
+    repo: "BiliSum",
     releaseType: "release"
   },
   // Disable code signing completely

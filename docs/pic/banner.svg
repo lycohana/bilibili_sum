@@ -61,26 +61,30 @@
   </g>
 
   <!-- 右侧文字区域 - 垂直居中 -->
-  <g transform="translate(550, 160)">
+  <g transform="translate(540, 145)">
     <!-- 产品名称 -->
-    <text x="0" y="50" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif" font-size="64" font-weight="700" fill="url(#textGradient)" filter="url(#glow)">BriefVid</text>
+    <text x="0" y="50" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif" font-size="68" font-weight="700" fill="url(#textGradient)" filter="url(#glow)">BiliSum</text>
 
     <!-- 副标题/标语 -->
-    <text x="0" y="95" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif" font-size="18" font-weight="400" fill="#a0a0a0" letter-spacing="2">本地优先的视频知识工作台</text>
+    <text x="0" y="95" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif" font-size="20" font-weight="500" fill="#d8d8e8">AI 视频总结与知识库工具</text>
+    <text x="0" y="126" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif" font-size="15" font-weight="400" fill="#9ca3b7">B 站深度优化 · YouTube 与本地视频 · RAG 问答与 Markdown 导出</text>
 
     <!-- 装饰线 -->
-    <rect x="0" y="115" width="100" height="3" rx="1.5" fill="#F85D8E"/>
+    <rect x="0" y="145" width="112" height="3" rx="1.5" fill="#F85D8E"/>
 
     <!-- 特性标签 -->
-    <g transform="translate(0, 145)">
-      <rect x="0" y="0" width="85" height="26" rx="13" fill="#FF9ABA" opacity="0.2"/>
-      <text x="42" y="16" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="11" font-weight="500" fill="#FF9ABA" text-anchor="middle">📚 智能摘要</text>
+    <g transform="translate(0, 172)">
+      <rect x="0" y="0" width="96" height="28" rx="14" fill="#FF9ABA" opacity="0.2"/>
+      <text x="48" y="18" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="12" font-weight="600" fill="#FF9ABA" text-anchor="middle">B 站优化</text>
 
-      <rect x="95" y="0" width="85" height="26" rx="13" fill="#F85D8E" opacity="0.2"/>
-      <text x="137" y="16" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="11" font-weight="500" fill="#F85D8E" text-anchor="middle">📈 思维导图</text>
+      <rect x="108" y="0" width="96" height="28" rx="14" fill="#F85D8E" opacity="0.2"/>
+      <text x="156" y="18" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="12" font-weight="600" fill="#F85D8E" text-anchor="middle">知识卡片</text>
 
-      <rect x="190" y="0" width="85" height="26" rx="13" fill="#FF9ABA" opacity="0.2"/>
-      <text x="232" y="16" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="11" font-weight="500" fill="#FF9ABA" text-anchor="middle">⚡ 效率倍增</text>
+      <rect x="216" y="0" width="96" height="28" rx="14" fill="#FF9ABA" opacity="0.2"/>
+      <text x="264" y="18" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="12" font-weight="600" fill="#FF9ABA" text-anchor="middle">RAG 问答</text>
+
+      <rect x="324" y="0" width="112" height="28" rx="14" fill="#F85D8E" opacity="0.2"/>
+      <text x="380" y="18" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="12" font-weight="600" fill="#F85D8E" text-anchor="middle">Obsidian 导出</text>
     </g>
   </g>
 

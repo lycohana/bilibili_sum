@@ -791,7 +791,7 @@ export function SettingsPage({
       />
       <aside className="settings-nav">
         <div className="settings-nav-header">
-          <span className="settings-nav-label-small">BriefVid</span>
+          <span className="settings-nav-label-small">BiliSum</span>
           <div className="settings-nav-brand-card">
             <div className="settings-nav-brand-copy">
               <span className="settings-nav-brand-kicker">设置</span>
