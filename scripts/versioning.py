@@ -27,7 +27,10 @@ TARGETS = VersionTargets(
         REPO_ROOT / "packages" / "core" / "pyproject.toml",
         REPO_ROOT / "packages" / "infra" / "pyproject.toml",
     ),
-    package_jsons=(REPO_ROOT / "apps" / "desktop" / "package.json",),
+    package_jsons=(
+        REPO_ROOT / "apps" / "desktop" / "package.json",
+        REPO_ROOT / "packages" / "npx" / "package.json",
+    ),
     package_locks=(REPO_ROOT / "apps" / "desktop" / "package-lock.json",),
 )
 

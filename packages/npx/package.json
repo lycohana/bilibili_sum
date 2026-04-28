@@ -1,0 +1,35 @@
+{
+  "name": "bilisum",
+  "version": "1.13.0",
+  "description": "BiliSum npx launcher for release downloads and Docker usage.",
+  "bin": {
+    "bilisum": "bin/bilisum.js"
+  },
+  "files": [
+    "bin",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lycohana/BiliSum.git"
+  },
+  "bugs": {
+    "url": "https://github.com/lycohana/BiliSum/issues"
+  },
+  "homepage": "https://github.com/lycohana/BiliSum#readme",
+  "keywords": [
+    "bilisum",
+    "bilibili",
+    "video-summary",
+    "ai-summary",
+    "rag",
+    "knowledge-base"
+  ],
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  }
+}
