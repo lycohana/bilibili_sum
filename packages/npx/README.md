@@ -1,11 +1,11 @@
 # BiliSum
 
-`bilisum` is the npx helper for BiliSum, an AI video summarizer and knowledge-base tool for Bilibili, YouTube, and local videos.
+`bilisum` starts BiliSum from npx with the official Docker image.
 
 ```bash
 npx bilisum
-npx bilisum release
+npx bilisum start --port 3839 --pull
 npx bilisum docker
 ```
 
-The desktop app is distributed through GitHub Releases. The npx package stays small and points users to the latest release or Docker quick start.
+Docker Desktop is required. The desktop app is still distributed through GitHub Releases.

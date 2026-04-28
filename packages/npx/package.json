@@ -1,7 +1,7 @@
 {
   "name": "bilisum",
-  "version": "1.13.1",
-  "description": "BiliSum npx launcher for release downloads and Docker usage.",
+  "version": "1.13.2",
+  "description": "Start BiliSum from npx with the official Docker image.",
   "bin": {
     "bilisum": "bin/bilisum.js"
   },
