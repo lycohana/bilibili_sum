@@ -84,15 +84,10 @@ type StorageOverview = {
 };
 
 type StorageOverviewInput = {
-  dataDir: string;
-  cacheDir: string;
-  tasksDir: string;
   taskIds?: string[];
 };
 
 type StorageCleanupInput = {
-  cacheDir: string;
-  tasksDir: string;
   taskIds: string[];
 };
 
@@ -394,6 +389,30 @@ function isPathWithin(parentPath: string, candidatePath: string) {
   return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }
 
+async function getTrustedStorageLocations() {
+  const fallbackDataDir = path.join(currentLocalDataRoot(), "data");
+  const fallbackCacheDir = path.join(fallbackDataDir, "cache");
+  const fallbackTasksDir = path.join(fallbackDataDir, "tasks");
+  try {
+    const response = await fetch(`${backendUrl}/api/v1/settings`);
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    const settings = await response.json() as { data_dir?: string; cache_dir?: string; tasks_dir?: string };
+    return {
+      dataDir: resolveManagedPath(settings.data_dir || fallbackDataDir),
+      cacheDir: resolveManagedPath(settings.cache_dir || fallbackCacheDir),
+      tasksDir: resolveManagedPath(settings.tasks_dir || fallbackTasksDir),
+    };
+  } catch {
+    return {
+      dataDir: resolveManagedPath(fallbackDataDir),
+      cacheDir: resolveManagedPath(fallbackCacheDir),
+      tasksDir: resolveManagedPath(fallbackTasksDir),
+    };
+  }
+}
+
 /**
  * 异步收集路径统计信息（避免阻塞主进程）
  */
@@ -557,9 +576,7 @@ function getOrphanTaskDirectories(tasksDir: string, taskIds?: string[]) {
 }
 
 async function getStorageOverview(input: StorageOverviewInput): Promise<StorageOverview> {
-  const dataDir = resolveManagedPath(input.dataDir);
-  const cacheDir = resolveManagedPath(input.cacheDir);
-  const tasksDir = resolveManagedPath(input.tasksDir);
+  const { dataDir, cacheDir, tasksDir } = await getTrustedStorageLocations();
   const logsDir = resolveManagedPath(getLogDirPath());
   const runtimeDir = resolveManagedPath(getRuntimeRootPath());
 
@@ -627,8 +644,7 @@ async function removePathIfPresent(targetPath: string): Promise<number> {
 }
 
 async function cleanupOrphans(input: StorageCleanupInput): Promise<StorageCleanupResult> {
-  const cacheDir = resolveManagedPath(input.cacheDir);
-  const tasksDir = resolveManagedPath(input.tasksDir);
+  const { cacheDir, tasksDir } = await getTrustedStorageLocations();
   const orphanTaskDirs = getOrphanTaskDirectories(tasksDir, input.taskIds);
   const cacheCandidates = getCacheCleanupCandidates(cacheDir, tasksDir, input.taskIds);
   const deletedPaths: string[] = [];
@@ -659,7 +675,7 @@ async function cleanupOrphans(input: StorageCleanupInput): Promise<StorageCleanu
   };
 }
 
-function resolveDirectoryByKind(kind: StorageLocationKind, input: { dataDir: string; cacheDir: string; tasksDir: string }) {
+function resolveDirectoryByKind(kind: StorageLocationKind, locations: { dataDir: string; cacheDir: string; tasksDir: string }) {
   if (kind === "logs") {
     return getLogDirPath();
   }
@@ -667,12 +683,12 @@ function resolveDirectoryByKind(kind: StorageLocationKind, input: { dataDir: str
     return getRuntimeRootPath();
   }
   if (kind === "cache") {
-    return input.cacheDir;
+    return locations.cacheDir;
   }
   if (kind === "tasks") {
-    return input.tasksDir;
+    return locations.tasksDir;
   }
-  return input.dataDir;
+  return locations.dataDir;
 }
 
 function loadPreferences(): DesktopPreferences {
@@ -1724,8 +1740,8 @@ function registerIpcHandlers() {
   ipcMain.handle("desktop:update:get-status", () => updateStatus);
   ipcMain.handle("desktop:file-manager:get-storage-overview", async (_event, input: StorageOverviewInput) => getStorageOverview(input));
   ipcMain.handle("desktop:file-manager:cleanup-orphans", async (_event, input: StorageCleanupInput) => cleanupOrphans(input));
-  ipcMain.handle("desktop:file-manager:open-directory", (_event, kind: StorageLocationKind, input: { dataDir: string; cacheDir: string; tasksDir: string }) => {
-    const targetPath = resolveDirectoryByKind(kind, input);
+  ipcMain.handle("desktop:file-manager:open-directory", async (_event, kind: StorageLocationKind) => {
+    const targetPath = resolveDirectoryByKind(kind, await getTrustedStorageLocations());
     fs.mkdirSync(targetPath, { recursive: true });
     return shell.openPath(targetPath);
   });

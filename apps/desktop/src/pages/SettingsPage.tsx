@@ -364,12 +364,7 @@ export function SettingsPage({
           taskIds = undefined;
         }
       }
-      const overview = await window.desktop.fileManager.getStorageOverview({
-        dataDir: form.data_dir,
-        cacheDir: form.cache_dir,
-        tasksDir: form.tasks_dir,
-        taskIds,
-      });
+      const overview = await window.desktop.fileManager.getStorageOverview({ taskIds });
       setStorageOverview(overview);
       if (!taskIds) {
         setStorageStatus("服务离线：已展示本地占用情况，清理操作需要在服务在线时确认引用关系。");
@@ -379,17 +374,13 @@ export function SettingsPage({
     } finally {
       setStorageLoading(false);
     }
-  }, [form, form?.data_dir, form?.cache_dir, form?.tasks_dir, snapshot.serviceOnline]);
+  }, [form, snapshot.serviceOnline]);
 
   async function openManagedDirectory(kind: StorageLocationKind) {
     if (!form || !window.desktop?.fileManager) {
       return;
     }
-    await window.desktop.fileManager.openDirectory(kind, {
-      dataDir: form.data_dir,
-      cacheDir: form.cache_dir,
-      tasksDir: form.tasks_dir,
-    });
+    await window.desktop.fileManager.openDirectory(kind);
   }
 
   async function cleanupManagedFiles() {
@@ -400,12 +391,7 @@ export function SettingsPage({
       setStorageCleaning(true);
       setStorageStatus("");
       const taskIds = (await api.listTasks()).map((task) => task.task_id);
-      const preview = await window.desktop.fileManager.getStorageOverview({
-        dataDir: form.data_dir,
-        cacheDir: form.cache_dir,
-        tasksDir: form.tasks_dir,
-        taskIds,
-      });
+      const preview = await window.desktop.fileManager.getStorageOverview({ taskIds });
       const targetCount = preview.cleanup.orphanTaskCount + preview.cleanup.cacheCandidateCount;
       const targetBytes = preview.cleanup.orphanTaskBytes + preview.cleanup.cacheCandidateBytes;
       if (targetCount <= 0) {
@@ -421,11 +407,7 @@ export function SettingsPage({
         setStorageStatus("已取消清理。");
         return;
       }
-      const result = await window.desktop.fileManager.cleanupOrphans({
-        cacheDir: form.cache_dir,
-        tasksDir: form.tasks_dir,
-        taskIds,
-      });
+      const result = await window.desktop.fileManager.cleanupOrphans({ taskIds });
       await refreshStorageOverview();
       setStorageStatus(`已清理 ${result.deletedCount} 项内容，释放约 ${formatStorageSize(result.reclaimedBytes)}。`);
     } catch (error) {
