@@ -112,6 +112,17 @@ const APP_SLUG = "bilisum";
 const LEGACY_APP_SLUG = "briefvid";
 const LEGACY_PRODUCT_NAME = "BriefVid";
 const desktopAppVersion = String(desktopPackage.version || "");
+const mainWindowBounds = {
+  width: 1480,
+  height: 920,
+  minWidth: 1200,
+  minHeight: 760,
+};
+const splashWindowBounds = {
+  width: 860,
+  height: 520,
+};
+const minimumSplashVisibleMs = 1100;
 const repoRoot = path.resolve(__dirname, "../../..");
 const rendererUrl = process.env.BILISUM_RENDERER_URL ?? process.env.BRIEFVID_RENDERER_URL ?? "http://127.0.0.1:5173";
 const backendUrl = "http://127.0.0.1:3838";
@@ -133,6 +144,7 @@ let frontendStaticServer: Server | null = null;
 let frontendStaticUrl = "";
 let applicationLoadPromise: Promise<void> | null = null;
 let applicationLoadedTarget = "";
+let splashShownAt = 0;
 let forceQuit = false;
 let preferences: DesktopPreferences = loadPreferences();
 let backendStatus: BackendStatus = {
@@ -807,7 +819,19 @@ function getStartupHidden(): boolean {
   return process.argv.includes("--hidden");
 }
 
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 function getSplashMarkup(message = "正在启动 BiliSum 服务...") {
+  const version = desktopAppVersion || app.getVersion();
+  const escapedMessage = escapeHtml(message);
+  const escapedVersion = escapeHtml(version);
   return `
     <html lang="zh-CN">
       <head>
@@ -817,72 +841,213 @@ function getSplashMarkup(message = "正在启动 BiliSum 服务...") {
           body {
             margin: 0;
             min-height: 100vh;
-            display: grid;
-            place-items: center;
+            overflow: hidden;
             background:
-              radial-gradient(circle at top right, rgba(251, 114, 153, 0.18), transparent 26%),
-              linear-gradient(180deg, #0b1120 0%, #0f172a 100%);
-            color: #f8fafc;
-            font-family: "Segoe UI", "PingFang SC", sans-serif;
+              radial-gradient(circle at 72% 0%, rgba(199, 167, 98, 0.16), transparent 34%),
+              radial-gradient(circle at 8% 2%, rgba(255, 255, 255, 0.07), transparent 24%),
+              linear-gradient(145deg, #211f1b 0%, #171513 62%, #12110f 100%);
+            color: #f7f2e8;
+            font-family: "Segoe UI", "Microsoft YaHei UI", "PingFang SC", sans-serif;
+            user-select: none;
           }
           .splash-container {
             position: relative;
-            width: min(520px, calc(100vw - 48px));
+            box-sizing: border-box;
+            width: 100vw;
+            height: 100vh;
+            padding: 54px 56px 46px;
+            border-radius: 28px;
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+          }
+          .splash-container::before {
+            content: "";
+            position: absolute;
+            inset: 0;
+            border-radius: inherit;
+            background:
+              linear-gradient(120deg, rgba(255, 255, 255, 0.08), transparent 25%),
+              radial-gradient(circle at 88% 18%, rgba(255, 255, 255, 0.06), transparent 22%);
+            opacity: 0.72;
+            pointer-events: none;
           }
           .close-button {
             position: absolute;
-            top: 12px;
-            right: 12px;
+            z-index: 3;
+            top: 18px;
+            right: 18px;
             width: 32px;
             height: 32px;
             border: none;
-            background: rgba(255, 255, 255, 0.1);
-            color: #94a3b8;
-            border-radius: 8px;
+            background: rgba(255, 255, 255, 0.06);
+            color: rgba(247, 242, 232, 0.5);
+            border-radius: 10px;
             cursor: pointer;
             display: grid;
             place-items: center;
             transition: background-color 0.15s ease, color 0.15s ease;
           }
           .close-button:hover {
-            background: rgba(239, 68, 68, 0.2);
-            color: #ef4444;
+            background: rgba(215, 178, 103, 0.14);
+            color: #f0d191;
           }
-          main {
-            padding: 32px;
-            border-radius: 24px;
-            background: rgba(15, 23, 42, 0.82);
-            border: 1px solid rgba(255, 255, 255, 0.08);
-            box-shadow: 0 24px 48px rgba(2, 6, 23, 0.38);
+          .brand {
+            position: relative;
+            z-index: 2;
+            display: flex;
+            align-items: center;
+            gap: 20px;
+          }
+          .brand-mark {
+            width: 72px;
+            height: 72px;
+            border-radius: 20px;
+            background:
+              linear-gradient(145deg, rgba(255, 255, 255, 0.98), rgba(237, 243, 244, 0.94)),
+              linear-gradient(135deg, #ffffff, #dfe7e9);
+            display: grid;
+            place-items: center;
+            box-shadow:
+              0 18px 42px rgba(0, 0, 0, 0.34),
+              inset 0 1px 0 rgba(255, 255, 255, 0.9);
+          }
+          .brand-mark svg {
+            width: 48px;
+            height: 48px;
+            filter: drop-shadow(0 6px 10px rgba(63, 162, 210, 0.22));
           }
           h1 {
-            margin: 0 0 12px;
-            font-size: 28px;
+            margin: 0 0 8px;
+            font-size: 30px;
+            line-height: 1;
+            font-weight: 750;
+            letter-spacing: 0;
+            color: #fffaf0;
           }
-          p {
+          .tagline {
             margin: 0;
-            color: #cbd5e1;
-            line-height: 1.7;
+            color: #b79a61;
+            font-size: 15px;
+            font-weight: 600;
+            letter-spacing: 0;
+          }
+          .center-light {
+            position: absolute;
+            left: 0;
+            right: 0;
+            top: 136px;
+            height: 260px;
+            background:
+              radial-gradient(ellipse at center, rgba(255, 255, 255, 0.055), transparent 56%),
+              linear-gradient(180deg, transparent 0%, rgba(255, 255, 255, 0.025) 50%, transparent 100%);
+            opacity: 0.82;
+            pointer-events: none;
+          }
+          .progress-zone {
+            position: relative;
+            z-index: 2;
+          }
+          .progress-track {
+            position: relative;
+            height: 3px;
+            border-radius: 999px;
+            overflow: hidden;
+            background: rgba(146, 127, 96, 0.22);
+          }
+          .progress-bar {
+            position: absolute;
+            inset: 0 auto 0 0;
+            width: 44%;
+            border-radius: inherit;
+            background: linear-gradient(90deg, #f4d58a, #bc9560);
+            box-shadow: 0 0 18px rgba(226, 185, 109, 0.34);
+            animation: progressPulse 2.4s ease-in-out infinite;
+          }
+          .progress-sheen {
+            position: absolute;
+            inset: 0;
+            width: 26%;
+            border-radius: inherit;
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.7), transparent);
+            transform: translateX(-100%);
+            animation: sheen 1.8s ease-in-out infinite;
+          }
+          .status-row {
+            margin-top: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 24px;
+            color: rgba(247, 242, 232, 0.42);
+            font-size: 15px;
+            font-weight: 600;
           }
           #status-message {
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
             transition: opacity 0.2s ease;
+          }
+          .version {
+            flex: 0 0 auto;
+            color: rgba(247, 242, 232, 0.28);
           }
           .fade-out {
             opacity: 0;
+          }
+          @keyframes progressPulse {
+            0%, 100% { width: 36%; opacity: 0.82; }
+            50% { width: 54%; opacity: 1; }
+          }
+          @keyframes sheen {
+            0% { transform: translateX(-110%); opacity: 0; }
+            22% { opacity: 0.75; }
+            70% { opacity: 0.1; }
+            100% { transform: translateX(420%); opacity: 0; }
           }
         </style>
       </head>
       <body>
         <div class="splash-container">
+          <div class="center-light"></div>
           <button class="close-button" onclick="window.close()" aria-label="关闭">
             <svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg">
               <path d="M2 2L12 12M12 2L2 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
             </svg>
           </button>
-          <main>
-            <h1>BiliSum</h1>
-            <p id="status-message">${message}</p>
-          </main>
+          <div class="brand">
+            <div class="brand-mark" aria-hidden="true">
+              <svg viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M12 38C17 26 21 24 26 36C30 45 35 44 39 32C43 20 49 18 54 27" stroke="url(#wave)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round"/>
+                <path d="M40 22H54M43 31H55" stroke="#67d1c8" stroke-width="4.8" stroke-linecap="round"/>
+                <defs>
+                  <linearGradient id="wave" x1="12" y1="34" x2="55" y2="34" gradientUnits="userSpaceOnUse">
+                    <stop stop-color="#8dc4ff"/>
+                    <stop offset="0.5" stop-color="#a9e7ff"/>
+                    <stop offset="1" stop-color="#70dfc8"/>
+                  </linearGradient>
+                </defs>
+              </svg>
+            </div>
+            <div>
+              <h1>BiliSum</h1>
+              <p class="tagline">视频内容总结与知识整理工具</p>
+            </div>
+          </div>
+          <div class="progress-zone">
+            <div class="progress-track">
+              <div class="progress-bar"></div>
+              <div class="progress-sheen"></div>
+            </div>
+            <div class="status-row">
+              <span id="status-message">${escapedMessage}</span>
+              <span class="version">v${escapedVersion}</span>
+            </div>
+          </div>
         </div>
       </body>
     </html>
@@ -894,6 +1059,11 @@ function loadSplash(message = "正在启动 BiliSum 服务...") {
     return;
   }
   applicationLoadedTarget = "";
+  splashShownAt = Date.now();
+  mainWindow.setResizable(false);
+  mainWindow.setMinimumSize(splashWindowBounds.width, splashWindowBounds.height);
+  mainWindow.setSize(splashWindowBounds.width, splashWindowBounds.height);
+  mainWindow.center();
   void mainWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(getSplashMarkup(message))}`);
   
   // 注入 IPC 监听脚本
@@ -923,9 +1093,7 @@ function updateSplashMessage(message: string) {
   if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) {
     return;
   }
-  // 转义消息中的特殊字符
-  const escapedMessage = message.replace(/'/g, "\\'").replace(/"/g, '\\"');
-  void mainWindow.webContents.executeJavaScript(`window.updateStatusMessage('${escapedMessage}')`);
+  void mainWindow.webContents.executeJavaScript(`window.updateStatusMessage(${JSON.stringify(message)})`);
 }
 
 function sendBackendStatus() {
@@ -1488,12 +1656,20 @@ async function loadApplication() {
   }
 
   applicationLoadPromise = (async () => {
+    const splashRemainingMs = Math.max(0, minimumSplashVisibleMs - (Date.now() - splashShownAt));
+    if (splashRemainingMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, splashRemainingMs));
+    }
     if (isDev) {
       await mainWindow?.webContents.session.clearCache();
     }
     if (!mainWindow || mainWindow.isDestroyed()) {
       return;
     }
+    mainWindow.setMinimumSize(mainWindowBounds.minWidth, mainWindowBounds.minHeight);
+    mainWindow.setSize(mainWindowBounds.width, mainWindowBounds.height);
+    mainWindow.setResizable(true);
+    mainWindow.center();
     await mainWindow.loadURL(targetUrl);
     applicationLoadedTarget = targetUrl;
 
@@ -1601,11 +1777,13 @@ async function handleCloseAction(): Promise<"hide" | "exit" | "cancel"> {
 
 function createWindow() {
   mainWindow = new BrowserWindow({
-    width: 1480,
-    height: 920,
-    minWidth: 1200,
-    minHeight: 760,
+    width: splashWindowBounds.width,
+    height: splashWindowBounds.height,
+    minWidth: splashWindowBounds.width,
+    minHeight: splashWindowBounds.height,
     show: false,
+    resizable: false,
+    roundedCorners: true,
     title: "BiliSum",
     icon: getTrayImage(),
     frame: false,
