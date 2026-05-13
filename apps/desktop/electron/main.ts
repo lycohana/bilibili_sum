@@ -23,11 +23,13 @@ import desktopPackage from "../package.json";
 import { isAllowedExternalUrl, isCrossOriginNavigation } from "./externalLinks";
 
 type CloseBehavior = "ask" | "tray" | "exit";
+type ThemePreference = "light" | "dark";
 
 type DesktopPreferences = {
   closeBehavior: CloseBehavior;
   rememberCloseBehavior: boolean;
   autoLaunch: boolean;
+  themePreference?: ThemePreference;
   lastOpenedVersion?: string;
   lastSeenAnnouncementVersion?: string;
 };
@@ -756,6 +758,12 @@ function resetCloseBehavior(): CloseBehavior {
   return "ask";
 }
 
+function setThemePreference(value: ThemePreference): ThemePreference {
+  preferences = { ...preferences, themePreference: value };
+  savePreferences();
+  return value;
+}
+
 function getAnnouncementPath() {
   return path.join(app.getAppPath(), "announcement.md");
 }
@@ -830,24 +838,87 @@ function escapeHtml(value: string): string {
 
 function getSplashMarkup(message = "正在启动 BiliSum 服务...") {
   const version = desktopAppVersion || app.getVersion();
+  const themeClass = preferences.themePreference === "dark" ? "theme-dark" : preferences.themePreference === "light" ? "theme-light" : "";
   const escapedMessage = escapeHtml(message);
   const escapedVersion = escapeHtml(version);
+  const escapedThemeClass = escapeHtml(themeClass);
   return `
-    <html lang="zh-CN">
+    <html lang="zh-CN" class="${escapedThemeClass}">
       <head>
         <meta charset="utf-8" />
         <title>BiliSum</title>
         <style>
+          :root {
+            color-scheme: light;
+            --brand-400: #ff9aba;
+            --brand-500: #fb7299;
+            --brand-600: #f85d8e;
+            --brand-700: #d94674;
+            --info: #567eff;
+            --bg-base: #fafbfc;
+            --bg-canvas: #ffffff;
+            --bg-soft: #f5f6f8;
+            --bg-subtle: #f8f9fc;
+            --bg-elevated: #ffffff;
+            --bg-accent: rgba(251, 114, 153, 0.06);
+            --bg-accent-strong: rgba(251, 114, 153, 0.1);
+            --text-primary: #1a1a1a;
+            --text-secondary: #3f4754;
+            --text-muted: #7e8898;
+            --border-subtle: rgba(0, 0, 0, 0.06);
+            --border-default: rgba(0, 0, 0, 0.1);
+            --accent-border: rgba(251, 114, 153, 0.18);
+            --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.1);
+            --highlight: rgba(255, 255, 255, 0.76);
+          }
+          :root.theme-dark {
+            color-scheme: dark;
+            --bg-base: #121212;
+            --bg-canvas: #1a1a1a;
+            --bg-soft: #222222;
+            --bg-subtle: #282828;
+            --bg-elevated: #2d2d2d;
+            --bg-accent: rgba(251, 114, 153, 0.1);
+            --bg-accent-strong: rgba(251, 114, 153, 0.16);
+            --text-primary: #f5f5f5;
+            --text-secondary: #b0b0b0;
+            --text-muted: #666666;
+            --border-subtle: rgba(255, 255, 255, 0.08);
+            --border-default: rgba(255, 255, 255, 0.12);
+            --accent-border: rgba(251, 114, 153, 0.24);
+            --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.4);
+            --highlight: rgba(255, 255, 255, 0.06);
+          }
+          @media (prefers-color-scheme: dark) {
+            :root:not(.theme-light) {
+              color-scheme: dark;
+              --bg-base: #121212;
+              --bg-canvas: #1a1a1a;
+              --bg-soft: #222222;
+              --bg-subtle: #282828;
+              --bg-elevated: #2d2d2d;
+              --bg-accent: rgba(251, 114, 153, 0.1);
+              --bg-accent-strong: rgba(251, 114, 153, 0.16);
+              --text-primary: #f5f5f5;
+              --text-secondary: #b0b0b0;
+              --text-muted: #666666;
+              --border-subtle: rgba(255, 255, 255, 0.08);
+              --border-default: rgba(255, 255, 255, 0.12);
+              --accent-border: rgba(251, 114, 153, 0.24);
+              --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.4);
+              --highlight: rgba(255, 255, 255, 0.06);
+            }
+          }
           body {
             margin: 0;
             min-height: 100vh;
             overflow: hidden;
             background:
-              radial-gradient(circle at 72% 0%, rgba(199, 167, 98, 0.16), transparent 34%),
-              radial-gradient(circle at 8% 2%, rgba(255, 255, 255, 0.07), transparent 24%),
-              linear-gradient(145deg, #211f1b 0%, #171513 62%, #12110f 100%);
-            color: #f7f2e8;
-            font-family: "Segoe UI", "Microsoft YaHei UI", "PingFang SC", sans-serif;
+              linear-gradient(135deg, rgba(251, 114, 153, 0.12) 0%, transparent 32%),
+              linear-gradient(215deg, rgba(86, 126, 255, 0.08) 0%, transparent 38%),
+              linear-gradient(180deg, var(--bg-base) 0%, var(--bg-soft) 100%);
+            color: var(--text-primary);
+            font-family: "Inter", "Plus Jakarta Sans", "Manrope", "PingFang SC", "Noto Sans SC", "Microsoft YaHei", "Segoe UI", sans-serif;
             user-select: none;
           }
           .splash-container {
@@ -857,8 +928,11 @@ function getSplashMarkup(message = "正在启动 BiliSum 服务...") {
             height: 100vh;
             padding: 54px 56px 46px;
             border-radius: 28px;
-            border: 1px solid rgba(255, 255, 255, 0.06);
-            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+            border: 1px solid var(--border-subtle);
+            background:
+              linear-gradient(180deg, color-mix(in srgb, var(--bg-canvas) 92%, transparent), color-mix(in srgb, var(--bg-canvas) 76%, transparent)),
+              linear-gradient(120deg, transparent 0%, var(--bg-accent) 100%);
+            box-shadow: inset 0 1px 0 var(--highlight), var(--shadow-lg);
             display: flex;
             flex-direction: column;
             justify-content: space-between;
@@ -869,9 +943,9 @@ function getSplashMarkup(message = "正在启动 BiliSum 服务...") {
             inset: 0;
             border-radius: inherit;
             background:
-              linear-gradient(120deg, rgba(255, 255, 255, 0.08), transparent 25%),
-              radial-gradient(circle at 88% 18%, rgba(255, 255, 255, 0.06), transparent 22%);
-            opacity: 0.72;
+              linear-gradient(115deg, var(--highlight), transparent 24%),
+              repeating-linear-gradient(135deg, transparent 0 18px, rgba(251, 114, 153, 0.035) 18px 19px, transparent 19px 36px);
+            opacity: 0.9;
             pointer-events: none;
           }
           .close-button {
@@ -882,17 +956,18 @@ function getSplashMarkup(message = "正在启动 BiliSum 服务...") {
             width: 32px;
             height: 32px;
             border: none;
-            background: rgba(255, 255, 255, 0.06);
-            color: rgba(247, 242, 232, 0.5);
+            background: color-mix(in srgb, var(--bg-elevated) 86%, transparent);
+            color: var(--text-muted);
             border-radius: 10px;
             cursor: pointer;
             display: grid;
             place-items: center;
+            box-shadow: inset 0 0 0 1px var(--border-subtle);
             transition: background-color 0.15s ease, color 0.15s ease;
           }
           .close-button:hover {
-            background: rgba(215, 178, 103, 0.14);
-            color: #f0d191;
+            background: var(--bg-accent-strong);
+            color: var(--brand-600);
           }
           .brand {
             position: relative;
@@ -906,13 +981,15 @@ function getSplashMarkup(message = "正在启动 BiliSum 服务...") {
             height: 72px;
             border-radius: 20px;
             background:
-              linear-gradient(145deg, rgba(255, 255, 255, 0.98), rgba(237, 243, 244, 0.94)),
-              linear-gradient(135deg, #ffffff, #dfe7e9);
+              linear-gradient(145deg, var(--bg-elevated), var(--bg-subtle)),
+              linear-gradient(135deg, var(--bg-accent), rgba(86, 126, 255, 0.08));
             display: grid;
             place-items: center;
             box-shadow:
-              0 18px 42px rgba(0, 0, 0, 0.34),
-              inset 0 1px 0 rgba(255, 255, 255, 0.9);
+              0 18px 42px rgba(251, 114, 153, 0.14),
+              inset 0 1px 0 var(--highlight),
+              inset 0 0 0 1px var(--accent-border);
+            animation: brandFloat 3.2s ease-in-out infinite;
           }
           .brand-mark svg {
             width: 48px;
@@ -925,11 +1002,11 @@ function getSplashMarkup(message = "正在启动 BiliSum 服务...") {
             line-height: 1;
             font-weight: 750;
             letter-spacing: 0;
-            color: #fffaf0;
+            color: var(--text-primary);
           }
           .tagline {
             margin: 0;
-            color: #b79a61;
+            color: var(--brand-600);
             font-size: 15px;
             font-weight: 600;
             letter-spacing: 0;
@@ -941,10 +1018,11 @@ function getSplashMarkup(message = "正在启动 BiliSum 服务...") {
             top: 136px;
             height: 260px;
             background:
-              radial-gradient(ellipse at center, rgba(255, 255, 255, 0.055), transparent 56%),
-              linear-gradient(180deg, transparent 0%, rgba(255, 255, 255, 0.025) 50%, transparent 100%);
-            opacity: 0.82;
+              linear-gradient(90deg, transparent 0%, var(--bg-accent) 42%, rgba(86, 126, 255, 0.07) 58%, transparent 100%),
+              linear-gradient(180deg, transparent 0%, color-mix(in srgb, var(--bg-elevated) 42%, transparent) 50%, transparent 100%);
+            opacity: 0.76;
             pointer-events: none;
+            animation: ambientSweep 4.8s ease-in-out infinite;
           }
           .progress-zone {
             position: relative;
@@ -955,15 +1033,15 @@ function getSplashMarkup(message = "正在启动 BiliSum 服务...") {
             height: 3px;
             border-radius: 999px;
             overflow: hidden;
-            background: rgba(146, 127, 96, 0.22);
+            background: color-mix(in srgb, var(--border-default) 64%, var(--bg-accent) 36%);
           }
           .progress-bar {
             position: absolute;
             inset: 0 auto 0 0;
             width: 44%;
             border-radius: inherit;
-            background: linear-gradient(90deg, #f4d58a, #bc9560);
-            box-shadow: 0 0 18px rgba(226, 185, 109, 0.34);
+            background: linear-gradient(90deg, var(--brand-500), var(--brand-600), var(--info));
+            box-shadow: 0 0 18px rgba(251, 114, 153, 0.26);
             animation: progressPulse 2.4s ease-in-out infinite;
           }
           .progress-sheen {
@@ -971,7 +1049,7 @@ function getSplashMarkup(message = "正在启动 BiliSum 服务...") {
             inset: 0;
             width: 26%;
             border-radius: inherit;
-            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.7), transparent);
+            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.72), transparent);
             transform: translateX(-100%);
             animation: sheen 1.8s ease-in-out infinite;
           }
@@ -981,7 +1059,7 @@ function getSplashMarkup(message = "正在启动 BiliSum 服务...") {
             align-items: center;
             justify-content: space-between;
             gap: 24px;
-            color: rgba(247, 242, 232, 0.42);
+            color: var(--text-muted);
             font-size: 15px;
             font-weight: 600;
           }
@@ -994,10 +1072,18 @@ function getSplashMarkup(message = "正在启动 BiliSum 服务...") {
           }
           .version {
             flex: 0 0 auto;
-            color: rgba(247, 242, 232, 0.28);
+            color: color-mix(in srgb, var(--text-muted) 72%, transparent);
           }
           .fade-out {
             opacity: 0;
+          }
+          @keyframes brandFloat {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-4px); }
+          }
+          @keyframes ambientSweep {
+            0%, 100% { transform: translateX(-2%); opacity: 0.58; }
+            50% { transform: translateX(2%); opacity: 0.82; }
           }
           @keyframes progressPulse {
             0%, 100% { width: 36%; opacity: 0.82; }
@@ -2207,6 +2293,12 @@ function registerIpcHandlers() {
     return value;
   });
   ipcMain.handle("desktop:preferences:reset-close-behavior", () => resetCloseBehavior());
+  ipcMain.handle("desktop:preferences:set-theme", (_event, value: ThemePreference) => {
+    if (value !== "light" && value !== "dark") {
+      return getPreferences().themePreference ?? "light";
+    }
+    return setThemePreference(value);
+  });
   
   // 更新相关 IPC
   ipcMain.handle("desktop:update:check", async () => checkForUpdates());

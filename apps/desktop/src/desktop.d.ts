@@ -1,4 +1,5 @@
 type CloseBehavior = "ask" | "tray" | "exit";
+type ThemePreference = "light" | "dark";
 
 type DesktopBackendStatus = {
   running: boolean;
@@ -113,6 +114,7 @@ type DesktopBridge = {
     getCloseBehavior(): Promise<CloseBehavior>;
     setCloseBehavior(value: CloseBehavior): Promise<CloseBehavior>;
     resetCloseBehavior(): Promise<CloseBehavior>;
+    setTheme(value: ThemePreference): Promise<ThemePreference>;
   };
   update: {
     check(): Promise<UpdateInfo>;

@@ -80,8 +80,10 @@ export function App() {
   const localVideoInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
-    document.documentElement.setAttribute("data-theme", darkMode ? "dark" : "light");
-    localStorage.setItem("theme", darkMode ? "dark" : "light");
+    const theme = darkMode ? "dark" : "light";
+    document.documentElement.setAttribute("data-theme", theme);
+    localStorage.setItem("theme", theme);
+    void window.desktop?.preferences?.setTheme?.(theme);
   }, [darkMode]);
 
   useEffect(() => {

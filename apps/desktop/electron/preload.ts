@@ -32,6 +32,7 @@ document.addEventListener(
 );
 
 type CloseBehavior = "ask" | "tray" | "exit";
+type ThemePreference = "light" | "dark";
 
 export type DesktopBackendStatus = {
   running: boolean;
@@ -157,6 +158,8 @@ const desktop = {
     setCloseBehavior: (value: CloseBehavior) =>
       ipcRenderer.invoke("desktop:preferences:set-close-behavior", value) as Promise<CloseBehavior>,
     resetCloseBehavior: () => ipcRenderer.invoke("desktop:preferences:reset-close-behavior") as Promise<CloseBehavior>,
+    setTheme: (value: ThemePreference) =>
+      ipcRenderer.invoke("desktop:preferences:set-theme", value) as Promise<ThemePreference>,
   },
   update: {
     check: () => ipcRenderer.invoke("desktop:update:check") as Promise<UpdateInfo>,
