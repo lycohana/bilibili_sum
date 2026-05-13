@@ -870,6 +870,10 @@ function getSplashMarkup(message = "正在启动 BiliSum 服务...") {
             --accent-border: rgba(251, 114, 153, 0.18);
             --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.1);
             --highlight: rgba(255, 255, 255, 0.76);
+            --surface-top: rgba(255, 255, 255, 0.9);
+            --surface-bottom: rgba(255, 255, 255, 0.78);
+            --accent-wash: rgba(251, 114, 153, 0.075);
+            --info-wash: rgba(86, 126, 255, 0.055);
           }
           :root.theme-dark {
             color-scheme: dark;
@@ -888,6 +892,10 @@ function getSplashMarkup(message = "正在启动 BiliSum 服务...") {
             --accent-border: rgba(251, 114, 153, 0.24);
             --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.4);
             --highlight: rgba(255, 255, 255, 0.06);
+            --surface-top: rgba(26, 26, 26, 0.96);
+            --surface-bottom: rgba(18, 18, 18, 0.92);
+            --accent-wash: rgba(251, 114, 153, 0.052);
+            --info-wash: rgba(86, 126, 255, 0.044);
           }
           @media (prefers-color-scheme: dark) {
             :root:not(.theme-light) {
@@ -907,16 +915,17 @@ function getSplashMarkup(message = "正在启动 BiliSum 服务...") {
               --accent-border: rgba(251, 114, 153, 0.24);
               --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.4);
               --highlight: rgba(255, 255, 255, 0.06);
+              --surface-top: rgba(26, 26, 26, 0.96);
+              --surface-bottom: rgba(18, 18, 18, 0.92);
+              --accent-wash: rgba(251, 114, 153, 0.052);
+              --info-wash: rgba(86, 126, 255, 0.044);
             }
           }
           body {
             margin: 0;
             min-height: 100vh;
             overflow: hidden;
-            background:
-              linear-gradient(135deg, rgba(251, 114, 153, 0.12) 0%, transparent 32%),
-              linear-gradient(215deg, rgba(86, 126, 255, 0.08) 0%, transparent 38%),
-              linear-gradient(180deg, var(--bg-base) 0%, var(--bg-soft) 100%);
+            background: linear-gradient(180deg, var(--bg-base) 0%, var(--bg-soft) 100%);
             color: var(--text-primary);
             font-family: "Inter", "Plus Jakarta Sans", "Manrope", "PingFang SC", "Noto Sans SC", "Microsoft YaHei", "Segoe UI", sans-serif;
             user-select: none;
@@ -930,8 +939,9 @@ function getSplashMarkup(message = "正在启动 BiliSum 服务...") {
             border-radius: 28px;
             border: 1px solid var(--border-subtle);
             background:
-              linear-gradient(180deg, color-mix(in srgb, var(--bg-canvas) 92%, transparent), color-mix(in srgb, var(--bg-canvas) 76%, transparent)),
-              linear-gradient(120deg, transparent 0%, var(--bg-accent) 100%);
+              linear-gradient(180deg, var(--surface-top), var(--surface-bottom)),
+              linear-gradient(135deg, var(--accent-wash) 0%, transparent 46%),
+              linear-gradient(225deg, var(--info-wash) 0%, transparent 52%);
             box-shadow: inset 0 1px 0 var(--highlight), var(--shadow-lg);
             display: flex;
             flex-direction: column;
@@ -943,9 +953,9 @@ function getSplashMarkup(message = "正在启动 BiliSum 服务...") {
             inset: 0;
             border-radius: inherit;
             background:
-              linear-gradient(115deg, var(--highlight), transparent 24%),
-              repeating-linear-gradient(135deg, transparent 0 18px, rgba(251, 114, 153, 0.035) 18px 19px, transparent 19px 36px);
-            opacity: 0.9;
+              linear-gradient(115deg, var(--highlight), transparent 28%),
+              linear-gradient(155deg, transparent 18%, var(--accent-wash) 46%, transparent 72%);
+            opacity: 0.56;
             pointer-events: none;
           }
           .close-button {
@@ -1013,14 +1023,11 @@ function getSplashMarkup(message = "正在启动 BiliSum 服务...") {
           }
           .center-light {
             position: absolute;
-            left: 0;
-            right: 0;
-            top: 136px;
-            height: 260px;
+            inset: 0;
             background:
-              linear-gradient(90deg, transparent 0%, var(--bg-accent) 42%, rgba(86, 126, 255, 0.07) 58%, transparent 100%),
-              linear-gradient(180deg, transparent 0%, color-mix(in srgb, var(--bg-elevated) 42%, transparent) 50%, transparent 100%);
-            opacity: 0.76;
+              linear-gradient(135deg, transparent 12%, var(--accent-wash) 36%, transparent 58%),
+              linear-gradient(225deg, transparent 22%, var(--info-wash) 48%, transparent 72%);
+            opacity: 0.78;
             pointer-events: none;
             animation: ambientSweep 4.8s ease-in-out infinite;
           }
@@ -1082,8 +1089,8 @@ function getSplashMarkup(message = "正在启动 BiliSum 服务...") {
             50% { transform: translateY(-4px); }
           }
           @keyframes ambientSweep {
-            0%, 100% { transform: translateX(-2%); opacity: 0.58; }
-            50% { transform: translateX(2%); opacity: 0.82; }
+            0%, 100% { transform: translateX(-1.5%); opacity: 0.58; }
+            50% { transform: translateX(1.5%); opacity: 0.78; }
           }
           @keyframes progressPulse {
             0%, 100% { width: 36%; opacity: 0.82; }
