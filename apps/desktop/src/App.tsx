@@ -127,19 +127,54 @@ export function App() {
 
     async function refresh() {
       try {
-        const [health, systemInfo, settings, videos] = await Promise.all([
+        const [health, settings, videos] = await Promise.all([
           api.getHealth(),
-          api.getSystemInfo(),
           api.getSettings(),
           api.listVideos(),
         ]);
         if (!disposed) {
-          const environment = systemInfo.environment ?? null;
-          setSnapshot({ serviceOnline: health.status === "ok", systemInfo, settings, environment, videos, error: "" });
+          setSnapshot((current) => ({
+            ...current,
+            serviceOnline: health.status === "ok",
+            settings,
+            videos,
+            error: "",
+          }));
+        }
+
+        try {
+          const systemInfo = await api.getSystemInfo();
+          if (!disposed) {
+            const runtimeStartupStatus = systemInfo.runtimeStartup?.status;
+            const environment = systemInfo.environment ?? systemInfo.runtimeStartup?.environment ?? null;
+            const runtimeInitializing = runtimeStartupStatus === "initializing" || environment?.runtimeReady === false;
+            setSnapshot((current) => ({
+              ...current,
+              serviceOnline: health.status === "ok",
+              systemInfo,
+              environment,
+              error: "",
+              runtimeInitializing,
+            }));
+          }
+        } catch (error) {
+          if (!disposed) {
+            setSnapshot((current) => ({
+              ...current,
+              serviceOnline: health.status === "ok",
+              error: current.error,
+              runtimeInitializing: true,
+            }));
+          }
         }
       } catch (error) {
         if (!disposed) {
-          setSnapshot((current) => ({ ...current, serviceOnline: false, error: error instanceof Error ? error.message : "服务暂不可用" }));
+          setSnapshot((current) => ({
+            ...current,
+            serviceOnline: false,
+            error: error instanceof Error ? error.message : "服务暂不可用",
+            runtimeInitializing: false,
+          }));
         }
       }
     }
@@ -298,6 +333,19 @@ export function App() {
   const configHealth = useMemo(() => getConfigHealth(snapshot.settings, snapshot.environment), [snapshot.environment, snapshot.settings]);
 
   const runtimeVersionLabel = desktop.version || snapshot.systemInfo?.application?.version || "-";
+  const runtimeStartupStatus = snapshot.systemInfo?.runtimeStartup?.status;
+  const runtimeReady = runtimeStartupStatus === "ready" || (
+    Boolean(snapshot.environment)
+    && snapshot.environment?.runtimeReady !== false
+    && !snapshot.runtimeInitializing
+  );
+  const runtimeStatusText = useMemo(() => {
+    if (snapshot.runtimeInitializing) return "运行时准备中";
+    if (runtimeStartupStatus === "error") return "运行时异常";
+    if (snapshot.environment?.runtimeReady === false) return "运行时未就绪";
+    if (snapshot.environment) return "运行时就绪";
+    return snapshot.serviceOnline ? "检测中" : "等待服务";
+  }, [runtimeStartupStatus, snapshot.environment, snapshot.runtimeInitializing, snapshot.serviceOnline]);
 
   useEffect(() => {
     const shouldOpen = shouldShowSetupAssistant(configHealth, snapshot.settings);
@@ -575,6 +623,8 @@ export function App() {
         serviceOnline={snapshot.serviceOnline}
         backendRunning={desktop.backend?.running}
         runtimeDeviceLabel={runtimeDeviceLabel}
+        runtimeReady={runtimeReady}
+        runtimeStatusText={runtimeStatusText}
         version={runtimeVersionLabel}
         updateState={updateState}
         configHealth={configHealth}

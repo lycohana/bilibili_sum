@@ -8,6 +8,8 @@ export function TitleBar({
   serviceOnline,
   backendRunning,
   runtimeDeviceLabel,
+  runtimeReady,
+  runtimeStatusText,
   version,
   updateState,
   configHealth,
@@ -19,6 +21,8 @@ export function TitleBar({
   serviceOnline: boolean;
   backendRunning?: boolean;
   runtimeDeviceLabel: string;
+  runtimeReady: boolean;
+  runtimeStatusText: string;
   version: string;
   updateState: UpdateState;
   configHealth: ConfigHealth;
@@ -81,7 +85,8 @@ export function TitleBar({
   const serviceStatusText = serviceOnline ? "在线" : backendRunning ? "启动中" : "离线";
   const hasNewVersion = ["available", "downloading", "downloaded", "installing"].includes(updateState.status);
   const hasConfigProblem = configHealth.checked && !configHealth.isConfigured;
-  const statusPillText = hasConfigProblem ? "配置缺失" : hasNewVersion ? "有新版本" : "运行状态";
+  const runtimePending = serviceOnline && !runtimeReady;
+  const statusPillText = hasConfigProblem ? "配置缺失" : hasNewVersion ? "有新版本" : runtimePending ? "运行时准备中" : "运行状态";
   const updateStatusText = hasNewVersion
     ? `v${updateState.version || "-"}`
     : updateState.status === "checking"
@@ -119,7 +124,7 @@ export function TitleBar({
         >
           <button
             className={`title-bar-status-pill ${
-              hasConfigProblem ? "is-danger" : hasNewVersion ? "is-update" : serviceOnline ? "is-success" : ""
+              hasConfigProblem ? "is-danger" : hasNewVersion ? "is-update" : serviceOnline ? (runtimePending ? "is-pending" : "is-success") : ""
             }`}
             type="button"
             onClick={() => {
@@ -132,7 +137,7 @@ export function TitleBar({
           >
             <span
               className={`title-bar-status-dot ${
-                hasConfigProblem ? "is-danger" : hasNewVersion ? "is-update" : serviceOnline ? "is-success" : backendRunning ? "is-pending" : ""
+                hasConfigProblem ? "is-danger" : hasNewVersion ? "is-update" : serviceOnline ? (runtimePending ? "is-pending" : "is-success") : backendRunning ? "is-pending" : ""
               }`}
             />
             <span>{statusPillText}</span>
@@ -150,6 +155,10 @@ export function TitleBar({
               <div className={`sidebar-status-item ${serviceOnline ? "is-success" : ""}`}>
                 <span>服务</span>
                 <strong>{serviceStatusText}</strong>
+              </div>
+              <div className={`sidebar-status-item ${runtimeReady ? "is-success" : serviceOnline ? "is-warning" : ""}`}>
+                <span>运行时</span>
+                <strong>{runtimeStatusText}</strong>
               </div>
               <div className={`sidebar-status-item ${configHealth.hasBlockingIssues ? "is-danger" : !configHealth.isConfigured ? "is-warning" : "is-success"}`}>
                 <span>配置</span>

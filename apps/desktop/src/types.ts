@@ -298,6 +298,16 @@ export type SystemInfo = {
   };
   settings?: ServiceSettings;
   environment?: EnvironmentInfo;
+  runtimeStartup?: RuntimeStartupInfo;
+};
+
+export type RuntimeStartupInfo = {
+  status?: "initializing" | "ready" | "error" | string;
+  message?: string | null;
+  started_at?: string | null;
+  ready_at?: string | null;
+  error_at?: string | null;
+  environment?: EnvironmentInfo;
 };
 
 export type SystemLogResponse = {

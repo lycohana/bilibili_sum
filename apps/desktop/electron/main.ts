@@ -1,7 +1,9 @@
 import { ChildProcess, spawn, SpawnOptions } from "node:child_process";
 import fs from "node:fs";
+import { createServer, IncomingMessage, Server, ServerResponse } from "node:http";
 import path from "node:path";
 import process from "node:process";
+import { Readable } from "node:stream";
 
 import {
   app,
@@ -127,6 +129,8 @@ migrateLegacyDesktopFiles();
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let backendProcess: ChildProcess | null = null;
+let frontendStaticServer: Server | null = null;
+let frontendStaticUrl = "";
 let applicationLoadPromise: Promise<void> | null = null;
 let applicationLoadedTarget = "";
 let forceQuit = false;
@@ -166,7 +170,7 @@ function legacyLocalDataRoot() {
   return path.join(getLocalAppDataDir(), LEGACY_APP_SLUG);
 }
 
-function copyMissingTree(source: string, destination: string) {
+function copyMissingTree(source: string, destination: string, mergeDepth = 0) {
   if (!fs.existsSync(source)) {
     return;
   }
@@ -174,7 +178,15 @@ function copyMissingTree(source: string, destination: string) {
   if (stats.isDirectory()) {
     fs.mkdirSync(destination, { recursive: true });
     for (const entry of fs.readdirSync(source, { withFileTypes: true })) {
-      copyMissingTree(path.join(source, entry.name), path.join(destination, entry.name));
+      const childSource = path.join(source, entry.name);
+      const childDestination = path.join(destination, entry.name);
+      if (fs.existsSync(childDestination)) {
+        if (entry.isDirectory() && mergeDepth < 1) {
+          copyMissingTree(childSource, childDestination, mergeDepth + 1);
+        }
+        continue;
+      }
+      copyMissingTree(childSource, childDestination);
     }
     return;
   }
@@ -1065,6 +1077,243 @@ function resolvePackagedBackend(): { command: string; args: string[]; cwd: strin
   );
 }
 
+function resolvePackagedWebStaticRoot(): string {
+  const candidateRoots = [
+    path.join(process.resourcesPath, "backend", "BiliSum", "_internal", "web", "static"),
+    path.join(path.dirname(process.execPath), "resources", "backend", "BiliSum", "_internal", "web", "static"),
+    path.join(path.dirname(app.getAppPath()), "backend", "BiliSum", "_internal", "web", "static"),
+  ];
+
+  for (const staticRoot of candidateRoots) {
+    if (fs.existsSync(path.join(staticRoot, "index.html"))) {
+      return staticRoot;
+    }
+  }
+
+  throw new Error("未找到内置前端静态文件 index.html。");
+}
+
+function contentTypeFor(filePath: string): string {
+  switch (path.extname(filePath).toLowerCase()) {
+    case ".html":
+      return "text/html; charset=utf-8";
+    case ".js":
+      return "text/javascript; charset=utf-8";
+    case ".css":
+      return "text/css; charset=utf-8";
+    case ".svg":
+      return "image/svg+xml";
+    case ".png":
+      return "image/png";
+    case ".ico":
+      return "image/x-icon";
+    case ".woff":
+      return "font/woff";
+    case ".woff2":
+      return "font/woff2";
+    case ".ttf":
+      return "font/ttf";
+    default:
+      return "application/octet-stream";
+  }
+}
+
+function isPathInside(parentPath: string, childPath: string): boolean {
+  const relative = path.relative(parentPath, childPath);
+  return Boolean(relative) && !relative.startsWith("..") && !path.isAbsolute(relative);
+}
+
+function isBackendProxyPath(pathname: string): boolean {
+  return (
+    pathname === "/health" ||
+    pathname === "/api" ||
+    pathname.startsWith("/api/") ||
+    pathname === "/media" ||
+    pathname.startsWith("/media/")
+  );
+}
+
+function buildProxyHeaders(request: IncomingMessage): Headers {
+  const headers = new Headers();
+  const skippedHeaders = new Set([
+    "connection",
+    "content-length",
+    "host",
+    "keep-alive",
+    "origin",
+    "proxy-authenticate",
+    "proxy-authorization",
+    "referer",
+    "te",
+    "trailer",
+    "transfer-encoding",
+    "upgrade",
+  ]);
+  for (const [key, value] of Object.entries(request.headers)) {
+    if (value === undefined) {
+      continue;
+    }
+    if (skippedHeaders.has(key.toLowerCase())) {
+      continue;
+    }
+    headers.set(key, Array.isArray(value) ? value.join(", ") : value);
+  }
+  return headers;
+}
+
+function buildBackendProxyUrl(requestUrl: URL): URL {
+  const targetUrl = new URL(`${requestUrl.pathname}${requestUrl.search}`, backendUrl);
+  if (targetUrl.origin !== backendUrl) {
+    throw new Error(`Refusing to proxy outside backend origin: ${targetUrl.origin}`);
+  }
+  return targetUrl;
+}
+
+function buildBackendResponseHeaders(backendResponse: Response): Record<string, string> {
+  const headers: Record<string, string> = {};
+  const skippedHeaders = new Set([
+    "connection",
+    "keep-alive",
+    "proxy-authenticate",
+    "proxy-authorization",
+    "te",
+    "trailer",
+    "transfer-encoding",
+    "upgrade",
+  ]);
+  for (const [key, value] of backendResponse.headers.entries()) {
+    if (!skippedHeaders.has(key.toLowerCase())) {
+      headers[key] = value;
+    }
+  }
+  return headers;
+}
+
+function sendBackendStartingResponse(response: ServerResponse) {
+  if (response.headersSent || response.destroyed) {
+    response.destroy();
+    return;
+  }
+  response.writeHead(503, {
+    "Content-Type": "application/json; charset=utf-8",
+    "Cache-Control": "no-store",
+  });
+  response.end(JSON.stringify({ detail: "BiliSum 后端正在启动，请稍后重试。" }));
+}
+
+async function proxyBackendRequest(request: IncomingMessage, response: ServerResponse, requestUrl: URL) {
+  const controller = new AbortController();
+  const abortProxy = () => controller.abort();
+  request.once("aborted", abortProxy);
+  response.once("close", () => {
+    if (!response.writableEnded) {
+      abortProxy();
+    }
+  });
+
+  try {
+    const targetUrl = buildBackendProxyUrl(requestUrl);
+    const backendResponse = await fetch(targetUrl, {
+      method: request.method,
+      headers: buildProxyHeaders(request),
+      body: request.method === "GET" || request.method === "HEAD" ? undefined : request,
+      duplex: "half",
+      signal: controller.signal,
+    } as RequestInit & { duplex: "half" });
+
+    if (response.destroyed) {
+      return;
+    }
+    response.writeHead(backendResponse.status, buildBackendResponseHeaders(backendResponse));
+    if (!backendResponse.body) {
+      response.end();
+      return;
+    }
+
+    const responseBody = Readable.fromWeb(backendResponse.body as import("node:stream/web").ReadableStream);
+    responseBody.once("error", () => response.destroy());
+    response.once("close", () => responseBody.destroy());
+    responseBody.pipe(response);
+  } catch (error) {
+    if ((error as Error).name !== "AbortError") {
+      console.warn("Backend proxy request failed:", error);
+    }
+    sendBackendStartingResponse(response);
+  }
+}
+
+async function startPackagedFrontendServer(): Promise<string> {
+  if (frontendStaticUrl) {
+    return frontendStaticUrl;
+  }
+
+  const staticRoot = resolvePackagedWebStaticRoot();
+  const resolvedStaticRoot = fs.realpathSync.native(staticRoot);
+  const indexPath = path.join(resolvedStaticRoot, "index.html");
+
+  frontendStaticServer = createServer((request, response) => {
+    const requestUrl = new URL(request.url || "/", "http://127.0.0.1");
+    let decodedPath = "/";
+    try {
+      decodedPath = decodeURIComponent(requestUrl.pathname);
+    } catch {
+      response.writeHead(400, { "Content-Type": "text/plain; charset=utf-8" });
+      response.end("Bad request");
+      return;
+    }
+    if (isBackendProxyPath(decodedPath)) {
+      void proxyBackendRequest(request, response, requestUrl);
+      return;
+    }
+
+    let filePath = indexPath;
+
+    if (decodedPath.startsWith("/static/")) {
+      filePath = path.join(resolvedStaticRoot, decodedPath.slice("/static/".length));
+    }
+
+    const resolvedFilePath = path.resolve(filePath);
+    if (resolvedFilePath !== resolvedStaticRoot && !isPathInside(resolvedStaticRoot, resolvedFilePath)) {
+      response.writeHead(403);
+      response.end("Forbidden");
+      return;
+    }
+    if (!fs.existsSync(resolvedFilePath) || !fs.statSync(resolvedFilePath).isFile()) {
+      response.writeHead(decodedPath.startsWith("/static/") ? 404 : 200, {
+        "Content-Type": decodedPath.startsWith("/static/") ? "text/plain; charset=utf-8" : contentTypeFor(indexPath),
+        "Cache-Control": "no-store",
+      });
+      response.end(decodedPath.startsWith("/static/") ? "Not found" : fs.readFileSync(indexPath));
+      return;
+    }
+
+    const realFilePath = fs.realpathSync.native(resolvedFilePath);
+    if (realFilePath !== resolvedStaticRoot && !isPathInside(resolvedStaticRoot, realFilePath)) {
+      response.writeHead(403);
+      response.end("Forbidden");
+      return;
+    }
+
+    response.writeHead(200, {
+      "Content-Type": contentTypeFor(realFilePath),
+      "Cache-Control": realFilePath === indexPath ? "no-store" : "public, max-age=31536000, immutable",
+    });
+    fs.createReadStream(realFilePath).pipe(response);
+  });
+
+  await new Promise<void>((resolve, reject) => {
+    frontendStaticServer?.once("error", reject);
+    frontendStaticServer?.listen(0, "127.0.0.1", () => resolve());
+  });
+
+  const address = frontendStaticServer.address();
+  if (!address || typeof address === "string") {
+    throw new Error("前端静态服务启动失败。");
+  }
+  frontendStaticUrl = `http://127.0.0.1:${address.port}`;
+  return frontendStaticUrl;
+}
+
 async function startBackend(): Promise<BackendStatus> {
   if (backendProcess && !backendProcess.killed) {
     const ready = await waitForBackendReady(15_000);
@@ -1222,7 +1471,7 @@ async function loadApplication() {
     return;
   }
 
-  const targetUrl = isDev ? rendererUrl : backendStatus.ready ? backendUrl : "";
+  const targetUrl = isDev ? rendererUrl : await startPackagedFrontendServer();
   if (!targetUrl) {
     loadSplash();
     return;
@@ -1416,6 +1665,9 @@ function createWindow() {
   });
 
   loadSplash();
+  if (!getStartupHidden()) {
+    mainWindow.show();
+  }
 }
 
 function createTray() {
@@ -1813,7 +2065,8 @@ app.whenReady().then(async () => {
     setAutoLaunch(true);
   }
 
-  void startBackend().then(() => loadApplication());
+  void loadApplication();
+  void startBackend();
 
   app.on("activate", async () => {
     if (!mainWindow) {
@@ -1826,6 +2079,7 @@ app.whenReady().then(async () => {
 
 app.on("before-quit", () => {
   forceQuit = true;
+  frontendStaticServer?.close();
   // 清理 autoUpdater 监听器，防止在应用退出后仍触发
   autoUpdater.removeAllListeners();
 });

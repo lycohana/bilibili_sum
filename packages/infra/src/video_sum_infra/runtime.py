@@ -64,13 +64,18 @@ def local_appdata_dir() -> Path:
     return Path.home() / "AppData" / "Local"
 
 
-def _copy_missing_tree(source: Path, destination: Path) -> None:
+def _copy_missing_tree(source: Path, destination: Path, *, merge_depth: int = 0) -> None:
     if not source.exists():
         return
     if source.is_dir():
         destination.mkdir(parents=True, exist_ok=True)
         for child in source.iterdir():
-            _copy_missing_tree(child, destination / child.name)
+            child_destination = destination / child.name
+            if child_destination.exists():
+                if child.is_dir() and merge_depth < 1:
+                    _copy_missing_tree(child, child_destination, merge_depth=merge_depth + 1)
+                continue
+            _copy_missing_tree(child, child_destination)
         return
     if source.is_file() and not destination.exists():
         destination.parent.mkdir(parents=True, exist_ok=True)

@@ -8,7 +8,7 @@ from video_sum_service.settings_manager import SettingsManager
 
 logger = logging.getLogger("video_sum_service.app")
 
-settings_manager = SettingsManager(ServiceSettings())
+settings_manager = SettingsManager(ServiceSettings(_env_file=None))
 settings = settings_manager.load()
 app_info = AppInfo.load()
 

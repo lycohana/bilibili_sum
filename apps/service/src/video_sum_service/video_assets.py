@@ -10,10 +10,7 @@ import subprocess
 from pathlib import Path
 from urllib.parse import unquote, urlencode, urlparse
 
-import httpx
 from fastapi import HTTPException
-from yt_dlp import YoutubeDL
-from yt_dlp.utils import DownloadError
 
 from video_sum_core.models.tasks import InputType
 from video_sum_core.utils import extract_bilibili_page, normalize_video_url
@@ -25,6 +22,8 @@ from video_sum_service.repository import SqliteTaskRepository
 from video_sum_service.schemas import VideoAssetRecord, VideoPageOptionResponse
 
 logger = logging.getLogger("video_sum_service.app")
+YoutubeDL = None
+DownloadError = None
 
 _BILIBILI_HTTP_HEADERS = {
     "User-Agent": (
@@ -134,6 +133,16 @@ def build_ydl_probe_options(*, extract_flat: bool = False) -> dict[str, object]:
 
 
 def extract_video_info(url: str, *, extract_flat: bool = False) -> dict[str, object]:
+    global DownloadError, YoutubeDL
+    if YoutubeDL is None:
+        from yt_dlp import YoutubeDL as YtDlpYoutubeDL
+
+        YoutubeDL = YtDlpYoutubeDL
+    if DownloadError is None:
+        from yt_dlp.utils import DownloadError as YtDlpDownloadError
+
+        DownloadError = YtDlpDownloadError
+
     options = build_ydl_probe_options(extract_flat=extract_flat)
     try:
         with YoutubeDL(options) as ydl:
@@ -196,6 +205,8 @@ def first_non_empty(*values: str | None) -> str:
 
 
 def fetch_bilibili_page_catalog_payload(url: str) -> tuple[list[dict[str, object]], str]:
+    import httpx
+
     try:
         response = httpx.get(
             url,

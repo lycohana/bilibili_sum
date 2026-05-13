@@ -14,8 +14,6 @@ from pathlib import Path
 from typing import Callable, NoReturn
 
 import httpx
-from yt_dlp import YoutubeDL
-from yt_dlp.utils import DownloadError
 
 from video_sum_core.errors import (
     LLMAuthenticationError,
@@ -41,6 +39,8 @@ from video_sum_infra.runtime import (
 )
 
 logger = logging.getLogger("video_sum_core.pipeline.real")
+YoutubeDL = None
+DownloadError = None
 
 _BILIBILI_HTTP_HEADERS = {
     "User-Agent": (
@@ -51,6 +51,20 @@ _BILIBILI_HTTP_HEADERS = {
     "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
     "Referer": "https://www.bilibili.com/",
 }
+
+
+def _get_ytdlp_classes():
+    global DownloadError, YoutubeDL
+    if YoutubeDL is None:
+        from yt_dlp import YoutubeDL as ImportedYoutubeDL
+
+        YoutubeDL = ImportedYoutubeDL
+    if DownloadError is None:
+        from yt_dlp.utils import DownloadError as ImportedDownloadError
+
+        DownloadError = ImportedDownloadError
+    return YoutubeDL, DownloadError
+
 
 def _windows_hidden_subprocess_kwargs() -> dict[str, object]:
     if os.name != "nt":
@@ -523,7 +537,7 @@ class RealPipelineRunner(PipelineRunner):
                 logger.warning("yt-dlp cookie file does not exist: %s", cookie_path)
         return options
 
-    def _raise_ydl_error(self, error: DownloadError) -> NoReturn:
+    def _raise_ydl_error(self, error: Exception) -> NoReturn:
         message = str(error)
         if "Could not copy Chrome cookie database" in message:
             raise VideoSumError(
@@ -544,6 +558,7 @@ class RealPipelineRunner(PipelineRunner):
         raise VideoSumError(f"Failed to read or download video with yt-dlp: {message}") from error
 
     def _probe_video(self, url: str) -> dict:
+        YoutubeDL, DownloadError = _get_ytdlp_classes()
         try:
             with YoutubeDL(self._base_ydl_options()) as ydl:
                 info = ydl.extract_info(url, download=False)
@@ -675,6 +690,7 @@ class RealPipelineRunner(PipelineRunner):
             logger.info("using ffmpeg location: %s", ffmpeg_exe)
         else:
             logger.warning("ffmpeg not found, yt_dlp will use system PATH")
+        YoutubeDL, DownloadError = _get_ytdlp_classes()
         try:
             with YoutubeDL(options) as ydl:
                 ydl.download([url])

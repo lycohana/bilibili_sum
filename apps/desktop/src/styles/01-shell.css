@@ -101,6 +101,12 @@
   background: color-mix(in srgb, var(--brand-100) 78%, var(--bg-elevated) 22%);
 }
 
+.title-bar-status-pill.is-pending {
+  color: var(--warning);
+  border-color: var(--warning-border);
+  background: color-mix(in srgb, var(--bg-warning) 82%, var(--bg-elevated) 18%);
+}
+
 .title-bar-status-pill.is-danger {
   color: var(--danger);
   border-color: var(--danger-border);

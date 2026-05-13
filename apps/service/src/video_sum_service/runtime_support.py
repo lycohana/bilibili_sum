@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import json
 import os
 import shutil
@@ -7,6 +9,7 @@ import textwrap
 import venv
 import importlib
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from fastapi import HTTPException
 
@@ -15,7 +18,6 @@ from video_sum_infra.config import (
     DEFAULT_KNOWLEDGE_NOTE_USER_PROMPT_TEMPLATE,
     ServiceSettings,
 )
-from video_sum_core.pipeline.real import PipelineSettings, RealPipelineRunner
 from video_sum_infra.runtime import (
     activate_runtime_pythonpath,
     bootstrap_managed_runtime,
@@ -36,7 +38,9 @@ from video_sum_infra.runtime import (
 from video_sum_service.context import logger, settings_manager
 from video_sum_service.repository import SqliteTaskRepository
 from video_sum_service.settings_manager import SettingsUpdatePayload
-from video_sum_service.worker import TaskWorker
+
+if TYPE_CHECKING:
+    from video_sum_service.worker import TaskWorker
 
 _environment_probe_cache: dict[str, dict[str, object]] = {}
 _environment_probe_failures: dict[str, str] = {}
@@ -713,12 +717,14 @@ def detect_environment(runtime_channel: str | None = None) -> dict[str, object]:
         """
     ).strip()
 
+    probe_failed = False
     try:
         result = probe_runner([str(python_executable), "-c", script], timeout=120)
         payload = json.loads(result.stdout.strip() or "{}")
         payload["ffmpegLocation"] = str(ffmpeg_location() or "")
         _environment_probe_failures.pop(active_channel, None)
     except Exception as exc:
+        probe_failed = True
         failure_detail = (exc.stderr or exc.stdout or str(exc)).strip() if isinstance(exc, subprocess.CalledProcessError) else str(exc)
         if _environment_probe_failures.get(active_channel) != failure_detail:
             logger.warning(
@@ -752,7 +758,10 @@ def detect_environment(runtime_channel: str | None = None) -> dict[str, object]:
     payload.update(
         {
             "runtimeChannel": active_channel,
-            "runtimeReady": uses_current_service_python(active_channel) or runtime_python_executable(active_channel) is not None,
+            "runtimeReady": (
+                not probe_failed
+                and (uses_current_service_python(active_channel) or runtime_python_executable(active_channel) is not None)
+            ),
             "runtimePython": str(python_executable),
             "ffmpegLocation": str(ffmpeg_location() or ""),
         }
@@ -793,6 +802,9 @@ def build_worker(
     current_settings: ServiceSettings,
     environment_info: dict[str, object] | None = None,
 ) -> TaskWorker:
+    from video_sum_core.pipeline.real import PipelineSettings, RealPipelineRunner
+    from video_sum_service.worker import TaskWorker
+
     selected_runtime_channel = current_settings.runtime_channel
     if selected_runtime_channel != "base" and runtime_python_executable(selected_runtime_channel) is None:
         logger.warning("runtime channel %s is not ready, falling back to base", selected_runtime_channel)
@@ -847,6 +859,8 @@ def build_worker(
 
 
 def replace_task_worker(app_state, next_worker: TaskWorker) -> TaskWorker:
+    from video_sum_service.worker import TaskWorker
+
     previous_worker = getattr(app_state, "task_worker", None)
     app_state.task_worker = next_worker
     if isinstance(previous_worker, TaskWorker):

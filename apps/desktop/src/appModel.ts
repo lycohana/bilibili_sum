@@ -8,6 +8,7 @@ export type Snapshot = {
   settings: ServiceSettings | null;
   videos: VideoAssetSummary[];
   error: string;
+  runtimeInitializing: boolean;
 };
 
 export type DesktopState = {
@@ -53,7 +54,7 @@ export type ConfigHealth = {
   actionText: string;
 };
 
-export const emptySnapshot: Snapshot = { serviceOnline: false, systemInfo: null, environment: null, settings: null, videos: [], error: "" };
+export const emptySnapshot: Snapshot = { serviceOnline: false, systemInfo: null, environment: null, settings: null, videos: [], error: "", runtimeInitializing: false };
 
 export const devicePreferenceOptions: SelectOption[] = [
   { value: "auto", label: "自动选择" },

@@ -3,12 +3,11 @@ from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from threading import Condition, Lock, Thread
+from threading import Condition, Lock, Thread, current_thread
 
 from video_sum_core.models.tasks import TaskResult, TaskStatus
 from video_sum_core.pipeline.base import PipelineContext, PipelineRunner
 from video_sum_infra.config import ServiceSettings
-from video_sum_service.knowledge import KnowledgeIndexService
 from video_sum_service.repository import SqliteTaskRepository
 from video_sum_service.schemas import TaskRecord
 
@@ -55,13 +54,14 @@ class TaskWorker:
         self._pipeline_runner = pipeline_runner
         self._auto_generate_mindmap = auto_generate_mindmap
         self._knowledge_index_auto_rebuild = str(knowledge_index_auto_rebuild or "disabled")
-        self._knowledge_index_settings = knowledge_index_settings or ServiceSettings()
+        self._knowledge_index_settings = knowledge_index_settings or ServiceSettings(_env_file=None)
         self._task_state = _TaskQueueState("task", task_concurrency)
         self._mindmap_state = _TaskQueueState("mindmap", mindmap_concurrency)
         self._lock = Lock()
         self._condition = Condition(self._lock)
         self._accept_new_work = True
         self._shutdown_requested = False
+        self._job_threads: set[Thread] = set()
         self._dispatch_threads = [
             Thread(target=self._dispatch_loop, args=(self._task_state, self._run_task_job), daemon=True),
             Thread(target=self._dispatch_loop, args=(self._mindmap_state, self._run_mindmap_job), daemon=True),
@@ -104,14 +104,26 @@ class TaskWorker:
             self._accept_new_work = False
             self._condition.notify_all()
 
-    def shutdown(self, wait: bool = False) -> None:
+    def shutdown(self, wait: bool = False, timeout: float | None = None) -> None:
         with self._condition:
             self._accept_new_work = False
             self._shutdown_requested = True
             self._condition.notify_all()
         if wait:
+            deadline = None if timeout is None else datetime.now(timezone.utc).timestamp() + timeout
             for thread in self._dispatch_threads:
-                thread.join()
+                join_timeout = None if deadline is None else max(0, deadline - datetime.now(timezone.utc).timestamp())
+                thread.join(join_timeout)
+            while True:
+                with self._condition:
+                    job_threads = [thread for thread in self._job_threads if thread.is_alive()]
+                    self._job_threads = set(job_threads)
+                if not job_threads:
+                    break
+                join_timeout = None if deadline is None else max(0, deadline - datetime.now(timezone.utc).timestamp())
+                if join_timeout == 0:
+                    break
+                job_threads[0].join(join_timeout)
 
     def _enqueue(self, state: _TaskQueueState, job: object) -> bool:
         job_id = state.job_id_for(job)
@@ -134,6 +146,8 @@ class TaskWorker:
                 return
             job_id = state.job_id_for(job)
             thread = Thread(target=self._execute_job, args=(state, job, runner), daemon=True, name=f"{state.name}-{job_id}")
+            with self._condition:
+                self._job_threads.add(thread)
             thread.start()
 
     def _wait_for_available_job(self, state: _TaskQueueState) -> object | None:
@@ -158,6 +172,7 @@ class TaskWorker:
         finally:
             with self._condition:
                 state.running_ids.discard(job_id)
+                self._job_threads.discard(current_thread())
                 self._condition.notify_all()
 
     def _run_task_job(self, task: TaskRecord) -> None:
@@ -269,6 +284,8 @@ class TaskWorker:
             message="正在刷新知识库索引",
         )
         try:
+            from video_sum_service.knowledge.index_service import KnowledgeIndexService
+
             index_service = KnowledgeIndexService(self._repository, self._knowledge_index_settings)
             indexed = index_service.index_video(video_id)
             self._repository.append_event(

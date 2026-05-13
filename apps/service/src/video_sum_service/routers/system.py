@@ -2,7 +2,6 @@ import os
 import re
 import threading
 
-import httpx
 from fastapi import APIRouter, HTTPException, Request
 
 from video_sum_core.models.tasks import TaskStatus
@@ -34,6 +33,7 @@ from video_sum_service.runtime_support import (
     sync_all_runtime_channels,
     sync_runtime_channel,
 )
+from video_sum_service.runtime_startup import get_runtime_startup_state, mark_runtime_worker_ready
 from video_sum_service.settings_manager import SettingsUpdatePayload
 
 router = APIRouter(prefix="/api/v1")
@@ -69,12 +69,18 @@ def _version_key(value: str | None) -> tuple[int | str, ...]:
 
 
 @router.get("/system/info")
-def system_info(runtime_channel: str | None = None, refresh: bool = False) -> dict[str, object]:
+def system_info(request: Request, runtime_channel: str | None = None, refresh: bool = False) -> dict[str, object]:
     current_settings = settings_manager.current
     active_channel = runtime_channel or current_settings.runtime_channel
+    runtime_startup = get_runtime_startup_state(request.app.state)
+    should_probe_environment = refresh or runtime_channel is not None
     if refresh:
         clear_environment_probe_cache(active_channel)
-    environment = detect_environment(active_channel)
+    environment = (
+        detect_environment(active_channel)
+        if should_probe_environment
+        else dict(runtime_startup.get("environment") or {})
+    )
     runtime_settings = current_settings.with_resolved_runtime(
         cuda_available=bool(environment.get("cudaAvailable"))
     )
@@ -98,18 +104,23 @@ def system_info(runtime_channel: str | None = None, refresh: bool = False) -> di
             "llm_enabled": current_settings.llm_enabled,
             "llm_model": current_settings.llm_model,
         },
+        "runtimeStartup": runtime_startup,
         "taskModel": {"statuses": [status.value for status in TaskStatus]},
         "environment": environment,
     }
 
 
 @router.get("/settings")
-def get_settings() -> dict[str, object]:
-    return serialize_settings(settings_manager.current)
+def get_settings(request: Request) -> dict[str, object]:
+    runtime_startup = get_runtime_startup_state(request.app.state)
+    environment = dict(runtime_startup.get("environment") or {})
+    return serialize_settings(settings_manager.current, environment_info=environment)
 
 
 @router.get("/app/update")
 def get_app_update() -> dict[str, object]:
+    import httpx
+
     current_version = app_info.version
     headers = {
         "Accept": "application/vnd.github+json",
@@ -173,6 +184,11 @@ def update_settings(payload: SettingsUpdatePayload, request: Request) -> dict[st
             environment_info=environment,
         ),
     )
+    mark_runtime_worker_ready(
+        request.app.state,
+        environment,
+        "Runtime worker refreshed after settings update.",
+    )
     return {
         "saved": True,
         "settings": serialize_settings(current_settings, environment_info=environment),
@@ -220,6 +236,11 @@ def post_runtime_sync(request: Request, payload: dict[str, object] | None = None
                 environment_info=environment,
             ),
         )
+        mark_runtime_worker_ready(
+            request.app.state,
+            environment,
+            "Runtime worker refreshed after runtime sync.",
+        )
         return {
             **result,
             "environment": environment,
@@ -260,6 +281,12 @@ def post_cuda_install(payload: dict[str, object], request: Request) -> dict[str,
     result, worker = install_cuda_support(str(requested_variant), request.app.state.task_repository)
     _clear_knowledge_service_cache(request.app.state)
     replace_task_worker(request.app.state, worker)
+    if isinstance(result.get("environment"), dict):
+        mark_runtime_worker_ready(
+            request.app.state,
+            result["environment"],
+            "Runtime worker refreshed after CUDA install.",
+        )
     return result
 
 
@@ -268,6 +295,12 @@ def post_local_asr_install(request: Request, payload: dict[str, object] | None =
     reinstall = bool((payload or {}).get("reinstall"))
     result, worker = install_local_asr(reinstall=reinstall, repository=request.app.state.task_repository)
     replace_task_worker(request.app.state, worker)
+    if isinstance(result.get("environment"), dict):
+        mark_runtime_worker_ready(
+            request.app.state,
+            result["environment"],
+            "Runtime worker refreshed after ASR install.",
+        )
     return result
 
 
@@ -277,4 +310,10 @@ def post_knowledge_install(request: Request, payload: dict[str, object] | None =
     result, worker = install_knowledge_dependencies(reinstall=reinstall, repository=request.app.state.task_repository)
     _clear_knowledge_service_cache(request.app.state)
     replace_task_worker(request.app.state, worker)
+    if isinstance(result.get("environment"), dict):
+        mark_runtime_worker_ready(
+            request.app.state,
+            result["environment"],
+            "Runtime worker refreshed after knowledge install.",
+        )
     return result

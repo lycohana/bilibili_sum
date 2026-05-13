@@ -10,6 +10,7 @@ from video_sum_core.models.tasks import InputType, TaskInput
 
 from video_sum_service.context import LOCAL_MEDIA_UPLOAD_DIR, logger, settings_manager
 from video_sum_service.repository import SqliteTaskRepository
+from video_sum_service.runtime_startup import submit_task_or_queue
 from video_sum_service.schemas import (
     AggregateSummaryRequest,
     ResummaryRequest,
@@ -35,7 +36,6 @@ from video_sum_service.video_assets import (
     probe_video_asset,
     resolve_video_page,
 )
-from video_sum_service.worker import TaskWorker
 
 router = APIRouter(prefix="/api/v1/videos")
 AGGREGATE_SUMMARY_PAGE_NUMBER = 0
@@ -263,8 +263,8 @@ def _build_aggregate_summary_payload(
 
 def _create_video_task_record(
     *,
+    app_state,
     task_store: SqliteTaskRepository,
-    task_worker: TaskWorker,
     video: VideoAssetRecord,
     page_number: int | None = None,
 ):
@@ -290,7 +290,7 @@ def _create_video_task_record(
         page_number=page.page if page else None,
         page_title=title,
     )
-    task_worker.submit(record)
+    submit_task_or_queue(app_state, task_store, record)
     refreshed = task_store.get_task(record.task_id)
     assert refreshed is not None
     return refreshed
@@ -298,8 +298,8 @@ def _create_video_task_record(
 
 def _create_resummary_task_record(
     *,
+    app_state,
     task_store: SqliteTaskRepository,
-    task_worker: TaskWorker,
     video: VideoAssetRecord,
     source_task,
 ):
@@ -339,7 +339,7 @@ def _create_resummary_task_record(
         page_number=source_task.page_number,
         page_title=source_task.page_title or source_task.task_input.title or video.title,
     )
-    task_worker.submit(record)
+    submit_task_or_queue(app_state, task_store, record)
     refreshed = task_store.get_task(record.task_id)
     assert refreshed is not None
     return refreshed
@@ -525,13 +525,12 @@ def create_video_task(
     request_body: VideoTaskCreateRequest | None = None,
 ) -> TaskDetailResponse:
     task_store: SqliteTaskRepository = request.app.state.task_repository
-    task_worker: TaskWorker = request.app.state.task_worker
     video = task_store.get_video_asset(video_id)
     if video is None:
         raise HTTPException(status_code=404, detail="Video not found.")
     refreshed = _create_video_task_record(
+        app_state=request.app.state,
         task_store=task_store,
-        task_worker=task_worker,
         video=video,
         page_number=request_body.page_number if request_body else None,
     )
@@ -541,7 +540,6 @@ def create_video_task(
 @router.post("/{video_id}/tasks/resummary", response_model=TaskDetailResponse, status_code=status.HTTP_201_CREATED)
 def create_video_resummary_task(video_id: str, body: ResummaryRequest, request: Request) -> TaskDetailResponse:
     task_store: SqliteTaskRepository = request.app.state.task_repository
-    task_worker: TaskWorker = request.app.state.task_worker
     video = task_store.get_video_asset(video_id)
     if video is None:
         raise HTTPException(status_code=404, detail="Video not found.")
@@ -551,8 +549,8 @@ def create_video_resummary_task(video_id: str, body: ResummaryRequest, request: 
         raise HTTPException(status_code=400, detail="当前视频还没有可复用的转写结果。")
 
     refreshed = _create_resummary_task_record(
+        app_state=request.app.state,
         task_store=task_store,
-        task_worker=task_worker,
         video=video,
         source_task=source_task,
     )
@@ -570,7 +568,6 @@ def create_video_aggregate_summary_task(
     body: AggregateSummaryRequest | None = None,
 ) -> TaskDetailResponse:
     task_store: SqliteTaskRepository = request.app.state.task_repository
-    task_worker: TaskWorker = request.app.state.task_worker
     video = task_store.get_video_asset(video_id)
     if video is None:
         raise HTTPException(status_code=404, detail="Video not found.")
@@ -610,7 +607,7 @@ def create_video_aggregate_summary_task(
         page_number=AGGREGATE_SUMMARY_PAGE_NUMBER,
         page_title=AGGREGATE_SUMMARY_PAGE_TITLE,
     )
-    task_worker.submit(record)
+    submit_task_or_queue(request.app.state, task_store, record)
     refreshed = task_store.get_task(record.task_id)
     assert refreshed is not None
     return refreshed.to_detail()
@@ -619,7 +616,6 @@ def create_video_aggregate_summary_task(
 @router.post("/{video_id}/tasks/batch", response_model=VideoTaskBatchResponse, status_code=status.HTTP_201_CREATED)
 def create_video_tasks_batch(video_id: str, body: VideoTaskBatchRequest, request: Request) -> VideoTaskBatchResponse:
     task_store: SqliteTaskRepository = request.app.state.task_repository
-    task_worker: TaskWorker = request.app.state.task_worker
     video = task_store.get_video_asset(video_id)
     if video is None:
         raise HTTPException(status_code=404, detail="Video not found.")
@@ -667,8 +663,8 @@ def create_video_tasks_batch(video_id: str, body: VideoTaskBatchRequest, request
 
     for page_number in creatable_page_numbers:
         refreshed = _create_video_task_record(
+            app_state=request.app.state,
             task_store=task_store,
-            task_worker=task_worker,
             video=video,
             page_number=page_number,
         )
@@ -687,7 +683,6 @@ def create_video_tasks_batch(video_id: str, body: VideoTaskBatchRequest, request
 @router.post("/{video_id}/tasks/resummary/batch", response_model=VideoTaskBatchResponse, status_code=status.HTTP_201_CREATED)
 def create_video_resummary_tasks_batch(video_id: str, body: VideoTaskBatchRequest, request: Request) -> VideoTaskBatchResponse:
     task_store: SqliteTaskRepository = request.app.state.task_repository
-    task_worker: TaskWorker = request.app.state.task_worker
     video = task_store.get_video_asset(video_id)
     if video is None:
         raise HTTPException(status_code=404, detail="Video not found.")
@@ -749,8 +744,8 @@ def create_video_resummary_tasks_batch(video_id: str, body: VideoTaskBatchReques
         if source_task is None:
             continue
         refreshed = _create_resummary_task_record(
+            app_state=request.app.state,
             task_store=task_store,
-            task_worker=task_worker,
             video=video,
             source_task=source_task,
         )

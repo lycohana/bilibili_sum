@@ -8,6 +8,7 @@ from video_sum_core.models.tasks import InputType, TaskStatus
 from video_sum_core.utils import normalize_video_url
 
 from video_sum_service.repository import SqliteTaskRepository
+from video_sum_service.runtime_startup import submit_mindmap_or_queue, submit_task_or_queue
 from video_sum_service.schemas import (
     TaskCreateRequest,
     TaskDetailResponse,
@@ -26,7 +27,6 @@ from video_sum_service.task_exports import (
     export_task_transcript as export_task_transcript_artifact,
 )
 from video_sum_service.video_assets import probe_video_asset
-from video_sum_service.worker import TaskWorker
 
 router = APIRouter(prefix="/api/v1/tasks")
 
@@ -34,7 +34,6 @@ router = APIRouter(prefix="/api/v1/tasks")
 @router.post("", response_model=TaskDetailResponse, status_code=status.HTTP_201_CREATED)
 def create_task(body: TaskCreateRequest, request: Request) -> TaskDetailResponse:
     task_store: SqliteTaskRepository = request.app.state.task_repository
-    task_worker: TaskWorker = request.app.state.task_worker
 
     video_id = body.video_id
     if video_id is None and body.input_type is InputType.URL:
@@ -51,7 +50,7 @@ def create_task(body: TaskCreateRequest, request: Request) -> TaskDetailResponse
         page_number=page_number,
         page_title=body.title,
     )
-    task_worker.submit(record)
+    submit_task_or_queue(request.app.state, task_store, record)
     refreshed = task_store.get_task(record.task_id)
     assert refreshed is not None
     return refreshed.to_detail()
@@ -143,7 +142,6 @@ def get_task_mindmap(task_id: str, request: Request) -> TaskMindMapResponse:
 @router.post("/{task_id}/mindmap", response_model=TaskMindMapResponse)
 def generate_task_mindmap(request: Request, task_id: str, force: bool = False) -> TaskMindMapResponse:
     task_store: SqliteTaskRepository = request.app.state.task_repository
-    task_worker: TaskWorker = request.app.state.task_worker
     record = task_store.get_task(task_id)
     if record is None:
         raise HTTPException(status_code=404, detail="Task not found.")
@@ -182,7 +180,7 @@ def generate_task_mindmap(request: Request, task_id: str, force: bool = False) -
         }
     )
     task_store.save_result(task_id, generating_result)
-    task_worker.submit_mindmap(task_id, force=force)
+    submit_mindmap_or_queue(request.app.state, task_store, task_id, force=force)
     refreshed = task_store.get_task(task_id)
     refreshed_result = refreshed.result if refreshed is not None else generating_result
     return TaskMindMapResponse(

@@ -81,11 +81,14 @@ if (-not $python312) {
 Write-Host "Using Python 3.12:" $python312
 Ensure-PythonPip -PythonExe $python312
 
-# Clean entire electron-builder cache to avoid symlink issues on Windows
+# Clean electron-builder caches that are safe to rebuild, but keep locally extracted
+# rcedit binaries so packaging does not depend on GitHub availability.
 $cacheDir = "$env:LOCALAPPDATA\electron-builder\Cache"
 if (Test-Path $cacheDir) {
-    Write-Host "Cleaning electron-builder cache directory: $cacheDir"
-    Remove-Item -Recurse -Force $cacheDir
+    Write-Host "Cleaning selected electron-builder cache directories under: $cacheDir"
+    Get-ChildItem -Path $cacheDir -Force |
+        Where-Object { $_.Name -ne "winCodeSign" } |
+        Remove-Item -Recurse -Force
 }
 
 # Create a dummy winCodeSign directory with a fake version file to prevent electron-builder from downloading
