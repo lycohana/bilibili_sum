@@ -29,6 +29,12 @@ import { SettingsPage } from "./pages/SettingsPage";
 import { VideoDetailPage } from "./pages/VideoDetailPage";
 import type { VideoAssetSummary, VideoPageBatchOption } from "./types";
 
+function isAuthRequiredError(error: unknown): error is AuthRequiredError {
+  return error instanceof AuthRequiredError
+    || (error instanceof Error && error.name === "AuthRequiredError")
+    || (error instanceof Error && /访问密钥|unauthorized|401/i.test(error.message));
+}
+
 export function App() {
   const location = useLocation();
   const navigate = useNavigate();
@@ -206,7 +212,7 @@ export function App() {
         }
       } catch (error) {
         if (!disposed) {
-          if (error instanceof AuthRequiredError) {
+          if (isAuthRequiredError(error)) {
             setAuthenticated(false);
             setAuthError("");
             return;
