@@ -71,6 +71,42 @@ def build_anthropic_messages_payload(payload: dict[str, object]) -> dict[str, ob
     return request_payload
 
 
+def extract_llm_message_content(body: object) -> str:
+    if not isinstance(body, dict):
+        return ""
+
+    top_level_content = extract_text_from_content_blocks(body.get("content"))
+    if top_level_content:
+        return top_level_content
+
+    for key in ("output_text", "response", "text"):
+        value = body.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+
+    choices = body.get("choices")
+    if not isinstance(choices, list) or not choices:
+        return ""
+
+    first = choices[0]
+    if not isinstance(first, dict):
+        return ""
+
+    choice_text = first.get("text")
+    if isinstance(choice_text, str) and choice_text.strip():
+        return choice_text.strip()
+
+    message = first.get("message")
+    if not isinstance(message, dict):
+        return ""
+
+    content = extract_text_from_content_blocks(message.get("content"))
+    if content:
+        return content
+
+    return ""
+
+
 def extract_text_from_content_blocks(content: object) -> str:
     if isinstance(content, str):
         return content.strip()

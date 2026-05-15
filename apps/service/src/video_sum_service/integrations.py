@@ -10,7 +10,7 @@ from video_sum_infra.llm import (
     ANTHROPIC_API_VERSION,
     anthropic_messages_url,
     build_anthropic_messages_payload,
-    extract_text_from_content_blocks,
+    extract_llm_message_content,
     is_anthropic_llm,
     normalize_openai_compatible_model_name,
     normalize_llm_provider,
@@ -88,35 +88,6 @@ def extract_http_error_detail(response: httpx.Response) -> str:
                 return value.strip()
     text = (response.text or "").strip()
     return text or f"HTTP {response.status_code}"
-
-
-def extract_llm_message_content(body: dict[str, object] | None) -> str:
-    if not isinstance(body, dict):
-        return ""
-    top_level_content = extract_text_from_content_blocks(body.get("content"))
-    if top_level_content:
-        return top_level_content
-    choices = body.get("choices")
-    if not isinstance(choices, list) or not choices:
-        return ""
-    first = choices[0]
-    if not isinstance(first, dict):
-        return ""
-    message = first.get("message")
-    if not isinstance(message, dict):
-        return ""
-    content = message.get("content")
-    if isinstance(content, str):
-        return content.strip()
-    if isinstance(content, list):
-        text_parts: list[str] = []
-        for item in content:
-            if isinstance(item, dict):
-                text = item.get("text")
-                if isinstance(text, str) and text.strip():
-                    text_parts.append(text.strip())
-        return "\n".join(text_parts).strip()
-    return ""
 
 
 def build_test_wav_bytes(duration_ms: int = 250, sample_rate: int = 16000) -> bytes:
