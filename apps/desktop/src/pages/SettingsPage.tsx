@@ -145,12 +145,12 @@ const SETTINGS_SEARCH_ITEMS: SettingsSearchItem[] = [
   { category: "performance", targetKey: "mindmap_concurrency", title: "导图并发数", description: "控制导图生成并发。", keywords: ["导图", "并发", "mindmap"] },
   { category: "performance", targetKey: "summary_chunk_concurrency", title: "摘要分块并发数", description: "控制单任务内部摘要请求并发。", keywords: ["摘要", "分块", "并发", "chunk"] },
   { category: "performance", targetKey: "cuda_variant", title: "CUDA 变体", description: "选择 PyTorch CUDA 版本。", keywords: ["cuda", "cu128", "cu126", "cu124", "gpu"] },
-  { category: "performance", targetKey: "runtime_channel", title: "运行时通道", description: "选择基础版或 GPU 运行时。", keywords: ["runtime", "运行时", "gpu", "base"] },
+  { category: "performance", targetKey: "runtime_channel", title: "运行环境通道", description: "选择基础版或 GPU 运行环境。", keywords: ["runtime", "运行环境", "gpu", "base"] },
   { category: "video", targetKey: "preserve_temp_audio", title: "保留临时音频", description: "控制是否保留转写中间音频。", keywords: ["音频", "临时", "preserve", "temp"] },
   { category: "video", targetKey: "enable_cache", title: "启用缓存", description: "控制任务缓存行为。", keywords: ["缓存", "cache"] },
   { category: "video", targetKey: "ytdlp_cookies_file", title: "yt-dlp Cookies 文件", description: "配置 B 站登录态 cookies.txt。", keywords: ["cookie", "cookies", "b站", "登录", "风控", "412"] },
-  { category: "runtime", targetKey: "runtime_status", title: "运行时状态", description: "检查 Python、Torch、CUDA 与扩展依赖。", keywords: ["运行时", "环境", "torch", "python", "cuda"] },
-  { category: "runtime", targetKey: "local_asr_runtime", title: "本地 ASR 运行时", description: "安装或检查本地 ASR 依赖。", keywords: ["本地", "asr", "whisper", "安装"] },
+  { category: "runtime", targetKey: "runtime_status", title: "运行环境状态", description: "检查 Python、Torch、CUDA 与扩展依赖。", keywords: ["运行环境", "环境", "torch", "python", "cuda"] },
+  { category: "runtime", targetKey: "local_asr_runtime", title: "本地 ASR 运行环境", description: "安装或检查本地 ASR 依赖。", keywords: ["本地", "asr", "whisper", "安装"] },
   { category: "logs", targetKey: "service_logs", title: "服务日志", description: "查看后端服务日志。", keywords: ["日志", "log", "报错", "服务"] },
   { category: "updates", targetKey: "app_updates", title: "应用更新", description: "检查桌面应用新版本。", keywords: ["更新", "版本", "update", "release"] },
 ];
@@ -345,17 +345,17 @@ export function SettingsPage({
     try {
       setRuntimeStatusLoading(true);
       if (!options.silent) {
-        setRuntimeStatusMessage("正在检查所有运行时...");
+        setRuntimeStatusMessage("正在检查所有运行环境...");
       }
       const status = await api.getRuntimeStatus();
       setRuntimeStatus(status);
       const outdatedCount = status.channels.filter((channel) => channel.needsUpdate).length;
       if (!options.silent) {
-        setRuntimeStatusMessage(outdatedCount > 0 ? `${outdatedCount} 个运行时需要同步基础版本。` : "所有已安装运行时均为最新基础版本。");
+        setRuntimeStatusMessage(outdatedCount > 0 ? `${outdatedCount} 个运行环境需要同步基础版本。` : "所有已安装运行环境均为最新基础版本。");
       }
     } catch (error) {
       if (!options.silent) {
-        setRuntimeStatusMessage(error instanceof Error ? error.message : "运行时检查失败");
+        setRuntimeStatusMessage(error instanceof Error ? error.message : "运行环境检查失败");
       }
     } finally {
       setRuntimeStatusLoading(false);
@@ -368,7 +368,7 @@ export function SettingsPage({
     }
     try {
       setRuntimeSyncing(true);
-      setRuntimeStatusMessage("正在同步需要更新的运行时...");
+      setRuntimeStatusMessage("正在同步需要更新的运行环境...");
       const response = await api.syncRuntime();
       if (response.runtimeStatus) {
         setRuntimeStatus(response.runtimeStatus);
@@ -379,10 +379,10 @@ export function SettingsPage({
       setEnvironment(nextEnvironment);
       onSettingsSaved(form, nextEnvironment);
       const syncedCount = response.channels?.filter((channel) => channel.synced).length ?? 0;
-      setRuntimeStatusMessage(syncedCount > 0 ? `已同步 ${syncedCount} 个运行时，保留 CUDA / ASR / 知识库扩展包。` : "运行时已检查，无需同步。");
+      setRuntimeStatusMessage(syncedCount > 0 ? `已同步 ${syncedCount} 个运行环境，保留 CUDA / ASR / 知识库扩展包。` : "运行环境已检查，无需同步。");
       onRefresh();
     } catch (error) {
-      setRuntimeStatusMessage(error instanceof Error ? error.message : "运行时同步失败");
+      setRuntimeStatusMessage(error instanceof Error ? error.message : "运行环境同步失败");
     } finally {
       setRuntimeSyncing(false);
     }
@@ -1083,7 +1083,7 @@ export function SettingsPage({
           </button>
           <div className="settings-nav-summary">
             <div className="settings-nav-summary-row">
-              <span>运行时</span>
+              <span>运行环境</span>
               <strong>{environment?.runtimeChannel || form.runtime_channel || "base"}</strong>
             </div>
             <div className="settings-nav-summary-row">
@@ -1206,7 +1206,7 @@ export function SettingsPage({
                 <div className="settings-story-copy">
                   <span className="settings-story-kicker">概览</span>
                   <h3>当前配置与运行状态</h3>
-                  <p>这里展示运行时、模型、摘要模式和服务状态。排障时请切换到环境检测或日志。</p>
+                  <p>这里展示运行环境、模型、摘要模式和服务状态。排障时请切换到环境检测或日志。</p>
                 </div>
                 <div className="settings-story-stats">
                   <div className="settings-story-stat">
@@ -1247,7 +1247,7 @@ export function SettingsPage({
                     </svg>
                   </div>
                   <div className="overview-status-info">
-                    <span className="overview-status-label">运行时</span>
+                    <span className="overview-status-label">运行环境</span>
                     <strong className="overview-status-value">{environment?.runtimeChannel || form.runtime_channel || "base"}</strong>
                   </div>
                 </div>
@@ -1375,7 +1375,7 @@ export function SettingsPage({
               <div className="overview-section">
                 <h3 className="overview-section-title">快速操作</h3>
                 <div className="overview-actions">
-                  <button className="tertiary-button" type="button" onClick={() => setActiveCategory("runtime")}>运行时维护</button>
+                  <button className="tertiary-button" type="button" onClick={() => setActiveCategory("runtime")}>运行环境维护</button>
                   <button className="tertiary-button" type="button" onClick={() => setActiveCategory("logs")}>查看日志</button>
                   <button className="tertiary-button" type="button" onClick={() => setActiveCategory("transcription")}>转写设置</button>
                   <button className="tertiary-button" type="button" onClick={() => setActiveCategory("generation")}>摘要设置</button>
@@ -1520,9 +1520,9 @@ export function SettingsPage({
                   <p>日志仅展示体积和位置，首版不提供清空操作，避免误删排障信息。</p>
                 </article>
                 <article className="settings-storage-panel">
-                  <span className="settings-update-label">运行时目录</span>
+                  <span className="settings-update-label">运行环境目录</span>
                   <strong>{formatStorageSize(runtimeDirectory?.sizeBytes || 0)}</strong>
-                  <p>运行时目录只做统计，不参与清理，避免影响 Python、Torch 或 CUDA 运行环境。</p>
+                  <p>运行环境目录只做统计，不参与清理，避免影响 Python、Torch 或 CUDA 运行环境。</p>
                 </article>
               </div>
 
@@ -1617,7 +1617,7 @@ export function SettingsPage({
             <section className="settings-category-section">
               <header className="settings-category-header">
                 <h2>语音转文字</h2>
-                <p>配置视频音频如何转成文本：云端 ASR 更省心，本地 ASR 更依赖运行时和设备。</p>
+                <p>配置视频音频如何转成文本：云端 ASR 更省心，本地 ASR 更依赖运行环境和设备。</p>
               </header>
               <div className="settings-form-group">
                 <label className="settings-input-group">
@@ -1786,7 +1786,7 @@ export function SettingsPage({
             <section className="settings-category-section">
               <header className="settings-category-header">
                 <h2>知识库</h2>
-                <p>知识库默认关闭，依赖按需安装到当前运行时，不进入默认安装包。</p>
+                <p>知识库默认关闭，依赖按需安装到当前运行环境，不进入默认安装包。</p>
               </header>
               <div className="settings-form-group">
                 <label className="settings-input-group" ref={registerFocusTarget("knowledge_enabled") as (node: HTMLLabelElement | null) => void}>
@@ -1808,12 +1808,12 @@ export function SettingsPage({
                   <strong>{knowledgeDepsReady ? "知识库依赖已就绪" : "知识库依赖未安装"}</strong>
                   <span>
                     {knowledgeDepsReady
-                      ? `chromadb${environment?.chromadbVersion ? ` ${environment.chromadbVersion}` : ""} 与 sentence-transformers${environment?.sentenceTransformersVersion ? ` ${environment.sentenceTransformersVersion}` : ""} 已在当前运行时可用。`
+                      ? `chromadb${environment?.chromadbVersion ? ` ${environment.chromadbVersion}` : ""} 与 sentence-transformers${environment?.sentenceTransformersVersion ? ` ${environment.sentenceTransformersVersion}` : ""} 已在当前运行环境可用。`
                       : `默认安装包不包含知识库重依赖。将使用 ${pipIndexSummary} 源依次尝试安装 ${missingKnowledgeDeps.join("、") || "chromadb 与 sentence-transformers"}。`}
                   </span>
                 </div>
                 <div className="settings-input-group">
-                  <span className="settings-input-label">知识库运行时依赖</span>
+                  <span className="settings-input-label">知识库运行环境依赖</span>
                   <div
                     className={`settings-actions settings-focus-target ${activeFocusTarget === "knowledge_dependencies" ? "is-highlighted" : ""}`}
                     ref={registerFocusTarget("knowledge_dependencies") as (node: HTMLDivElement | null) => void}
@@ -1822,12 +1822,12 @@ export function SettingsPage({
                       {knowledgeDepsInstalling ? "安装中..." : knowledgeDepsReady ? "重新安装知识库依赖" : "安装知识库依赖"}
                     </button>
                     <button
-                      className="ghost-button"
+                      className="secondary-button"
                       type="button"
                       disabled={runtimeStatusLoading}
                       onClick={() => void refreshRuntimeStatus()}
                     >
-                      {runtimeStatusLoading ? "检查中..." : "检查运行时"}
+                      {runtimeStatusLoading ? "检查中..." : "检查运行环境"}
                     </button>
                   </div>
                   <span className="settings-input-caption">
@@ -2087,7 +2087,7 @@ export function SettingsPage({
             <section className="settings-category-section">
               <header className="settings-category-header">
                 <h2>资源策略</h2>
-                <p>根据机器和任务规模调整 CUDA 版本、运行时通道和缓存策略。</p>
+                <p>根据机器和任务规模调整 CUDA 版本、运行环境通道和缓存策略。</p>
               </header>
               <div className="settings-form-group">
                 <label className="settings-input-group" ref={registerFocusTarget("cuda_variant") as (node: HTMLLabelElement | null) => void}>
@@ -2100,7 +2100,7 @@ export function SettingsPage({
                   <span className="settings-input-caption">PyTorch CUDA 版本</span>
                 </label>
                 <label className="settings-input-group" ref={registerFocusTarget("runtime_channel") as (node: HTMLLabelElement | null) => void}>
-                  <span className="settings-input-label">运行时通道</span>
+                  <span className="settings-input-label">运行环境通道</span>
                   <select className="settings-select-field" value={form.runtime_channel} onChange={(e) => updateForm({ ...form, runtime_channel: e.target.value })}>
                     <option value="base">基础版</option>
                     <option value="gpu-cu128">GPU CUDA12.8</option>
@@ -2156,15 +2156,15 @@ export function SettingsPage({
                 <h3 className="settings-cuda-title">CUDA 目标版本</h3>
                 <div className="cuda-insight-grid">
                   <div className="setting-row">
-                    <span className="setting-label">目标运行时</span>
+                    <span className="setting-label">目标运行环境</span>
                     <span className="setting-value">{targetRuntimeChannel}</span>
                   </div>
                   <div className="setting-row">
-                    <span className="setting-label">当前运行时</span>
+                    <span className="setting-label">当前运行环境</span>
                     <span className="setting-value">{environment?.runtimeChannel || form.runtime_channel || "base"}</span>
                   </div>
                   <div className="setting-row">
-                    <span className="setting-label">运行时状态</span>
+                    <span className="setting-label">运行环境状态</span>
                     <span className="setting-value">{environment?.runtimeReady === false ? "未就绪" : "已就绪"}</span>
                   </div>
                 </div>
@@ -2209,22 +2209,22 @@ export function SettingsPage({
                         setCudaInstalling(true);
                         setCudaStartedAt(Date.now());
                         setCudaProgress(8);
-                        setCudaStage("准备 GPU 运行时目录");
-                        setCudaStatus("CUDA 安装已开始，正在准备运行时...");
+                        setCudaStage("准备 GPU 运行环境目录");
+                        setCudaStatus("CUDA 安装已开始，正在准备运行环境...");
                         setCudaOutput("");
-                        setCudaDetail(`将为 ${targetRuntimeChannel} 安装 PyTorch CUDA 依赖，并把运行时切换到该通道。`);
+                        setCudaDetail(`将为 ${targetRuntimeChannel} 安装 PyTorch CUDA 依赖，并把运行环境切换到该通道。`);
                         const result = await api.installCuda({ cuda_variant: form.cuda_variant });
                         const nextRuntimeChannel = result.runtimeChannel || form.runtime_channel;
                         setCudaInstalling(false);
                         setCudaProgress(100);
-                        setCudaStage(result.restartRequired ? "CUDA 安装完成，等待重启切换运行时" : "CUDA 安装完成");
+                        setCudaStage(result.restartRequired ? "CUDA 安装完成，等待重启切换运行环境" : "CUDA 安装完成");
                         setCudaStatus(
                           result.restartRequired
-                            ? "CUDA 安装完成，请重启应用后切换到新的 GPU 运行时"
+                            ? "CUDA 安装完成，请重启应用后切换到新的 GPU 运行环境"
                             : "CUDA 安装命令已执行"
                         );
                         setCudaOutput(result.stdoutTail || "");
-                        setCudaDetail(`安装目标：${result.cudaVariant || form.cuda_variant}，运行时通道：${nextRuntimeChannel}。`);
+                        setCudaDetail(`安装目标：${result.cudaVariant || form.cuda_variant}，运行环境通道：${nextRuntimeChannel}。`);
                         setForm({ ...form, runtime_channel: nextRuntimeChannel, cuda_variant: result.cudaVariant || form.cuda_variant });
                         setIsDirty(false);
                         setEnvironment(await api.getEnvironment({ runtimeChannel: nextRuntimeChannel, refresh: true }));
@@ -2243,10 +2243,10 @@ export function SettingsPage({
                 </div>
               </div>
               <div className="settings-cuda-section">
-                <h3 className="settings-cuda-title">运行时更新检查</h3>
+                <h3 className="settings-cuda-title">运行环境更新检查</h3>
                 <div className="settings-runtime-toolbar">
                   <span className={`settings-inline-alert ${outdatedRuntimeChannels.length > 0 ? "warning" : "success"}`}>
-                    <strong>{outdatedRuntimeChannels.length > 0 ? "有运行时需要同步" : "运行时基础版本一致"}</strong>
+                    <strong>{outdatedRuntimeChannels.length > 0 ? "有运行环境需要同步" : "运行环境基础版本一致"}</strong>
                     <span>
                       {outdatedRuntimeChannels.length > 0
                         ? `${outdatedRuntimeChannels.map((channel) => channel.runtimeChannel).join("、")} 需要同步基础文件；同步会保留 CUDA / ASR / 知识库扩展包。`
@@ -2290,7 +2290,7 @@ export function SettingsPage({
               </div>
               <div className="settings-form-group">
                 <div className="settings-input-group">
-                  <span className="settings-input-label">本地 ASR 运行时</span>
+                  <span className="settings-input-label">本地 ASR 运行环境</span>
                   <div
                     className={`settings-actions settings-focus-target ${activeFocusTarget === "local_asr_runtime" ? "is-highlighted" : ""}`}
                     ref={registerFocusTarget("local_asr_runtime") as (node: HTMLDivElement | null) => void}
@@ -2302,7 +2302,7 @@ export function SettingsPage({
                   <span className="settings-input-caption">
                     {localAsrInstalled
                       ? `当前已安装${environment?.localAsrVersion ? `（${environment.localAsrVersion}）` : ""}，安装后会自动切换到本地模式。`
-                      : "正式安装包默认不包含本地 ASR；安装到当前运行时后会自动切换到本地模式。"}
+                      : "正式安装包默认不包含本地 ASR；安装到当前运行环境后会自动切换到本地模式。"}
                   </span>
                   {localAsrOutput ? (
                     <textarea className="textarea-field log-viewer" rows={8} readOnly value={localAsrOutput}></textarea>
@@ -2339,7 +2339,7 @@ export function SettingsPage({
                     ))}
                   </div>
                   <p className="cuda-helper-text">
-                    安装通常需要几分钟。完成后点击“重新检测”确认 GPU 运行时是否已就绪。
+                    安装通常需要几分钟。完成后点击“重新检测”确认 GPU 运行环境是否已就绪。
                   </p>
                   {cudaDetail ? (
                     <div className={`cuda-status-note ${hasCudaError ? "is-error" : ""}`}>
@@ -2356,7 +2356,7 @@ export function SettingsPage({
               ) : null}
               {environment?.runtimeError ? (
                 <label className="input-row">
-                  <span className="input-label">运行时错误详情</span>
+                  <span className="input-label">运行环境错误详情</span>
                   <textarea className="textarea-field log-viewer" rows={8} readOnly value={environment.runtimeError}></textarea>
                 </label>
               ) : null}
@@ -2364,7 +2364,7 @@ export function SettingsPage({
                 <div className="cuda-next-steps">
                   <strong>下一步</strong>
                   <span>1. 点击"重新检测"确认 GPU runtime 已就绪。</span>
-                  <span>2. 确认"运行时通道"已切换到目标 GPU 通道。</span>
+                  <span>2. 确认"运行环境通道"已切换到目标 GPU 通道。</span>
                   <span>3. 若提示需要重启，请重启应用后再开始转写任务。</span>
                 </div>
               ) : null}

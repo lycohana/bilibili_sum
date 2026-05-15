@@ -542,7 +542,7 @@ async function handleInstallCuda() {
     setTransientStatus(
       "cudaActionStatus",
       response.restartRequired
-        ? "CUDA 安装完成，请重启应用后切换到新的 GPU 运行时"
+        ? "CUDA 安装完成，请重启应用后切换到新的 GPU 运行环境"
         : "CUDA 安装完成",
       { shouldRender: false },
     );

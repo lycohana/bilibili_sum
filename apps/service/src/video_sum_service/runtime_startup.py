@@ -89,7 +89,7 @@ def _runtime_startup_error_detail(app_state: Any) -> str | None:
     if not isinstance(state, dict) or state.get("status") != "error":
         return None
     message = str(state.get("message") or "").strip()
-    return message or "运行时初始化失败，请检查运行时设置后重启服务。"
+    return message or "运行环境初始化失败，请检查运行环境设置后重启服务。"
 
 
 def _raise_runtime_startup_error(app_state: Any) -> None:
@@ -127,7 +127,7 @@ def queue_task_for_runtime_startup(repository: SqliteTaskRepository, record: Tas
         task_id=record.task_id,
         stage="queued",
         progress=0,
-        message="任务已保存，等待运行时初始化完成后自动执行",
+        message="任务已保存，等待运行环境初始化完成后自动执行",
         payload={"runtime_startup": True},
     )
 
@@ -142,7 +142,7 @@ def submit_task_or_queue(app_state: Any, repository: SqliteTaskRepository, recor
             task_id=record.task_id,
             stage="failed",
             progress=0,
-            message="运行时初始化失败，任务无法开始",
+            message="运行环境初始化失败，任务无法开始",
             payload={"runtime_startup": True, "error": str(exc.detail)},
         )
         raise
@@ -178,7 +178,7 @@ def submit_mindmap_or_queue(
             task_id=task_id,
             stage="mindmap_failed",
             progress=100,
-            message="运行时初始化失败，思维导图无法开始",
+            message="运行环境初始化失败，思维导图无法开始",
             payload={"force": force, "runtime_startup": True, "error": str(exc.detail)},
         )
         raise
@@ -190,7 +190,7 @@ def submit_mindmap_or_queue(
 
     lock = getattr(app_state, "runtime_startup_lock", None)
     if lock is None:
-        raise HTTPException(status_code=503, detail="运行时尚未初始化，暂时无法生成思维导图。")
+        raise HTTPException(status_code=503, detail="运行环境尚未初始化，暂时无法生成思维导图。")
     with lock:
         pending_jobs = getattr(app_state, "pending_mindmap_jobs", None)
         if pending_jobs is None:
@@ -201,7 +201,7 @@ def submit_mindmap_or_queue(
         task_id=task_id,
         stage="mindmap_queued",
         progress=100,
-        message="思维导图已保存，等待运行时初始化完成后自动执行",
+        message="思维导图已保存，等待运行环境初始化完成后自动执行",
         payload={"force": force, "runtime_startup": True},
     )
 

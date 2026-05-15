@@ -43,7 +43,7 @@ export function SetupAssistantDialog({
               <span>1</span>
               <div>
                 <strong>先补基础转写能力</strong>
-                <p>优先保证“云端转写 API Key”或“本地 ASR 运行时”可用，这是开始处理视频的前提。</p>
+                <p>优先保证“云端转写 API Key”或“本地 ASR 运行环境”可用，这是开始处理视频的前提。</p>
               </div>
             </div>
             <div className="setup-assistant-step">

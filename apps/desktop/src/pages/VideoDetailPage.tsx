@@ -57,6 +57,13 @@ type SnapshotMetric = {
   value: string;
 };
 
+type ProgressPhase = {
+  id: "prepare" | "media" | "summary" | "export" | "mindmap" | "knowledge" | "other";
+  label: string;
+  events: TaskEvent[];
+  tone: "done" | "active" | "failed" | "pending";
+};
+
 type RefreshDetailOptions = {
   forceTaskIds?: string[];
   preferredTaskId?: string | null;
@@ -165,6 +172,76 @@ function buildTaskSnapshot(task?: Pick<TaskSummary, "created_at" | "updated_at" 
     { label: "LLM Token", value: formatTokenCount(task.llm_total_tokens) },
     { label: "任务耗时", value: formatTaskDuration(task.task_duration_seconds) },
   ];
+}
+
+function isProgressEventFailed(event: TaskEvent) {
+  return progressEventClass(event.stage) === "error" || /失败|不可用|错误|异常/i.test(event.message);
+}
+
+function isProgressEventCompleted(event: TaskEvent) {
+  return progressEventClass(event.stage) === "completed" || event.progress >= 100 || /完成|已写入|检查通过|已就绪/.test(event.message);
+}
+
+function getProgressPhaseId(event: TaskEvent): ProgressPhase["id"] {
+  const message = event.message || "";
+  if (event.stage.startsWith("mindmap_") || /思维导图|导图/.test(message)) {
+    return "mindmap";
+  }
+  if (/知识库|索引/.test(message)) {
+    return "knowledge";
+  }
+  if (/导出|写入本地|结果整理|结果文件/.test(message)) {
+    return "export";
+  }
+  if (event.stage === "downloading" || event.stage === "transcribing" || /音频|转写|字幕/.test(message)) {
+    return "media";
+  }
+  if (event.stage === "summarizing" || /LLM|摘要|总结|知识卡片|知识笔记|内容块|分块|合并/.test(message)) {
+    return "summary";
+  }
+  if (event.stage === "queued" || /队列|开始执行|检查|规范化|读取视频|视频信息/.test(message)) {
+    return "prepare";
+  }
+  return "other";
+}
+
+const progressPhaseLabels: Record<ProgressPhase["id"], string> = {
+  prepare: "准备阶段",
+  media: "音频与转写",
+  summary: "摘要生成",
+  export: "结果导出",
+  mindmap: "思维导图",
+  knowledge: "知识库索引",
+  other: "其他记录",
+};
+
+const progressPhaseOrder: ProgressPhase["id"][] = ["prepare", "media", "summary", "export", "mindmap", "knowledge", "other"];
+
+function buildProgressPhases(events: TaskEvent[]): ProgressPhase[] {
+  const groups = new Map<ProgressPhase["id"], TaskEvent[]>();
+  for (const event of events) {
+    const phaseId = getProgressPhaseId(event);
+    groups.set(phaseId, [...(groups.get(phaseId) ?? []), event]);
+  }
+
+  const lastEvent = events.at(-1);
+  return progressPhaseOrder
+    .map((id) => {
+      const phaseEvents = groups.get(id) ?? [];
+      if (!phaseEvents.length) {
+        return null;
+      }
+      const hasFailure = phaseEvents.some(isProgressEventFailed);
+      const hasActive = Boolean(lastEvent && phaseEvents.some((event) => event.event_id === lastEvent.event_id));
+      const allDone = phaseEvents.every(isProgressEventCompleted);
+      return {
+        id,
+        label: progressPhaseLabels[id],
+        events: phaseEvents,
+        tone: hasFailure ? "failed" : hasActive && !allDone ? "active" : allDone ? "done" : "pending",
+      } satisfies ProgressPhase;
+    })
+    .filter((phase): phase is ProgressPhase => Boolean(phase));
 }
 
 function clampFloatingPlayerWidth(width: number, viewportWidth: number) {
@@ -1042,6 +1119,11 @@ export function VideoDetailPage({ onRefresh, onOpenCookieSettings, onOpenCookieT
       hasError: Boolean(summarized?.failedEvent),
     };
   }, [mindMapEvents, mindMapLoading, selectedMindMap, selectedTaskDetail?.result?.mindmap_error_message, selectedTaskDetail?.result?.mindmap_status, selectedTaskId]);
+  const liveProgressPhases = useMemo(() => buildProgressPhases(liveProgress.filtered), [liveProgress.filtered]);
+  const liveProgressFocusPhase = liveProgressPhases.find((phase) => phase.tone === "failed")
+    ?? [...liveProgressPhases].reverse().find((phase) => phase.tone === "active")
+    ?? liveProgressPhases.at(-1)
+    ?? null;
   const mindMapMeta = readyMindMap
     ? "主题导图视图"
     : mindMapProgress
@@ -1499,7 +1581,7 @@ export function VideoDetailPage({ onRefresh, onOpenCookieSettings, onOpenCookieT
                           const generated = pageGeneratedMap.get(page.page);
                           return (
                             <button
-                              className={`detail-page-option ${selected ? "is-selected" : ""}`}
+                              className={`detail-page-option ${selected ? "is-selected" : ""} ${generated ? "has-summary" : "is-unavailable"}`}
                               type="button"
                               role="option"
                               aria-selected={selected}
@@ -1526,14 +1608,32 @@ export function VideoDetailPage({ onRefresh, onOpenCookieSettings, onOpenCookieT
             <div className="detail-task-float" ref={taskPopoverRef}>
               <div className={`detail-hero-capsule ${taskStatusClass(liveStatus)} ${taskPanelState === "expanded" ? "is-expanded" : ""}`}>
                 <div className="detail-hero-capsule-grid">
-                  {heroStats.map((item) => (
-                    <div className="detail-hero-capsule-item" key={item.id}>
-                      <span className="detail-hero-stat-label">{item.label}</span>
-                      <div className="detail-hero-stat-value">
-                        <strong className={item.mono ? "detail-hero-stat-mono" : ""}>{item.value}</strong>
-                      </div>
+                  <div className="detail-hero-capsule-item">
+                    <span className="detail-hero-stat-label">{heroStats[0].label}</span>
+                    <div className="detail-hero-stat-value">
+                      <strong className={heroStats[0].mono ? "detail-hero-stat-mono" : ""}>{heroStats[0].value}</strong>
                     </div>
-                  ))}
+                  </div>
+                  <button
+                    aria-label={taskPanelState === "expanded" ? "收起任务详情与历史" : "展开任务详情与历史"}
+                    aria-expanded={taskPanelState === "expanded"}
+                    className={`detail-hero-capsule-item detail-task-detail-trigger ${taskPanelState === "expanded" ? "is-open" : ""}`}
+                    title={taskPanelState === "expanded" ? "收起任务详情与历史" : "任务详情与历史"}
+                    type="button"
+                    onMouseDown={(event) => event.stopPropagation()}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      setTaskPanelState((current) => current === "expanded" ? "collapsed" : "expanded");
+                    }}
+                  >
+                    <span className="detail-hero-stat-label detail-task-detail-label">
+                      {heroStats[1].label}
+                      <IconChevronDown className="detail-action-caret" />
+                    </span>
+                    <div className="detail-hero-stat-value">
+                      <strong className={heroStats[1].mono ? "detail-hero-stat-mono" : ""}>{heroStats[1].value}</strong>
+                    </div>
+                  </button>
                 </div>
                 <div className="detail-hero-actions">
                   <button
@@ -1808,24 +1908,46 @@ export function VideoDetailPage({ onRefresh, onOpenCookieSettings, onOpenCookieT
                               <details className="progress-stage-card">
                                 <summary>
                                   <div>
-                                    <strong>{stageLabel(liveProgress.currentEvent?.stage) || "阶段详情"}</strong>
-                                    <span>{liveProgress.filtered.length} 条进度记录</span>
+                                    <strong>{liveProgress.failedEvent ? "需要关注" : liveProgress.isCompleted ? "主任务已完成" : "当前进度"}</strong>
+                                    <span>{liveProgressFocusPhase ? `${liveProgressFocusPhase.label} · ${liveProgressFocusPhase.events.length} 条` : `${liveProgress.filtered.length} 条进度记录`}</span>
                                   </div>
-                                  <span className="progress-stage-toggle">查看记录</span>
+                                  <span className="progress-stage-toggle">查看阶段树</span>
                                 </summary>
-                                <div className="progress-stage-list">
-                                  {liveProgress.filtered.map((event) => (
-                                    <article className={`progress-event-card ${progressEventClass(event.stage)}`} key={event.event_id}>
-                                      <div className="progress-event-index">{stageLabel(event.stage)}</div>
-                                      <div className="progress-event-copy">
-                                        <div className="progress-event-topline">
-                                          <strong>{event.message}</strong>
-                                          <span>{formatDateTime(event.created_at)}</span>
-                                        </div>
-                                        <div className="progress-event-meta">阶段进度 {event.progress}%</div>
-                                      </div>
+                                <div className="progress-phase-view">
+                                  {liveProgressFocusPhase ? (
+                                    <article className={`progress-focus-card tone-${liveProgressFocusPhase.tone}`}>
+                                      <span>{liveProgressFocusPhase.tone === "failed" ? "异常阶段" : liveProgress.isCompleted ? "完成概览" : "当前阶段"}</span>
+                                      <strong>{liveProgressFocusPhase.label}</strong>
+                                      <small>{liveProgressFocusPhase.events.at(-1)?.message || liveMessage}</small>
                                     </article>
-                                  ))}
+                                  ) : null}
+                                  <div className="progress-phase-tree">
+                                    {liveProgressPhases.map((phase) => (
+                                      <article className={`progress-phase-group tone-${phase.tone}`} key={phase.id}>
+                                        <div className="progress-phase-head">
+                                          <strong>{phase.label}</strong>
+                                          <span>{phase.events.filter(isProgressEventCompleted).length}/{phase.events.length}</span>
+                                        </div>
+                                        <div className="progress-stage-list progress-stage-tree">
+                                          {phase.events.map((event, index) => (
+                                            <article className={`progress-event-card ${progressEventClass(event.stage)}`} key={event.event_id}>
+                                              <div className="progress-event-node" aria-hidden="true" />
+                                              <div className="progress-event-copy">
+                                                <div className="progress-event-topline">
+                                                  <strong>{event.message} <span className="progress-event-count">({index + 1}/{phase.events.length})</span></strong>
+                                                  <span>{formatDateTime(event.created_at)}</span>
+                                                </div>
+                                                <div className="progress-event-bar" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={event.progress} aria-label={`${stageLabel(event.stage)}阶段进度`}>
+                                                  <span style={{ width: `${event.progress}%` }} />
+                                                </div>
+                                                <div className="progress-event-meta">{stageLabel(event.stage)} · {event.progress}%</div>
+                                              </div>
+                                            </article>
+                                          ))}
+                                        </div>
+                                      </article>
+                                    ))}
+                                  </div>
                                 </div>
                               </details>
                             ) : isLatestTaskLoading ? (
@@ -2021,19 +2143,6 @@ export function VideoDetailPage({ onRefresh, onOpenCookieSettings, onOpenCookieT
                     {pageBatchSummary.failed ? ` · 失败 ${pageBatchSummary.failed}` : ""}
                   </small>
                 </div>
-                <button
-                  className="detail-inline-toggle detail-batch-toggle"
-                  type="button"
-                  aria-expanded={taskPanelState === "expanded"}
-                  onMouseDown={(event) => event.stopPropagation()}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    setTaskPanelState((current) => current === "expanded" ? "collapsed" : "expanded");
-                  }}
-                >
-                  <span>{taskPanelState === "expanded" ? "收起" : "详情"}</span>
-                  <IconChevronDown className="detail-task-toggle-icon" />
-                </button>
               </div>
             </div>
           ) : null}
@@ -2481,16 +2590,19 @@ export function VideoDetailPage({ onRefresh, onOpenCookieSettings, onOpenCookieT
                                   <strong>{mindMapProgress.currentLabel}</strong>
                                   <span className="progress-stage-toggle">查看导图进度</span>
                                 </summary>
-                                <div className="progress-stage-list">
-                                  {mindMapProgress.events.map((event) => (
+                                <div className="progress-stage-list progress-stage-tree">
+                                  {mindMapProgress.events.map((event, index) => (
                                     <article className={`progress-event-card ${progressEventClass(event.stage)}`} key={event.event_id}>
-                                      <div className="progress-event-index">{stageLabel(event.stage)}</div>
+                                      <div className="progress-event-node" aria-hidden="true" />
                                       <div className="progress-event-copy">
                                         <div className="progress-event-topline">
-                                          <strong>{event.message}</strong>
+                                          <strong>{event.message} <span className="progress-event-count">({index + 1}/{mindMapProgress.events.length})</span></strong>
                                           <time>{formatDateTime(event.created_at)}</time>
                                         </div>
-                                        <div className="progress-event-meta">阶段进度 {event.progress}%</div>
+                                        <div className="progress-event-bar" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={event.progress} aria-label={`${stageLabel(event.stage)}阶段进度`}>
+                                          <span style={{ width: `${event.progress}%` }} />
+                                        </div>
+                                        <div className="progress-event-meta">{stageLabel(event.stage)} · {event.progress}%</div>
                                       </div>
                                     </article>
                                   ))}

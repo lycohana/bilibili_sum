@@ -146,8 +146,8 @@ export function getConfigHealth(
   if (transcriptionProvider === "local" && environment?.localAsrAvailable === false) {
     issues.push({
       key: "local_asr_runtime",
-      title: "本地 ASR 运行时未就绪",
-      description: "当前使用本地转写，但本地 ASR 尚未安装或当前运行时不可用，请先安装本地 ASR 或切回云端转写。",
+      title: "本地 ASR 运行环境未就绪",
+      description: "当前使用本地转写，但本地 ASR 尚未安装或当前运行环境不可用，请先安装本地 ASR 或切回云端转写。",
       severity: "critical",
     });
   }
@@ -187,7 +187,7 @@ export function getConfigHealth(
     issues.push({
       key: "knowledge_dependencies",
       title: "缺少知识库依赖",
-      description: "当前运行时缺少 chromadb 或 sentence-transformers，无法构建知识库索引。",
+      description: "当前运行环境缺少 chromadb 或 sentence-transformers，无法构建知识库索引。",
       severity: "warning",
     });
   }

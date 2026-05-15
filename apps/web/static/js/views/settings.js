@@ -52,7 +52,7 @@ export function renderSettingsView(state) {
         <section class="env-panel">
           <div class="env-panel-head">
             <span class="env-panel-kicker">Environment Snapshot</span>
-            <p>当前硬件、依赖版本和运行时建议一览</p>
+            <p>当前硬件、依赖版本和运行环境建议一览</p>
           </div>
           <div class="env-summary-grid">
             ${renderEnvCard("推荐设备", env.recommendedDevice || "-", "cpu")}
@@ -64,9 +64,9 @@ export function renderSettingsView(state) {
             ${renderEnvCard("本地 ASR", env.localAsrInstalled ? (env.localAsrVersion || "已安装") : "未安装", env.localAsrInstalled ? "success" : "neutral")}
             ${renderEnvCard("FFmpeg", env.ffmpegLocation ? `已安装 (${escapeHtml(env.ffmpegLocation)})` : "未安装", env.ffmpegLocation ? "success" : "warning")}
             ${renderEnvCard("Python", env.pythonVersion || "-", "neutral")}
-            ${renderEnvCard("运行时通道", env.runtimeChannel || settings.runtime_channel || "base", "neutral")}
-            ${renderEnvCard("运行时状态", env.runtimeReady === false ? "未就绪" : "已就绪", env.runtimeReady === false ? "warning" : "success")}
-            ${renderEnvCard("运行时解释器", env.runtimePython || "未检测到", env.runtimePython ? "success" : "neutral")}
+            ${renderEnvCard("运行环境通道", env.runtimeChannel || settings.runtime_channel || "base", "neutral")}
+            ${renderEnvCard("运行环境状态", env.runtimeReady === false ? "未就绪" : "已就绪", env.runtimeReady === false ? "warning" : "success")}
+            ${renderEnvCard("运行环境解释器", env.runtimePython || "未检测到", env.runtimePython ? "success" : "neutral")}
           </div>
         </section>
 
@@ -75,7 +75,7 @@ export function renderSettingsView(state) {
           <div class="cuda-control-copy">
             <span class="env-panel-kicker">CUDA Control</span>
             <h3>CUDA 目标版本</h3>
-            <p>选择目标运行时后，可重新检测环境或安装对应 CUDA 支持。</p>
+            <p>选择目标运行环境后，可重新检测环境或安装对应 CUDA 支持。</p>
           </div>
           <div class="cuda-actions">
             <label class="input-row cuda-picker">
@@ -112,16 +112,16 @@ export function renderSettingsView(state) {
           ` : ''}
           ${env.runtimeError ? `
             <label class="input-row">
-              <span class="input-label">运行时错误详情</span>
+              <span class="input-label">运行环境错误详情</span>
               <textarea class="textarea-field log-viewer" rows="8" readonly>${escapeHtml(env.runtimeError)}</textarea>
             </label>
           ` : ''}
           <label class="input-row">
-            <span class="input-label">本地 ASR 运行时</span>
+            <span class="input-label">本地 ASR 运行环境</span>
             <div class="settings-actions">
               <button id="install-local-asr" class="secondary-button" type="button">安装本地 ASR</button>
             </div>
-            <span class="input-caption">${env.localAsrInstalled ? `当前已安装 ${escapeHtml(env.localAsrVersion || "")}，安装后会自动切换到本地模式。` : "正式安装包默认不包含本地 ASR；安装到当前运行时后会自动切换到本地模式。"}</span>
+            <span class="input-caption">${env.localAsrInstalled ? `当前已安装 ${escapeHtml(env.localAsrVersion || "")}，安装后会自动切换到本地模式。` : "正式安装包默认不包含本地 ASR；安装到当前运行环境后会自动切换到本地模式。"}</span>
           </label>
           ${renderStatusNotice(state.localAsrActionStatus, "localAsrActionStatus")}
           ${state.localAsrInstallOutput ? `
@@ -156,7 +156,7 @@ export function renderSettingsView(state) {
             ${renderInput("cache_dir", "缓存目录", settings.cache_dir || "", "text", "/path/to/cache")}
             ${renderInput("tasks_dir", "任务目录", settings.tasks_dir || "", "text", "/path/to/tasks")}
             ${renderInput("database_url", "数据库", settings.database_url || "", "text", "sqlite:///data.db")}
-            ${renderSelect("runtime_channel", "运行时通道", settings.runtime_channel || "base", buildRuntimeChannelOptions(settings))}
+            ${renderSelect("runtime_channel", "运行环境通道", settings.runtime_channel || "base", buildRuntimeChannelOptions(settings))}
           </section>
 
           <!-- 转写模型 -->
@@ -270,7 +270,7 @@ export function renderSettingsView(state) {
           ${renderRow("本地 ASR", env.localAsrInstalled ? `✓ 已安装${env.localAsrVersion ? ` (${env.localAsrVersion})` : ""}` : "✗ 未安装", env.localAsrInstalled ? "success" : "neutral")}
           ${renderRow("LLM Base URL", settings.llm_base_url || "-", settings.llm_base_url ? "success" : "neutral")}
           ${renderRow("LLM 模型", settings.llm_model || "-", settings.llm_model ? "success" : "neutral")}
-          ${renderRow("运行时通道", settings.runtime_channel || "base", "neutral")}
+          ${renderRow("运行环境通道", settings.runtime_channel || "base", "neutral")}
           ${renderRow("摘要模式", settings.summary_mode || "-", "neutral")}
           ${renderRow("分块大小", String(settings.summary_chunk_target_chars || "-"), "neutral")}
           ${renderRow("分块并发", String(settings.summary_chunk_concurrency || "-"), "neutral")}
@@ -465,7 +465,7 @@ function renderTextarea(id, label, value, rows) {
 
 function buildRuntimeChannelOptions(settings) {
   const options = [
-    { value: "base", label: "base (CPU 基础运行时)" },
+    { value: "base", label: "base (CPU 基础运行环境)" },
   ];
   for (const value of ["gpu-cu124", "gpu-cu126", "gpu-cu128"]) {
     options.push({

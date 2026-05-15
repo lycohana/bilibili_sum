@@ -715,7 +715,7 @@ async function getStorageOverview(input: StorageOverviewInput): Promise<StorageO
     buildDirectoryStat("cache", "缓存目录", cacheDir),
     buildDirectoryStat("tasks", "任务结果", tasksDir),
     buildDirectoryStat("logs", "日志目录", logsDir),
-    buildDirectoryStat("runtime", "运行时目录", runtimeDir),
+    buildDirectoryStat("runtime", "运行环境目录", runtimeDir),
   ]);
   const dataStats = directories.find((item) => item.key === "data") || directories[0];
   const logsStats = directories.find((item) => item.key === "logs");
@@ -1104,7 +1104,7 @@ function getSplashMarkup(message = "正在启动 BiliSum 服务...") {
           .brand-mark svg {
             width: 48px;
             height: 48px;
-            filter: drop-shadow(0 6px 10px rgba(63, 162, 210, 0.22));
+            filter: drop-shadow(0 6px 10px rgba(251, 114, 153, 0.2));
           }
           h1 {
             margin: 0 0 8px;
@@ -1214,16 +1214,22 @@ function getSplashMarkup(message = "正在启动 BiliSum 服务...") {
           </button>
           <div class="brand">
             <div class="brand-mark" aria-hidden="true">
-              <svg viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M12 38C17 26 21 24 26 36C30 45 35 44 39 32C43 20 49 18 54 27" stroke="url(#wave)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round"/>
-                <path d="M40 22H54M43 31H55" stroke="#67d1c8" stroke-width="4.8" stroke-linecap="round"/>
+              <svg viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
                 <defs>
-                  <linearGradient id="wave" x1="12" y1="34" x2="55" y2="34" gradientUnits="userSpaceOnUse">
-                    <stop stop-color="#8dc4ff"/>
-                    <stop offset="0.5" stop-color="#a9e7ff"/>
-                    <stop offset="1" stop-color="#70dfc8"/>
+                  <linearGradient id="splash-icon-bg" x1="56" y1="56" x2="456" y2="456" gradientUnits="userSpaceOnUse">
+                    <stop stop-color="#FF9ABA"/>
+                    <stop offset="1" stop-color="#F85D8E"/>
                   </linearGradient>
                 </defs>
+                <rect x="56" y="56" width="400" height="400" rx="96" fill="url(#splash-icon-bg)"/>
+                <rect x="132" y="112" width="248" height="288" rx="42" fill="#FFFFFF"/>
+                <path d="M314 112H340C362.091 112 380 129.909 380 152V178H354C331.909 178 314 160.091 314 138V112Z" fill="#FFE6EE"/>
+                <circle cx="318" cy="172" r="32" fill="#FB7299"/>
+                <path d="M307 157L329 172L307 187V157Z" fill="#FFFFFF"/>
+                <rect x="172" y="172" width="96" height="20" rx="10" fill="#FB7299"/>
+                <rect x="172" y="222" width="160" height="20" rx="10" fill="#FB7299" opacity="0.9"/>
+                <rect x="172" y="272" width="138" height="20" rx="10" fill="#FB7299" opacity="0.72"/>
+                <rect x="172" y="322" width="112" height="20" rx="10" fill="#FB7299" opacity="0.5"/>
               </svg>
             </div>
             <div>

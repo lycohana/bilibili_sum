@@ -309,7 +309,7 @@ def post_runtime_sync(request: Request, payload: dict[str, object] | None = None
         raise
     except Exception as exc:
         logger.exception("runtime sync failed requested_channel=%s error=%s", requested_channel or "all", exc)
-        raise HTTPException(status_code=500, detail=f"运行时同步失败：{exc}") from exc
+        raise HTTPException(status_code=500, detail=f"运行环境同步失败：{exc}") from exc
 
 
 @router.get("/system/logs")

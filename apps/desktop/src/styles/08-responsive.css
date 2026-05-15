@@ -324,6 +324,8 @@
   }
 
   .video-detail-hero .detail-task-float .detail-hero-capsule {
+    grid-template-columns: 1fr;
+    gap: 14px;
     padding: 2px 0 0;
     border-radius: 0;
   }
@@ -331,6 +333,16 @@
   .detail-hero-capsule-grid {
     grid-template-columns: 1fr;
     gap: 0;
+    width: 100%;
+  }
+
+  .video-detail-hero.is-single-page .detail-task-float .detail-hero-capsule-grid {
+    grid-template-columns: 1fr;
+    width: 100%;
+  }
+
+  .video-detail-hero.has-page-batch .detail-task-float .detail-hero-capsule-grid {
+    grid-template-columns: 1fr;
     width: 100%;
   }
 
@@ -342,6 +354,14 @@
     border-left: none;
     border-top: 1px solid color-mix(in srgb, var(--border-default) 72%, transparent);
     padding-top: 12px;
+  }
+
+  .video-detail-hero .detail-task-float .detail-task-detail-trigger {
+    justify-content: flex-start;
+    width: 100%;
+    max-width: none;
+    padding: 12px 0;
+    border-left: 0;
   }
 
   .detail-point-item {
@@ -431,6 +451,11 @@
     justify-content: flex-end;
   }
 
+  .video-detail-hero .detail-task-float .detail-hero-actions {
+    width: 100%;
+    justify-content: start;
+  }
+
   .detail-workspace-header,
   .detail-workspace-meta,
   .detail-hero-meta-row,
@@ -494,13 +519,101 @@
     width: min(280px, calc(100vw - 32px));
   }
 
-  .detail-task-panel {
-    position: static;
-    width: 100%;
+  .detail-task-panel,
+  .video-detail-hero.has-page-batch .detail-task-float .detail-task-panel,
+  .video-detail-hero.is-single-page .detail-task-float .detail-task-panel {
+    position: fixed;
+    top: 88px;
+    right: 16px;
+    bottom: 16px;
+    left: 16px;
+    z-index: 80;
+    width: auto;
+    max-width: none;
     max-height: none;
-    overflow: visible;
-    box-shadow: var(--shadow-md);
+    padding: 20px;
+    border-radius: 24px;
+    overflow: auto;
+    overscroll-behavior: contain;
+    box-shadow: var(--shadow-lg);
   }
+
+  .detail-task-panel-header,
+  .video-detail-hero.is-single-page .detail-task-float .detail-task-panel-header {
+    position: sticky;
+    top: -20px;
+    z-index: 2;
+    display: flex;
+    align-items: center;
+    margin: -20px -20px 0;
+    padding: 20px 20px 12px;
+    background: color-mix(in srgb, var(--bg-card) 96%, var(--bg-base) 4%);
+    backdrop-filter: blur(16px);
+  }
+
+  .detail-task-panel-header .panel-header h2,
+  .video-detail-hero.is-single-page .detail-task-float .detail-task-panel-header .panel-header h2 {
+    font-size: 1.2rem;
+  }
+
+  .detail-task-panel-header .secondary-button,
+  .video-detail-hero.is-single-page .detail-task-float .detail-task-panel-header .secondary-button {
+    width: auto;
+    min-height: 34px;
+    padding: 0 14px;
+  }
+
+  .video-detail-hero .detail-task-float .detail-task-panel-body,
+  .video-detail-hero .detail-task-float .detail-task-panel-card,
+  .video-detail-hero.is-single-page .detail-task-float .detail-task-panel-body,
+  .video-detail-hero.is-single-page .detail-task-float .detail-task-panel-card {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .video-detail-hero .detail-task-float .detail-task-panel-body,
+  .video-detail-hero.is-single-page .detail-task-float .detail-task-panel-body {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .video-detail-hero .detail-task-float .detail-task-panel-card,
+  .video-detail-hero.is-single-page .detail-task-float .detail-task-panel-card {
+    padding: 18px;
+  }
+
+  .video-detail-hero .detail-task-float .detail-task-live-grid,
+  .video-detail-hero.is-single-page .detail-task-float .detail-task-live-grid {
+    gap: 16px;
+  }
+
+  .video-detail-hero .detail-task-float .detail-task-panel-card-live,
+  .video-detail-hero .detail-task-float .detail-task-live-progress,
+  .video-detail-hero .detail-task-float .detail-task-snapshot,
+  .video-detail-hero .detail-task-float .detail-task-snapshot-emphasis,
+  .video-detail-hero .detail-task-float .progress-bar-wrapper,
+  .video-detail-hero .detail-task-float .progress-bar-simple,
+  .video-detail-hero .detail-task-float .progress-info-simple,
+  .video-detail-hero .detail-task-float .progress-stage-card,
+  .video-detail-hero.is-single-page .detail-task-float .detail-task-panel-card-live,
+  .video-detail-hero.is-single-page .detail-task-float .detail-task-live-progress,
+  .video-detail-hero.is-single-page .detail-task-float .detail-task-snapshot,
+  .video-detail-hero.is-single-page .detail-task-float .detail-task-snapshot-emphasis,
+  .video-detail-hero.is-single-page .detail-task-float .progress-bar-wrapper,
+  .video-detail-hero.is-single-page .detail-task-float .progress-bar-simple,
+  .video-detail-hero.is-single-page .detail-task-float .progress-info-simple,
+  .video-detail-hero.is-single-page .detail-task-float .progress-stage-card {
+    width: 100%;
+    max-width: none;
+  }
+
+  .video-detail-hero .detail-task-float .detail-task-snapshot-grid,
+  .video-detail-hero .detail-task-float .detail-history-metrics,
+  .video-detail-hero.is-single-page .detail-task-float .detail-task-snapshot-grid,
+  .video-detail-hero.is-single-page .detail-task-float .detail-history-metrics {
+    grid-template-columns: 1fr;
+  }
+
 }
 
 @media (max-width: 640px) {

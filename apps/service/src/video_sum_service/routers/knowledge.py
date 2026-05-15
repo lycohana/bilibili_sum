@@ -113,7 +113,7 @@ def _require_knowledge_runtime() -> None:
     if not _knowledge_runtime_ready():
         raise HTTPException(
             status_code=424,
-            detail="知识库依赖未安装。请先到设置中的知识库或运行时板块安装知识库依赖。",
+            detail="知识库依赖未安装。请先到设置中的知识库或运行环境板块安装知识库依赖。",
         )
 
 

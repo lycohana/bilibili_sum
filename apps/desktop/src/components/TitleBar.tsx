@@ -86,7 +86,7 @@ export function TitleBar({
   const hasNewVersion = ["available", "downloading", "downloaded", "installing"].includes(updateState.status);
   const hasConfigProblem = configHealth.checked && !configHealth.isConfigured;
   const runtimePending = serviceOnline && !runtimeReady;
-  const statusPillText = hasConfigProblem ? "配置缺失" : hasNewVersion ? "有新版本" : runtimePending ? "运行时准备中" : "运行状态";
+  const statusPillText = hasConfigProblem ? "配置缺失" : hasNewVersion ? "有新版本" : runtimePending ? "运行环境准备中" : "运行状态";
   const updateStatusText = hasNewVersion
     ? `v${updateState.version || "-"}`
     : updateState.status === "checking"
@@ -157,7 +157,7 @@ export function TitleBar({
                 <strong>{serviceStatusText}</strong>
               </div>
               <div className={`sidebar-status-item ${runtimeReady ? "is-success" : serviceOnline ? "is-warning" : ""}`}>
-                <span>运行时</span>
+                <span>运行环境</span>
                 <strong>{runtimeStatusText}</strong>
               </div>
               <div className={`sidebar-status-item ${configHealth.hasBlockingIssues ? "is-danger" : !configHealth.isConfigured ? "is-warning" : "is-success"}`}>

@@ -1191,6 +1191,9 @@
   display: grid;
   grid-template-columns: minmax(280px, 0.9fr) minmax(0, 1.7fr);
   gap: 22px;
+  height: clamp(600px, calc(100vh - 260px), 780px);
+  min-height: 0;
+  align-items: stretch;
 }
 
 .knowledge-sidebar-card,
@@ -1199,6 +1202,23 @@
   padding: 22px;
   display: grid;
   gap: 16px;
+}
+
+.knowledge-sidebar-card,
+.knowledge-results-card {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.knowledge-sidebar-card {
+  align-content: start;
+  overflow-y: auto;
+  padding-right: 16px;
+  scrollbar-gutter: stable;
+}
+
+.knowledge-results-card {
+  grid-template-rows: auto auto minmax(0, 1fr);
 }
 
 .knowledge-section-head {
@@ -1313,6 +1333,43 @@
 .knowledge-tag-records {
   display: grid;
   gap: 14px;
+}
+
+.knowledge-results-card .knowledge-result-list {
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 10px;
+  scroll-padding-block: 12px;
+  scrollbar-gutter: stable;
+}
+
+.knowledge-sidebar-card,
+.knowledge-results-card .knowledge-result-list {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--text-tertiary) 48%, transparent) transparent;
+}
+
+.knowledge-sidebar-card::-webkit-scrollbar,
+.knowledge-results-card .knowledge-result-list::-webkit-scrollbar {
+  width: 8px;
+}
+
+.knowledge-sidebar-card::-webkit-scrollbar-track,
+.knowledge-results-card .knowledge-result-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.knowledge-sidebar-card::-webkit-scrollbar-thumb,
+.knowledge-results-card .knowledge-result-list::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background-clip: padding-box;
+  background-color: color-mix(in srgb, var(--text-tertiary) 42%, transparent);
+}
+
+.knowledge-sidebar-card::-webkit-scrollbar-thumb:hover,
+.knowledge-results-card .knowledge-result-list::-webkit-scrollbar-thumb:hover {
+  background-color: color-mix(in srgb, var(--text-secondary) 56%, transparent);
 }
 
 .knowledge-result-card,
@@ -1490,6 +1547,25 @@
 @media (max-width: 1080px) {
   .knowledge-workbench-grid {
     grid-template-columns: 1fr;
+    height: auto;
+  }
+
+  .knowledge-sidebar-card,
+  .knowledge-results-card {
+    overflow: visible;
+  }
+
+  .knowledge-sidebar-card {
+    padding-right: 22px;
+  }
+
+  .knowledge-results-card {
+    grid-template-rows: none;
+  }
+
+  .knowledge-results-card .knowledge-result-list {
+    overflow: visible;
+    padding-right: 0;
   }
 
   .knowledge-network-canvas {
@@ -1542,6 +1618,10 @@
   .knowledge-results-card,
   .knowledge-network-card {
     padding-left: 18px;
+    padding-right: 18px;
+  }
+
+  .knowledge-sidebar-card {
     padding-right: 18px;
   }
 

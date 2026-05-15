@@ -188,6 +188,19 @@
   gap: 10px;
 }
 
+.title-bar-status-popover .sidebar-status-item {
+  grid-template-columns: 4.25em minmax(0, 1fr);
+  gap: 14px;
+}
+
+.title-bar-status-popover .sidebar-status-item span {
+  display: block;
+  width: 4.25em;
+  text-align: justify;
+  text-align-last: justify;
+  white-space: nowrap;
+}
+
 .title-bar-status-row {
   display: grid;
   grid-template-columns: 48px 1fr;

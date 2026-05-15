@@ -350,7 +350,7 @@ def torch_install_with_fallbacks(
         except subprocess.CalledProcessError as exc:
             attempts.append((label, exc))
 
-    raise HTTPException(status_code=500, detail=pip_install_error_detail("CUDA 运行时依赖", attempts))
+    raise HTTPException(status_code=500, detail=pip_install_error_detail("CUDA 运行环境依赖", attempts))
 
 
 def ensure_runtime_pip(python_executable: Path, runtime_channel: str) -> None:
