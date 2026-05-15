@@ -532,8 +532,15 @@ def sync_all_runtime_channels() -> dict[str, object]:
 
 def sync_runtime_base(target_dir: Path, base_dir: Path, runtime_channel: str) -> None:
     target_metadata = read_runtime_metadata(target_dir)
+    # Python可执行文件排除列表 - 避免base渠道覆盖GPU渠道的Python环境
+    # 跨平台兼容: Windows(python.exe) / macOS/Linux(python, python3)
+    _EXCLUDED_PYTHON_EXECUTABLES = {"python.exe", "python", "python3"}
+    
     for item in base_dir.iterdir():
         if item.name == "video_sum_runtime.json":
+            continue
+        # 排除Python可执行文件 - 保护目标渠道的Python环境
+        if item.name in _EXCLUDED_PYTHON_EXECUTABLES:
             continue
         if item.name in {"Lib", "lib"}:
             sync_runtime_lib(target_dir / item.name, item)
