@@ -9,6 +9,9 @@ on:
 permissions:
   contents: write
 
+env:
+  electron_config_cache: ${{ github.workspace }}/.cache/electron
+
 concurrency:
   group: prepare-release-${{ github.ref }}
   cancel-in-progress: false
@@ -65,8 +68,17 @@ jobs:
           cache: npm
           cache-dependency-path: apps/desktop/package-lock.json
 
+      - name: Cache Electron downloads
+        uses: actions/cache@v4
+        with:
+          path: |
+            .cache/electron
+          key: ${{ runner.os }}-electron-${{ hashFiles('apps/desktop/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-electron-
+
       - name: Install uv
-        run: python -m pip install --upgrade pip uv
+        run: python -m pip install --disable-pip-version-check --upgrade pip uv
 
       - name: Apply release version for validation build
         run: python scripts/bump_version.py "${{ needs.detect-release.outputs.bump }}"
@@ -77,7 +89,7 @@ jobs:
       - name: Install desktop dependencies
         env:
           ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
-        run: npm ci --prefix apps/desktop
+        run: npm ci --prefix apps/desktop --prefer-offline --no-audit --fund=false
 
       - name: Set up FFmpeg
         id: setup-ffmpeg
@@ -163,6 +175,8 @@ jobs:
     needs: detect-release
     if: ${{ needs.detect-release.outputs.bump != '' }}
     runs-on: macos-latest
+    env:
+      ELECTRON_BUILDER_CACHE: ${{ github.workspace }}/.cache/electron-builder
     outputs:
       release_version: ${{ needs.detect-release.outputs.next_version }}
 
@@ -184,8 +198,25 @@ jobs:
           cache: npm
           cache-dependency-path: apps/desktop/package-lock.json
 
+      - name: Cache Electron downloads
+        uses: actions/cache@v4
+        with:
+          path: |
+            .cache/electron
+          key: ${{ runner.os }}-electron-${{ hashFiles('apps/desktop/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-electron-
+
+      - name: Cache electron-builder downloads
+        uses: actions/cache@v4
+        with:
+          path: .cache/electron-builder
+          key: ${{ runner.os }}-electron-builder-${{ hashFiles('apps/desktop/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-electron-builder-
+
       - name: Install uv
-        run: python -m pip install --upgrade pip uv
+        run: python -m pip install --disable-pip-version-check --upgrade pip uv
 
       - name: Apply release version for validation build
         run: python scripts/bump_version.py "${{ needs.detect-release.outputs.bump }}"
@@ -196,7 +227,7 @@ jobs:
       - name: Install desktop dependencies
         env:
           ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
-        run: npm ci --prefix apps/desktop
+        run: npm ci --prefix apps/desktop --prefer-offline --no-audit --fund=false
 
       - name: Install FFmpeg
         run: brew install ffmpeg
@@ -397,7 +428,7 @@ jobs:
       - name: Install desktop dependencies without package install scripts
         env:
           ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
-        run: npm ci --prefix apps/desktop --ignore-scripts
+        run: npm ci --prefix apps/desktop --prefer-offline --no-audit --fund=false --ignore-scripts
 
       - name: Build web static assets
         run: npm run build:web
@@ -430,6 +461,8 @@ jobs:
           context: .
           file: ./Dockerfile
           push: true
+          cache-from: type=gha,scope=bilisum-docker
+          cache-to: type=gha,mode=max,scope=bilisum-docker
           tags: |
             docker.io/${{ steps.image.outputs.repository }}:v${{ needs.detect-release.outputs.next_version }}
             docker.io/${{ steps.image.outputs.repository }}:${{ needs.detect-release.outputs.next_version }}
@@ -468,7 +501,7 @@ jobs:
       - name: Install desktop dependencies without package install scripts
         env:
           ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
-        run: npm ci --prefix apps/desktop --ignore-scripts
+        run: npm ci --prefix apps/desktop --prefer-offline --no-audit --fund=false --ignore-scripts
 
       - name: Build web static assets
         run: npm run build:web
