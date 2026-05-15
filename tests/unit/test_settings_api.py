@@ -512,6 +512,18 @@ def test_ensure_runtime_channel_syncs_base_preserves_cuda(
     gpu_dlls.mkdir(parents=True)
     (base_dir / "python.exe").write_text("base-python", encoding="utf-8")
     (gpu_dir / "python.exe").write_text("gpu-python", encoding="utf-8")
+    (base_dir / "pythonw.exe").write_text("base-pythonw", encoding="utf-8")
+    (gpu_dir / "pythonw.exe").write_text("gpu-pythonw", encoding="utf-8")
+    (base_dir / "python3.dll").write_text("base-python3-dll", encoding="utf-8")
+    (gpu_dir / "python3.dll").write_text("gpu-python3-dll", encoding="utf-8")
+    (base_dir / "python312.dll").write_text("base-python312-dll", encoding="utf-8")
+    (gpu_dir / "python312.dll").write_text("gpu-python312-dll", encoding="utf-8")
+    (base_dir / "vcruntime140.dll").write_text("base-vcruntime", encoding="utf-8")
+    (gpu_dir / "vcruntime140.dll").write_text("gpu-vcruntime", encoding="utf-8")
+    (base_dir / "python312._pth").write_text("base-pth", encoding="utf-8")
+    (gpu_dir / "python312._pth").write_text("gpu-pth", encoding="utf-8")
+    (base_dir / "pyvenv.cfg").write_text("base-venv", encoding="utf-8")
+    (gpu_dir / "pyvenv.cfg").write_text("old-venv", encoding="utf-8")
     (base_stdlib / "filecmp.py").write_text("base-stdlib", encoding="utf-8")
     (gpu_stdlib / "filecmp.py").write_text("old-stdlib", encoding="utf-8")
     (base_dlls / "_sqlite3.pyd").write_text("base-dll", encoding="utf-8")
@@ -596,7 +608,13 @@ def test_ensure_runtime_channel_syncs_base_preserves_cuda(
     metadata = runtime_support.read_runtime_metadata(gpu_dir)
 
     assert result == gpu_dir
-    assert (gpu_dir / "python.exe").read_text(encoding="utf-8") == "gpu-python"
+    assert (gpu_dir / "python.exe").read_text(encoding="utf-8") == "base-python"
+    assert (gpu_dir / "pythonw.exe").read_text(encoding="utf-8") == "base-pythonw"
+    assert (gpu_dir / "python3.dll").read_text(encoding="utf-8") == "base-python3-dll"
+    assert (gpu_dir / "python312.dll").read_text(encoding="utf-8") == "base-python312-dll"
+    assert (gpu_dir / "vcruntime140.dll").read_text(encoding="utf-8") == "base-vcruntime"
+    assert (gpu_dir / "python312._pth").read_text(encoding="utf-8") == "base-pth"
+    assert not (gpu_dir / "pyvenv.cfg").exists()
     assert (gpu_stdlib / "filecmp.py").read_text(encoding="utf-8") == "base-stdlib"
     assert (gpu_dlls / "_sqlite3.pyd").read_text(encoding="utf-8") == "base-dll"
     assert (gpu_site_packages / "torch" / "cuda_marker.txt").exists()
@@ -618,6 +636,112 @@ def test_ensure_runtime_channel_syncs_base_preserves_cuda(
     )
     assert metadata["appVersion"] == "2.0.0"
     assert metadata["runtimeLayout"] == "portable-cpython"
+    assert metadata["cudaVariant"] == "cu128"
+    assert metadata["localAsrInstalled"] is True
+
+
+def test_ensure_runtime_channel_syncs_base_preserves_macos_runtime(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    runtime_root = tmp_path / "runtime"
+    base_dir = runtime_root / "base"
+    gpu_dir = runtime_root / "gpu-cu128"
+    base_site_packages = base_dir / "lib" / "python3.12" / "site-packages"
+    gpu_site_packages = gpu_dir / "lib" / "python3.12" / "site-packages"
+    base_bin = base_dir / "bin"
+    gpu_bin = gpu_dir / "bin"
+    base_lib = base_dir / "lib"
+    gpu_lib = gpu_dir / "lib"
+    base_stdlib = base_dir / "stdlib"
+    gpu_stdlib = gpu_dir / "stdlib"
+    base_site_packages.mkdir(parents=True)
+    gpu_site_packages.mkdir(parents=True)
+    base_bin.mkdir(parents=True)
+    gpu_bin.mkdir(parents=True)
+    base_stdlib.mkdir(parents=True)
+    gpu_stdlib.mkdir(parents=True)
+    (base_bin / "python").write_text("base-python", encoding="utf-8")
+    (gpu_bin / "python").write_text("gpu-python", encoding="utf-8")
+    (base_lib / "libpython3.12.dylib").write_text("base-libpython", encoding="utf-8")
+    (gpu_lib / "libpython3.12.dylib").write_text("gpu-libpython", encoding="utf-8")
+    (base_dir / "pythonpath.pth").write_text("base-pythonpath", encoding="utf-8")
+    (gpu_dir / "pythonpath.pth").write_text("gpu-pythonpath", encoding="utf-8")
+    (gpu_dir / "pyvenv.cfg").write_text("old-venv", encoding="utf-8")
+    (base_stdlib / "filecmp.py").write_text("base-stdlib", encoding="utf-8")
+    (gpu_stdlib / "filecmp.py").write_text("gpu-stdlib", encoding="utf-8")
+    (base_site_packages / "video_sum_service").mkdir()
+    (base_site_packages / "video_sum_service" / "__init__.py").write_text(
+        "version = 'new'",
+        encoding="utf-8",
+    )
+    (base_site_packages / "video_sum_service-2.0.0.dist-info").mkdir()
+    (base_site_packages / "video_sum_service-2.0.0.dist-info" / "METADATA").write_text(
+        "new",
+        encoding="utf-8",
+    )
+    (gpu_site_packages / "video_sum_service").mkdir()
+    (gpu_site_packages / "video_sum_service" / "__init__.py").write_text(
+        "version = 'old'",
+        encoding="utf-8",
+    )
+    (gpu_site_packages / "video_sum_service-1.0.0.dist-info").mkdir()
+    (gpu_site_packages / "video_sum_service-1.0.0.dist-info" / "METADATA").write_text(
+        "old",
+        encoding="utf-8",
+    )
+    (base_bin / "video-sum-transcribe-worker").write_text("new-worker", encoding="utf-8")
+    (gpu_bin / "pip").write_text("keep-pip", encoding="utf-8")
+    (base_dir / "video_sum_runtime.json").write_text(
+        (
+            '{"runtimeChannel":"base","runtimeLayout":"portable-cpython",'
+            '"appVersion":"2.0.0","pythonVersion":"3.12.0"}'
+        ),
+        encoding="utf-8",
+    )
+    (gpu_dir / "video_sum_runtime.json").write_text(
+        '{"runtimeChannel":"gpu-cu128","cudaVariant":"cu128","localAsrInstalled":true}',
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        runtime_support,
+        "managed_runtime_dir",
+        lambda runtime_channel: runtime_root / runtime_channel,
+    )
+    monkeypatch.setattr(
+        runtime_support,
+        "bootstrap_managed_runtime",
+        lambda runtime_channel: base_dir if runtime_channel == "base" else None,
+    )
+    monkeypatch.setattr(
+        runtime_support,
+        "runtime_python_executable",
+        lambda runtime_channel: runtime_root / runtime_channel / "bin" / "python"
+        if (runtime_root / runtime_channel / "bin" / "python").exists()
+        else None,
+    )
+
+    result = runtime_support.ensure_runtime_channel("gpu-cu128")
+    metadata = runtime_support.read_runtime_metadata(gpu_dir)
+
+    assert result == gpu_dir
+    assert (gpu_bin / "python").read_text(encoding="utf-8") == "gpu-python"
+    assert (gpu_lib / "libpython3.12.dylib").read_text(encoding="utf-8") == "base-libpython"
+    assert (gpu_dir / "pythonpath.pth").read_text(encoding="utf-8") == "base-pythonpath"
+    assert not (gpu_dir / "pyvenv.cfg").exists()
+    assert (gpu_stdlib / "filecmp.py").read_text(encoding="utf-8") == "base-stdlib"
+    assert (
+        (gpu_site_packages / "video_sum_service" / "__init__.py").read_text(encoding="utf-8")
+        == "version = 'new'"
+    )
+    assert (gpu_site_packages / "video_sum_service-2.0.0.dist-info").exists()
+    assert not (gpu_site_packages / "video_sum_service-1.0.0.dist-info").exists()
+    assert (gpu_bin / "pip").read_text(encoding="utf-8") == "keep-pip"
+    assert (gpu_bin / "video-sum-transcribe-worker").read_text(encoding="utf-8") == "new-worker"
+    assert metadata["appVersion"] == "2.0.0"
+    assert metadata["runtimeLayout"] == "portable-cpython"
+    assert metadata["pythonVersion"] == "3.12.0"
     assert metadata["cudaVariant"] == "cu128"
     assert metadata["localAsrInstalled"] is True
 
@@ -914,6 +1038,60 @@ def test_knowledge_llm_connection_uses_unsaved_api_key_when_present(monkeypatch,
     assert calls[0]["json"]["model"] == "knowledge-new-model"
 
 
+def test_knowledge_llm_connection_uses_custom_provider(monkeypatch, tmp_path: Path) -> None:
+    current = ServiceSettings(
+        data_dir=tmp_path / "data",
+        cache_dir=tmp_path / "cache",
+        tasks_dir=tmp_path / "tasks",
+        runtime_channel="base",
+        llm_enabled=True,
+        llm_provider="openai-compatible",
+        llm_base_url="https://main.example/v1",
+        llm_api_key="main-key",
+        llm_model="main-model",
+        knowledge_llm_mode="custom",
+        knowledge_llm_enabled=True,
+        knowledge_llm_provider="anthropic",
+        knowledge_llm_base_url="https://api.anthropic.com/v1",
+        knowledge_llm_api_key="knowledge-key",
+        knowledge_llm_model="claude-3-5-haiku-latest",
+    )
+    settings_manager._settings = current
+
+    calls: list[dict[str, object]] = []
+
+    class FakeResponse:
+        status_code = 200
+        text = '{"content":[{"type":"text","text":"{\\"ok\\":true,\\"message\\":\\"test\\"}"}]}'
+
+        def json(self) -> dict[str, object]:
+            return {"content": [{"type": "text", "text": '{"ok":true,"message":"test"}'}]}
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def __enter__(self) -> "FakeClient":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def post(self, url: str, headers: dict[str, str], json: dict[str, object]) -> FakeResponse:
+            calls.append({"url": url, "headers": headers, "json": json})
+            return FakeResponse()
+
+    monkeypatch.setattr(service_app.httpx, "Client", FakeClient)
+
+    response = probe_llm_connection(SettingsUpdatePayload(llm_test_scope="knowledge"))
+
+    assert response["ok"] is True
+    assert calls[0]["url"] == "https://api.anthropic.com/v1/messages"
+    assert calls[0]["headers"]["x-api-key"] == "knowledge-key"
+    assert calls[0]["headers"]["anthropic-version"]
+    assert calls[0]["json"]["model"] == "claude-3-5-haiku-latest"
+
+
 def test_llm_connection_normalizes_mimo_model_and_requests_json_mode(monkeypatch, tmp_path: Path) -> None:
     current = ServiceSettings(
         data_dir=tmp_path / "data",
@@ -960,6 +1138,97 @@ def test_llm_connection_normalizes_mimo_model_and_requests_json_mode(monkeypatch
     assert calls[0]["json"]["response_format"] == {"type": "json_object"}
     assert calls[0]["json"]["enable_thinking"] is False
     assert calls[0]["json"]["chat_template_kwargs"] == {"enable_thinking": False}
+
+
+def test_llm_connection_accepts_choice_text_response(monkeypatch, tmp_path: Path) -> None:
+    current = ServiceSettings(
+        data_dir=tmp_path / "data",
+        cache_dir=tmp_path / "cache",
+        tasks_dir=tmp_path / "tasks",
+        runtime_channel="base",
+        llm_enabled=True,
+        llm_base_url="https://api.example.com/v1",
+        llm_api_key="test-key",
+        llm_model="test-model",
+    )
+    settings_manager._settings = current
+
+    class FakeResponse:
+        status_code = 200
+        text = '{"choices":[{"text":"{\\"ok\\":true,\\"message\\":\\"test\\"}"}]}'
+
+        def json(self) -> dict[str, object]:
+            return {"choices": [{"text": '{"ok":true,"message":"test"}'}]}
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def __enter__(self) -> "FakeClient":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def post(self, url: str, headers: dict[str, str], json: dict[str, object]) -> FakeResponse:
+            return FakeResponse()
+
+    monkeypatch.setattr(service_app.httpx, "Client", FakeClient)
+
+    response = probe_llm_connection()
+
+    assert response["ok"] is True
+    assert response["jsonPreview"] == '{"ok": true, "message": "test"}'
+
+
+def test_llm_connection_accepts_anthropic_messages_response(monkeypatch, tmp_path: Path) -> None:
+    current = ServiceSettings(
+        data_dir=tmp_path / "data",
+        cache_dir=tmp_path / "cache",
+        tasks_dir=tmp_path / "tasks",
+        runtime_channel="base",
+        llm_enabled=True,
+        llm_provider="anthropic",
+        llm_base_url="https://api.anthropic.com/v1",
+        llm_api_key="test-key",
+        llm_model="claude-3-5-haiku-latest",
+    )
+    settings_manager._settings = current
+
+    calls: list[dict[str, object]] = []
+
+    class FakeResponse:
+        status_code = 200
+        text = '{"content":[{"type":"text","text":"{\\"ok\\":true,\\"message\\":\\"test\\"}"}]}'
+
+        def json(self) -> dict[str, object]:
+            return {"content": [{"type": "text", "text": '{"ok":true,"message":"test"}'}]}
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def __enter__(self) -> "FakeClient":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def post(self, url: str, headers: dict[str, str], json: dict[str, object]) -> FakeResponse:
+            calls.append({"url": url, "headers": headers, "json": json})
+            return FakeResponse()
+
+    monkeypatch.setattr(service_app.httpx, "Client", FakeClient)
+
+    response = probe_llm_connection()
+
+    assert response["ok"] is True
+    assert calls[0]["url"] == "https://api.anthropic.com/v1/messages"
+    assert calls[0]["headers"]["x-api-key"] == "test-key"
+    assert calls[0]["headers"]["anthropic-version"] == "2023-06-01"
+    assert calls[0]["json"]["model"] == "claude-3-5-haiku-latest"
+    assert calls[0]["json"]["system"]
+    assert "response_format" not in calls[0]["json"]
 
 
 def test_llm_connection_requires_base_url(tmp_path: Path) -> None:

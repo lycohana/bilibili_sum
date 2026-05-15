@@ -2,6 +2,7 @@ import { ChildProcess, spawn, SpawnOptions } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import { createServer, IncomingMessage, Server, ServerResponse } from "node:http";
+import net from "node:net";
 import path from "node:path";
 import process from "node:process";
 import { Readable } from "node:stream";
@@ -130,9 +131,13 @@ const repoRoot = path.resolve(__dirname, "../../..");
 const rendererUrl = process.env.BILISUM_RENDERER_URL ?? process.env.BRIEFVID_RENDERER_URL ?? "http://127.0.0.1:5173";
 const backendUrl = "http://127.0.0.1:3838";
 const updaterConfigPath = path.join(process.resourcesPath, "app-update.yml");
+const iconFileName = process.platform === "darwin" ? "icon.icns" : "icon.ico";
 const iconPath = isDev
-  ? path.resolve(repoRoot, "apps/desktop/build/icon.ico")
-  : path.join(process.resourcesPath, "icon.ico");
+  ? path.resolve(repoRoot, "apps/desktop/build", iconFileName)
+  : path.join(process.resourcesPath, iconFileName);
+const fallbackIconPath = process.platform === "darwin"
+  ? path.join(process.resourcesPath, "app.asar.unpacked", "build", iconFileName)
+  : iconPath;
 const preferencesPath = path.join(app.getPath("userData"), "desktop-preferences.json");
 const accessTokenPath = path.join(app.getPath("userData"), "access-token.json");
 const legacyUserDataPath = path.join(app.getPath("appData"), LEGACY_PRODUCT_NAME);
@@ -148,6 +153,7 @@ let frontendStaticServer: Server | null = null;
 let frontendStaticUrl = "";
 let applicationLoadPromise: Promise<void> | null = null;
 let applicationLoadedTarget = "";
+let backendStoppingPromise: Promise<void> | null = null;
 let splashShownAt = 0;
 let forceQuit = false;
 let preferences: DesktopPreferences = loadPreferences();
@@ -174,13 +180,20 @@ let checkForUpdatesPromise: Promise<UpdateInfo> | null = null;
 let downloadUpdatePromise: Promise<UpdateInfo> | null = null;
 let downloadedUpdateVersion: string | null = null;
 let installRequestedAfterDownload = false;
+let quitAfterBackendStop = false;
 
 function getLocalAppDataDir() {
-  return process.env.LOCALAPPDATA || path.join(process.env.USERPROFILE || app.getPath("home"), "AppData", "Local");
+  if (process.platform === "win32") {
+    return process.env.LOCALAPPDATA || path.join(process.env.USERPROFILE || app.getPath("home"), "AppData", "Local");
+  }
+  if (process.platform === "darwin") {
+    return app.getPath("appData");
+  }
+  return process.env.XDG_DATA_HOME || path.join(app.getPath("home"), ".local", "share");
 }
 
 function currentLocalDataRoot() {
-  return path.join(getLocalAppDataDir(), APP_SLUG);
+  return process.env.VIDEO_SUM_APP_DATA_ROOT || path.join(getLocalAppDataDir(), APP_SLUG);
 }
 
 function legacyLocalDataRoot() {
@@ -227,24 +240,25 @@ function getServiceLogPath() {
   return path.join(currentLocalDataRoot(), "logs", "service.log");
 }
 
-function loadOrCreateDesktopAccessToken() {
-  const envToken = String(process.env.VIDEO_SUM_ACCESS_TOKEN || "").trim();
-  if (envToken) {
-    return envToken;
-  }
+function readAccessTokenFile(tokenPath: string, keys: string[]): string {
   try {
-    if (fs.existsSync(accessTokenPath)) {
-      const payload = JSON.parse(fs.readFileSync(accessTokenPath, "utf-8")) as { accessToken?: string; access_token?: string };
-      const existing = String(payload.accessToken || payload.access_token || "").trim();
-      if (existing) {
-        return existing;
+    if (!fs.existsSync(tokenPath)) {
+      return "";
+    }
+    const payload = JSON.parse(fs.readFileSync(tokenPath, "utf-8")) as Record<string, unknown>;
+    for (const key of keys) {
+      const token = String(payload[key] || "").trim();
+      if (token) {
+        return token;
       }
     }
   } catch (error) {
-    console.warn("[Auth] Failed to read desktop access token:", error);
+    console.warn(`[Auth] Failed to read access token file ${tokenPath}:`, error);
   }
+  return "";
+}
 
-  const token = crypto.randomBytes(32).toString("base64url");
+function writeDesktopAccessToken(token: string) {
   try {
     fs.mkdirSync(path.dirname(accessTokenPath), { recursive: true });
     fs.writeFileSync(
@@ -255,6 +269,43 @@ function loadOrCreateDesktopAccessToken() {
   } catch (error) {
     console.warn("[Auth] Failed to persist desktop access token:", error);
   }
+}
+
+function writeServiceAccessToken(tokenPath: string, token: string) {
+  try {
+    fs.mkdirSync(path.dirname(tokenPath), { recursive: true });
+    fs.writeFileSync(
+      tokenPath,
+      JSON.stringify({ access_token: token, created_at: new Date().toISOString() }, null, 2),
+      "utf-8",
+    );
+  } catch (error) {
+    console.warn(`[Auth] Failed to persist service access token ${tokenPath}:`, error);
+  }
+}
+
+function loadOrCreateDesktopAccessToken() {
+  const envToken = String(process.env.VIDEO_SUM_ACCESS_TOKEN || "").trim();
+  if (envToken) {
+    return envToken;
+  }
+
+  const serviceTokenPath = path.join(currentLocalDataRoot(), "data", "auth.json");
+  const serviceToken = readAccessTokenFile(serviceTokenPath, ["access_token", "accessToken"]);
+  if (serviceToken) {
+    writeDesktopAccessToken(serviceToken);
+    return serviceToken;
+  }
+
+  const existingDesktopToken = readAccessTokenFile(accessTokenPath, ["accessToken", "access_token"]);
+  if (existingDesktopToken) {
+    writeServiceAccessToken(serviceTokenPath, existingDesktopToken);
+    return existingDesktopToken;
+  }
+
+  const token = crypto.randomBytes(32).toString("base64url");
+  writeDesktopAccessToken(token);
+  writeServiceAccessToken(serviceTokenPath, token);
   return token;
 }
 
@@ -664,7 +715,7 @@ async function getStorageOverview(input: StorageOverviewInput): Promise<StorageO
     buildDirectoryStat("cache", "缓存目录", cacheDir),
     buildDirectoryStat("tasks", "任务结果", tasksDir),
     buildDirectoryStat("logs", "日志目录", logsDir),
-    buildDirectoryStat("runtime", "运行时目录", runtimeDir),
+    buildDirectoryStat("runtime", "运行环境目录", runtimeDir),
   ]);
   const dataStats = directories.find((item) => item.key === "data") || directories[0];
   const logsStats = directories.find((item) => item.key === "logs");
@@ -1053,7 +1104,7 @@ function getSplashMarkup(message = "正在启动 BiliSum 服务...") {
           .brand-mark svg {
             width: 48px;
             height: 48px;
-            filter: drop-shadow(0 6px 10px rgba(63, 162, 210, 0.22));
+            filter: drop-shadow(0 6px 10px rgba(251, 114, 153, 0.2));
           }
           h1 {
             margin: 0 0 8px;
@@ -1163,16 +1214,22 @@ function getSplashMarkup(message = "正在启动 BiliSum 服务...") {
           </button>
           <div class="brand">
             <div class="brand-mark" aria-hidden="true">
-              <svg viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M12 38C17 26 21 24 26 36C30 45 35 44 39 32C43 20 49 18 54 27" stroke="url(#wave)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round"/>
-                <path d="M40 22H54M43 31H55" stroke="#67d1c8" stroke-width="4.8" stroke-linecap="round"/>
+              <svg viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
                 <defs>
-                  <linearGradient id="wave" x1="12" y1="34" x2="55" y2="34" gradientUnits="userSpaceOnUse">
-                    <stop stop-color="#8dc4ff"/>
-                    <stop offset="0.5" stop-color="#a9e7ff"/>
-                    <stop offset="1" stop-color="#70dfc8"/>
+                  <linearGradient id="splash-icon-bg" x1="56" y1="56" x2="456" y2="456" gradientUnits="userSpaceOnUse">
+                    <stop stop-color="#FF9ABA"/>
+                    <stop offset="1" stop-color="#F85D8E"/>
                   </linearGradient>
                 </defs>
+                <rect x="56" y="56" width="400" height="400" rx="96" fill="url(#splash-icon-bg)"/>
+                <rect x="132" y="112" width="248" height="288" rx="42" fill="#FFFFFF"/>
+                <path d="M314 112H340C362.091 112 380 129.909 380 152V178H354C331.909 178 314 160.091 314 138V112Z" fill="#FFE6EE"/>
+                <circle cx="318" cy="172" r="32" fill="#FB7299"/>
+                <path d="M307 157L329 172L307 187V157Z" fill="#FFFFFF"/>
+                <rect x="172" y="172" width="96" height="20" rx="10" fill="#FB7299"/>
+                <rect x="172" y="222" width="160" height="20" rx="10" fill="#FB7299" opacity="0.9"/>
+                <rect x="172" y="272" width="138" height="20" rx="10" fill="#FB7299" opacity="0.72"/>
+                <rect x="172" y="322" width="112" height="20" rx="10" fill="#FB7299" opacity="0.5"/>
               </svg>
             </div>
             <div>
@@ -1266,7 +1323,7 @@ async function waitForBackendReady(timeoutMs = 60_000): Promise<boolean> {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     try {
-      const response = await fetch(`${backendUrl}/health`);
+      const response = await fetch(`${backendUrl}/health`, { headers: withBackendAuthHeaders() });
       if (response.ok) {
         updateBackendStatus({ ready: true, lastError: "" });
         return true;
@@ -1280,13 +1337,18 @@ async function waitForBackendReady(timeoutMs = 60_000): Promise<boolean> {
   return false;
 }
 
-async function probeBackendReady(timeoutMs = 300): Promise<boolean> {
+async function probeBackendReady(timeoutMs = 300, updateStatus = true): Promise<boolean> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const response = await fetch(`${backendUrl}/health`, { signal: controller.signal });
+    const response = await fetch(`${backendUrl}/health`, {
+      headers: withBackendAuthHeaders(),
+      signal: controller.signal,
+    });
     if (response.ok) {
-      updateBackendStatus({ ready: true, lastError: "" });
+      if (updateStatus) {
+        updateBackendStatus({ ready: true, lastError: "" });
+      }
       return true;
     }
   } catch {
@@ -1295,6 +1357,25 @@ async function probeBackendReady(timeoutMs = 300): Promise<boolean> {
     clearTimeout(timeout);
   }
   return false;
+}
+
+async function probeBackendPortBusy(timeoutMs = 300): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = net.createConnection({ host: "127.0.0.1", port: 3838 });
+    const timer = setTimeout(() => {
+      socket.destroy();
+      resolve(false);
+    }, timeoutMs);
+    socket.once("connect", () => {
+      clearTimeout(timer);
+      socket.destroy();
+      resolve(true);
+    });
+    socket.once("error", () => {
+      clearTimeout(timer);
+      resolve(false);
+    });
+  });
 }
 
 function resolveDevPython(): { command: string; args: string[]; cwd: string; forceHidden?: boolean } {
@@ -1361,6 +1442,7 @@ function getDevPythonPathEntries() {
 }
 
 function resolvePackagedBackend(): { command: string; args: string[]; cwd: string } {
+  const executableName = process.platform === "win32" ? "BiliSum.exe" : "BiliSum";
   const candidateRoots = [
     path.join(process.resourcesPath, "backend", "BiliSum"),
     path.join(path.dirname(process.execPath), "resources", "backend", "BiliSum"),
@@ -1368,8 +1450,15 @@ function resolvePackagedBackend(): { command: string; args: string[]; cwd: strin
   ];
 
   for (const backendRoot of candidateRoots) {
-    const command = path.join(backendRoot, "BiliSum.exe");
+    const command = path.join(backendRoot, executableName);
     if (fs.existsSync(command) && fs.existsSync(backendRoot)) {
+      if (process.platform !== "win32") {
+        try {
+          fs.chmodSync(command, 0o755);
+        } catch (error) {
+          console.warn("[Backend] Failed to mark packaged backend executable:", error);
+        }
+      }
       return {
         command,
         args: [],
@@ -1380,19 +1469,23 @@ function resolvePackagedBackend(): { command: string; args: string[]; cwd: strin
 
   throw new Error(
     [
-      "未找到内置后端文件 BiliSum.exe。",
-      "请确认安装目录下存在 resources\\backend\\BiliSum\\BiliSum.exe。",
+      `未找到内置后端文件 ${executableName}。`,
+      `请确认安装目录下存在 ${path.join("resources", "backend", "BiliSum", executableName)}。`,
       `当前 resourcesPath: ${process.resourcesPath}`,
     ].join(" "),
   );
 }
 
 function resolvePackagedWebStaticRoot(): string {
-  const candidateRoots = [
-    path.join(process.resourcesPath, "backend", "BiliSum", "_internal", "web", "static"),
-    path.join(path.dirname(process.execPath), "resources", "backend", "BiliSum", "_internal", "web", "static"),
-    path.join(path.dirname(app.getAppPath()), "backend", "BiliSum", "_internal", "web", "static"),
+  const backendRoots = [
+    path.join(process.resourcesPath, "backend", "BiliSum"),
+    path.join(path.dirname(process.execPath), "resources", "backend", "BiliSum"),
+    path.join(path.dirname(app.getAppPath()), "backend", "BiliSum"),
   ];
+  const candidateRoots = backendRoots.flatMap((backendRoot) => [
+    path.join(backendRoot, "_internal", "web", "static"),
+    path.join(backendRoot, "web", "static"),
+  ]);
 
   for (const staticRoot of candidateRoots) {
     if (fs.existsSync(path.join(staticRoot, "index.html"))) {
@@ -1631,8 +1724,7 @@ async function startBackend(): Promise<BackendStatus> {
     return { ...backendStatus, ready };
   }
 
-  const existingReady = await probeBackendReady(300);
-  if (existingReady) {
+  if (isDev && await probeBackendReady(300)) {
     updateBackendStatus({
       running: true,
       ready: true,
@@ -1640,6 +1732,17 @@ async function startBackend(): Promise<BackendStatus> {
       lastError: "",
     });
     return { ...backendStatus, running: true, ready: true, pid: null, lastError: "" };
+  }
+  if (!isDev && await probeBackendPortBusy(300)) {
+    const message = "BiliSum 服务端口已被占用，请退出旧版 BiliSum 后重试。";
+    updateBackendStatus({
+      running: false,
+      ready: false,
+      pid: null,
+      lastError: message,
+    });
+    loadSplash(message);
+    return backendStatus;
   }
 
   let target: { command: string; args: string[]; cwd: string; forceHidden?: boolean };
@@ -1676,6 +1779,7 @@ async function startBackend(): Promise<BackendStatus> {
       VIDEO_SUM_HOST: "127.0.0.1",
       VIDEO_SUM_PORT: "3838",
       VIDEO_SUM_ACCESS_TOKEN: getDesktopAccessToken(),
+      VIDEO_SUM_APP_DATA_ROOT: currentLocalDataRoot(),
       ...(isDev
         ? {
             PYTHONPATH: [
@@ -1766,6 +1870,22 @@ async function stopBackend(): Promise<BackendStatus> {
   }
   const current = backendProcess;
   backendProcess = null;
+  backendStoppingPromise = new Promise((resolve) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      if (backendStoppingPromise) {
+        backendStoppingPromise = null;
+      }
+      resolve();
+    };
+    current.once("exit", finish);
+    current.once("error", finish);
+    setTimeout(finish, 5_000);
+  });
   current.kill();
   updateBackendStatus({
     running: false,
@@ -1776,6 +1896,7 @@ async function stopBackend(): Promise<BackendStatus> {
   if (!isDev) {
     loadSplash("BiliSum 服务已停止。");
   }
+  await backendStoppingPromise;
   return backendStatus;
 }
 
@@ -1831,8 +1952,13 @@ async function loadApplication() {
 }
 
 function getTrayImage() {
-  const image = nativeImage.createFromPath(iconPath);
-  return image.isEmpty() ? nativeImage.createFromPath(iconPath) : image;
+  for (const candidate of [iconPath, fallbackIconPath]) {
+    const image = nativeImage.createFromPath(candidate);
+    if (!image.isEmpty()) {
+      return image;
+    }
+  }
+  return nativeImage.createEmpty();
 }
 
 function setAutoLaunch(enabled: boolean): boolean {
@@ -2268,7 +2394,7 @@ function downloadUpdate(): Promise<UpdateInfo> {
   return downloadUpdatePromise;
 }
 
-function installAndRestart(): void {
+async function installAndRestart(): Promise<void> {
   if (isDev || !canUseAutoUpdater()) {
     return;
   }
@@ -2278,9 +2404,24 @@ function installAndRestart(): void {
   }
   installRequestedAfterDownload = false;
   updateUpdateStatus({ status: "installing", errorMessage: null });
-  setTimeout(() => {
-    autoUpdater.quitAndInstall();
-  }, 200);
+  try {
+    if (backendProcess) {
+      await stopBackend();
+    } else if (backendStoppingPromise) {
+      await backendStoppingPromise;
+    } else {
+      const portStillBusy = await probeBackendReady(300, false);
+      if (portStillBusy) {
+        throw new Error("后端端口仍被占用，无法安全安装更新。请退出旧版 BiliSum 后重试。");
+      }
+    }
+    setTimeout(() => {
+      autoUpdater.quitAndInstall();
+    }, 200);
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : "安装更新前停止后端失败";
+    updateUpdateStatus({ status: "error", errorMessage });
+  }
 }
 
 function registerIpcHandlers() {
@@ -2306,6 +2447,7 @@ function registerIpcHandlers() {
   ipcMain.handle("desktop:backend:start", async () => startBackend());
   ipcMain.handle("desktop:backend:stop", async () => stopBackend());
   ipcMain.handle("desktop:backend:status", () => backendStatus);
+  ipcMain.handle("desktop:backend:get-access-token", () => getDesktopAccessToken());
   ipcMain.handle("desktop:clipboard:write-image", (_event, dataUrl: string) => {
     const image = nativeImage.createFromDataURL(dataUrl);
     if (image.isEmpty()) {
@@ -2406,9 +2548,21 @@ app.whenReady().then(async () => {
   });
 });
 
-app.on("before-quit", () => {
+app.on("before-quit", (event) => {
+  if (backendProcess && !quitAfterBackendStop) {
+    event.preventDefault();
+    quitAfterBackendStop = true;
+    void stopBackend().finally(() => {
+      forceQuit = true;
+      app.quit();
+    });
+    return;
+  }
   forceQuit = true;
   frontendStaticServer?.close();
+  if (backendProcess && !backendProcess.killed) {
+    backendProcess.kill();
+  }
   // 清理 autoUpdater 监听器，防止在应用退出后仍触发
   autoUpdater.removeAllListeners();
 });

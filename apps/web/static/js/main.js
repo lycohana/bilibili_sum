@@ -473,6 +473,14 @@ async function handleSettingsSubmit(event) {
     llm_base_url: readTrimmedValue("llm_base_url", current.llm_base_url || ""),
     llm_model: readTrimmedValue("llm_model", current.llm_model || ""),
     llm_api_key: readValue("llm_api_key", current.llm_api_key || ""),
+    knowledge_llm_mode: readValue("knowledge_llm_mode", current.knowledge_llm_mode || "same_as_main"),
+    knowledge_llm_enabled: readChecked("knowledge_llm_enabled", Boolean(current.knowledge_llm_enabled)),
+    knowledge_llm_provider: readTrimmedValue("knowledge_llm_provider", current.knowledge_llm_provider || "openai-compatible"),
+    knowledge_llm_base_url: readTrimmedValue("knowledge_llm_base_url", current.knowledge_llm_base_url || ""),
+    knowledge_llm_model: readTrimmedValue("knowledge_llm_model", current.knowledge_llm_model || ""),
+    knowledge_llm_api_key: readValue("knowledge_llm_api_key", current.knowledge_llm_api_key || ""),
+    knowledge_enabled: readChecked("knowledge_enabled", Boolean(current.knowledge_enabled)),
+    knowledge_index_auto_rebuild: readValue("knowledge_index_auto_rebuild", current.knowledge_index_auto_rebuild || "disabled"),
     summary_system_prompt: readValue("summary_system_prompt", current.summary_system_prompt || ""),
     summary_user_prompt_template: readValue(
       "summary_user_prompt_template",
@@ -542,7 +550,7 @@ async function handleInstallCuda() {
     setTransientStatus(
       "cudaActionStatus",
       response.restartRequired
-        ? "CUDA 安装完成，请重启应用后切换到新的 GPU 运行时"
+        ? "CUDA 安装完成，请重启应用后切换到新的 GPU 运行环境"
         : "CUDA 安装完成",
       { shouldRender: false },
     );

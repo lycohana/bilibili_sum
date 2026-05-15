@@ -15,9 +15,36 @@ BUILD_ROOT = ROOT / "build" / "pyinstaller"
 BUILD_VENV_DIR = BUILD_ROOT / "build-venv"
 RUNTIME_DIR = BUILD_ROOT / "runtime" / "base"
 BIN_DIR = BUILD_ROOT / "bin"
-PROJECT_FFMPEG_DIR = ROOT / "tools" / "ffmpeg" / "win-x64"
 SPEC_PATH = ROOT / "packaging" / "pyinstaller" / "bilisum.spec"
 VERSION_FILE = ROOT / "VERSION"
+IS_WINDOWS = sys.platform == "win32"
+IS_MACOS = sys.platform == "darwin"
+PROJECT_FFMPEG_DIR = ROOT / "tools" / "ffmpeg" / ("win-x64" if IS_WINDOWS else "macos")
+
+
+def executable_name(name: str) -> str:
+    return f"{name}.exe" if IS_WINDOWS else name
+
+
+def venv_python_candidates(venv_dir: Path) -> list[Path]:
+    return [
+        venv_dir / "Scripts" / "python.exe",
+        venv_dir / "python.exe",
+        venv_dir / "bin" / "python",
+        venv_dir / "bin" / "python3",
+        venv_dir / "python",
+    ]
+
+
+def site_packages_dir(python_exe: Path) -> Path:
+    result = subprocess.run(
+        [str(python_exe), "-c", "import sysconfig; print(sysconfig.get_path('purelib'))"],
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    return Path(result.stdout.strip())
 
 
 def run(command: list[str], cwd: Path | None = None) -> None:
@@ -45,31 +72,23 @@ def ensure_python_version() -> None:
 
 
 def runtime_python() -> Path:
-    candidates = [
-        RUNTIME_DIR / "Scripts" / "python.exe",
-        RUNTIME_DIR / "python.exe",
-    ]
-    for candidate in candidates:
+    for candidate in venv_python_candidates(RUNTIME_DIR):
         if candidate.exists():
             return candidate
-    raise FileNotFoundError("Managed runtime python.exe was not created.")
+    raise FileNotFoundError("Managed runtime python executable was not created.")
 
 
 def build_python() -> Path:
-    candidates = [
-        BUILD_VENV_DIR / "Scripts" / "python.exe",
-        BUILD_VENV_DIR / "python.exe",
-    ]
-    for candidate in candidates:
+    for candidate in venv_python_candidates(BUILD_VENV_DIR):
         if candidate.exists():
             return candidate
-    raise FileNotFoundError("Build virtualenv python.exe was not created.")
+    raise FileNotFoundError("Build virtualenv python executable was not created.")
 
 
 def create_build_venv() -> None:
     if BUILD_VENV_DIR.exists():
         remove_tree(BUILD_VENV_DIR)
-    builder = venv.EnvBuilder(with_pip=True, clear=True)
+    builder = venv.EnvBuilder(with_pip=True, clear=True, symlinks=False)
     builder.create(BUILD_VENV_DIR)
 
 
@@ -78,7 +97,7 @@ def create_runtime_seed() -> None:
         remove_tree(RUNTIME_DIR)
     RUNTIME_DIR.parent.mkdir(parents=True, exist_ok=True)
 
-    builder = venv.EnvBuilder(with_pip=True, clear=True)
+    builder = venv.EnvBuilder(with_pip=True, clear=True, symlinks=False)
     builder.create(RUNTIME_DIR)
     python_exe = runtime_python()
     run([str(python_exe), "-m", "pip", "install", "--upgrade", "pip", "setuptools", "wheel"])
@@ -96,8 +115,11 @@ def create_runtime_seed() -> None:
     # 清理运行时环境中不必要的包，减小打包体积
     cleanup_runtime_site_packages(python_exe)
     # 清理 direct_url.json 元数据，避免生产环境路径无效
-    cleanup_direct_url_metadata(RUNTIME_DIR / "Lib" / "site-packages")
-    make_portable_python_runtime(RUNTIME_DIR)
+    cleanup_direct_url_metadata(site_packages_dir(python_exe))
+    if IS_WINDOWS:
+        make_portable_python_runtime(RUNTIME_DIR)
+    elif IS_MACOS:
+        make_portable_macos_runtime(RUNTIME_DIR)
     write_runtime_seed_metadata(RUNTIME_DIR)
 
 
@@ -112,6 +134,79 @@ def base_python_root() -> Path:
         if candidate is not None and (candidate / "python.exe").exists():
             return candidate
     raise FileNotFoundError("Unable to locate the base Python installation for portable runtime packaging.")
+
+
+def macos_base_python_root() -> Path:
+    """Return the uv-managed CPython install root used to build the venv."""
+    probe = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import json, pathlib, sysconfig; "
+                "print(json.dumps({'base': sysconfig.get_config_var('base'), "
+                "'stdlib': sysconfig.get_path('stdlib'), "
+                "'platstdlib': sysconfig.get_path('platstdlib')}))"
+            ),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    payload = json.loads(probe.stdout.strip() or "{}")
+    for key in ("base", "platstdlib", "stdlib"):
+        value = str(payload.get(key) or "")
+        if not value:
+            continue
+        candidate = Path(value).resolve()
+        if key != "base":
+            candidate = candidate.parents[1] if candidate.name.startswith("python") else candidate.parent
+        if (candidate / "bin" / f"python{sys.version_info.major}.{sys.version_info.minor}").exists():
+            return candidate
+    raise FileNotFoundError("Unable to locate the uv-managed macOS Python runtime root.")
+
+
+def make_portable_macos_runtime(runtime_dir: Path) -> None:
+    """Bundle uv-managed macOS CPython pieces needed after the runtime is relocated."""
+    python_root = macos_base_python_root()
+    portable_stdlib_dir = runtime_dir / "stdlib"
+    portable_lib_dir = runtime_dir / "lib"
+    python_version = f"python{sys.version_info.major}.{sys.version_info.minor}"
+
+    source_stdlib = python_root / "lib" / python_version
+    if not source_stdlib.exists():
+        raise FileNotFoundError(f"Base Python stdlib not found: {source_stdlib}")
+    shutil.copytree(
+        source_stdlib,
+        portable_stdlib_dir,
+        dirs_exist_ok=True,
+        ignore=shutil.ignore_patterns("site-packages", "__pycache__"),
+    )
+
+    source_lib = python_root / "lib"
+    portable_lib_dir.mkdir(parents=True, exist_ok=True)
+    for pattern in ("libpython*.dylib", "libpython*.a"):
+        for source in source_lib.glob(pattern):
+            shutil.copy2(source, portable_lib_dir / source.name)
+
+    site_packages = site_packages_dir(runtime_python())
+    pyvenv_cfg = runtime_dir / "pyvenv.cfg"
+    if pyvenv_cfg.exists():
+        pyvenv_cfg.unlink()
+
+    (runtime_dir / "pythonpath.pth").write_text(
+        "\n".join(
+            [
+                str(portable_stdlib_dir.relative_to(runtime_dir)),
+                str(site_packages.relative_to(runtime_dir)),
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    print(f"Prepared portable macOS Python runtime from {python_root} -> {runtime_dir}")
+    verify_portable_macos_runtime(runtime_dir)
 
 
 def make_portable_python_runtime(runtime_dir: Path) -> None:
@@ -181,11 +276,41 @@ def verify_portable_python_runtime(runtime_dir: Path) -> None:
     subprocess.run(probe, cwd=runtime_dir, check=True)
 
 
+def portable_runtime_python(runtime_dir: Path) -> Path:
+    for candidate in venv_python_candidates(runtime_dir):
+        if candidate.exists():
+            return candidate
+    raise FileNotFoundError(f"Portable runtime Python missing: {runtime_dir}")
+
+
+def verify_portable_macos_runtime(runtime_dir: Path) -> None:
+    python_exe = portable_runtime_python(runtime_dir)
+    env = dict(os.environ)
+    pythonpath = runtime_dir / "pythonpath.pth"
+    entries = [
+        str((runtime_dir / line.strip()).resolve())
+        for line in pythonpath.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    env.pop("PYTHONHOME", None)
+    env.pop("__PYVENV_LAUNCHER__", None)
+    env["PYTHONPATH"] = os.pathsep.join(entries)
+    probe = [
+        str(python_exe),
+        "-c",
+        (
+            "import encodings, json, sqlite3, ssl, sys, video_sum_core; "
+            "print(json.dumps({'exe': sys.executable, 'prefix': sys.prefix, 'path': sys.path[:3]}))"
+        ),
+    ]
+    subprocess.run(probe, cwd=runtime_dir, env=env, check=True)
+
+
 def write_runtime_seed_metadata(runtime_dir: Path) -> None:
     version = VERSION_FILE.read_text(encoding="utf-8").strip() if VERSION_FILE.exists() else "0.0.0"
     payload = {
         "runtimeChannel": "base",
-        "runtimeLayout": "portable-cpython",
+        "runtimeLayout": "portable-cpython" if (IS_WINDOWS or IS_MACOS) else "venv",
         "appVersion": version,
         "pythonVersion": f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
     }
@@ -225,7 +350,7 @@ def cleanup_direct_url_metadata(site_packages: Path) -> None:
 
 def cleanup_runtime_site_packages(python_exe: Path) -> None:
     """删除运行时环境中不必要的包，减小打包体积。"""
-    site_packages = RUNTIME_DIR / "Lib" / "site-packages"
+    site_packages = site_packages_dir(python_exe)
     if not site_packages.exists():
         return
 
@@ -294,10 +419,107 @@ def copy_ffmpeg_binaries() -> None:
             "or a usable VIDEO_SUM_FFMPEG_DIR / system ffmpeg installation."
         )
 
-    for name in ("ffmpeg.exe", "ffprobe.exe"):
+    for name in (executable_name("ffmpeg"), executable_name("ffprobe")):
         source = source_dir / name
         if source.exists():
             shutil.copy2(source, BIN_DIR / name)
+    copy_macos_ffmpeg_libraries(source_dir)
+
+
+def copy_macos_ffmpeg_libraries(source_dir: Path) -> None:
+    if not IS_MACOS:
+        return
+    required_libraries = resolve_macos_ffmpeg_libraries(
+        [source_dir / executable_name("ffmpeg"), source_dir / executable_name("ffprobe")]
+    )
+    if not required_libraries:
+        return
+    lib_dir = BIN_DIR / "lib"
+    lib_dir.mkdir(parents=True, exist_ok=True)
+    for library in required_libraries:
+        shutil.copy2(library, lib_dir / library.name)
+    for executable in (BIN_DIR / executable_name("ffmpeg"), BIN_DIR / executable_name("ffprobe")):
+        rewrite_macos_binary_library_paths(executable, lib_dir, "@executable_path/lib")
+    for library in lib_dir.glob("*.dylib"):
+        run(["install_name_tool", "-id", f"@rpath/{library.name}", str(library)])
+        rewrite_macos_binary_library_paths(library, lib_dir, "@loader_path")
+
+
+def resolve_macos_ffmpeg_libraries(seed_binaries: list[Path]) -> list[Path]:
+    resolved: list[Path] = []
+    queue = [binary for binary in seed_binaries if binary.exists()]
+    seen: set[Path] = set()
+    while queue:
+        binary = queue.pop(0).resolve()
+        if binary in seen:
+            continue
+        seen.add(binary)
+        for library in macos_linked_libraries(binary):
+            if library in resolved:
+                continue
+            resolved.append(library)
+            queue.append(library)
+    return resolved
+
+
+def macos_linked_libraries(binary: Path) -> list[Path]:
+    result = subprocess.run(
+        ["otool", "-L", str(binary)],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    libraries: list[Path] = []
+    for raw_line in result.stdout.splitlines()[1:]:
+        library_ref = raw_line.strip().split(" ", 1)[0]
+        if not library_ref.startswith(("/opt/homebrew/", "/usr/local/")):
+            continue
+        library = Path(library_ref)
+        if library.exists():
+            libraries.append(library.resolve())
+    return libraries
+
+
+def rewrite_macos_binary_library_paths(binary: Path, lib_dir: Path, rpath: str) -> None:
+    if not binary.exists():
+        return
+    add_macos_rpath(binary, rpath)
+    for library in macos_linked_libraries(binary):
+        bundled_library = lib_dir / library.name
+        if bundled_library.exists():
+            run(["install_name_tool", "-change", str(library), f"@rpath/{library.name}", str(binary)])
+
+
+def add_macos_rpath(binary: Path, rpath: str) -> None:
+    if rpath in macos_rpaths(binary):
+        return
+    run(["install_name_tool", "-add_rpath", rpath, str(binary)])
+
+
+def macos_rpaths(binary: Path) -> set[str]:
+    result = subprocess.run(
+        ["otool", "-l", str(binary)],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    rpaths: set[str] = set()
+    lines = result.stdout.splitlines()
+    for index, line in enumerate(lines):
+        if line.strip() != "cmd LC_RPATH":
+            continue
+        for detail in lines[index + 1 : index + 6]:
+            detail = detail.strip()
+            if detail.startswith("path "):
+                rpaths.add(detail.split(" ", 2)[1])
+                break
+    return rpaths
 
 
 def resolve_ffmpeg_source_dir() -> Path | None:
@@ -349,14 +571,14 @@ def resolve_ffmpeg_source_dir() -> Path | None:
 def ffmpeg_dir_candidates(ffmpeg_executable: Path) -> list[Path]:
     candidates = [ffmpeg_executable.parent]
     path_text = str(ffmpeg_executable).lower()
-    if "chocolatey\\bin\\ffmpeg.exe" in path_text:
+    if IS_WINDOWS and "chocolatey\\bin\\ffmpeg.exe" in path_text:
         candidates.insert(0, ffmpeg_executable.parent.parent / "lib" / "ffmpeg" / "tools" / "ffmpeg" / "bin")
     return [candidate.resolve() for candidate in candidates]
 
 
 def ffmpeg_dir_is_usable(directory: Path) -> bool:
-    ffmpeg_executable = directory / "ffmpeg.exe"
-    ffprobe_executable = directory / "ffprobe.exe"
+    ffmpeg_executable = directory / executable_name("ffmpeg")
+    ffprobe_executable = directory / executable_name("ffprobe")
     if not ffmpeg_executable.exists() or not ffprobe_executable.exists():
         return False
     return executable_runs(ffmpeg_executable) and executable_runs(ffprobe_executable)
@@ -404,7 +626,7 @@ def cleanup_build_site_packages(python_exe: Path) -> None:
     注意：这不会减小最终安装包体积（因为 PyInstaller 只收集依赖的模块），
     但可以减少警告和避免意外收集。
     """
-    site_packages = BUILD_VENV_DIR / "Lib" / "site-packages"
+    site_packages = site_packages_dir(python_exe)
     if not site_packages.exists():
         return
 

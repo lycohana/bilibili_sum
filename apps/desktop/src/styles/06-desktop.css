@@ -684,35 +684,140 @@
 
 .progress-stage-list {
   display: grid;
-  gap: 10px;
-  padding: 16px;
+  gap: 0;
+  padding: 14px 16px 16px;
   max-height: 280px;
   overflow: auto;
 }
 
-.progress-event-card {
+.progress-phase-view {
   display: grid;
-  grid-template-columns: auto 1fr;
   gap: 12px;
-  padding: 12px;
-  border-radius: var(--radius-md);
-  border: 1px solid var(--border-subtle);
-  background: var(--bg-card);
+  padding: 14px 16px 16px;
+  max-height: min(420px, 54vh);
+  overflow: auto;
 }
 
-.progress-event-card.active {
-  border-color: var(--brand-400);
+.progress-focus-card {
+  display: grid;
+  gap: 4px;
+  padding: 12px 14px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-subtle);
+  background: color-mix(in srgb, var(--bg-card) 92%, var(--bg-subtle) 8%);
+}
+
+.progress-focus-card span {
+  color: var(--text-tertiary);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.progress-focus-card strong {
+  color: var(--text-primary);
+  font-size: 0.95rem;
+}
+
+.progress-focus-card small {
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.progress-focus-card.tone-failed {
+  border-color: var(--danger-border);
+  background: var(--bg-danger);
+}
+
+.progress-focus-card.tone-active {
+  border-color: var(--accent-border);
   background: var(--bg-accent);
 }
 
-.progress-event-card.completed {
-  border-color: var(--success);
+.progress-focus-card.tone-done {
+  border-color: var(--success-border);
   background: var(--bg-success);
 }
 
-.progress-event-card.error {
-  border-color: var(--danger);
+.progress-phase-tree {
+  display: grid;
+  gap: 12px;
+}
+
+.progress-phase-group {
+  display: grid;
+  gap: 8px;
+}
+
+.progress-phase-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.progress-phase-head strong {
+  color: var(--text-primary);
+  font-size: 0.92rem;
+}
+
+.progress-phase-head span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 0 8px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-subtle);
+  color: var(--text-tertiary);
+  font-size: 0.74rem;
+  font-weight: 700;
+}
+
+.progress-phase-group.tone-failed .progress-phase-head span {
   background: var(--bg-danger);
+  color: var(--danger);
+}
+
+.progress-phase-group.tone-active .progress-phase-head span {
+  background: var(--bg-accent);
+  color: var(--brand-600);
+}
+
+.progress-phase-group.tone-done .progress-phase-head span {
+  background: var(--bg-success);
+  color: var(--success);
+}
+
+.progress-phase-group .progress-stage-list {
+  max-height: none;
+  overflow: visible;
+  padding: 0 0 0 2px;
+}
+
+.progress-event-card {
+  position: relative;
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 12px;
+  padding: 0 0 14px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.progress-event-card.active {
+  border-color: transparent;
+  background: transparent;
+}
+
+.progress-event-card.completed {
+  border-color: transparent;
+  background: transparent;
+}
+
+.progress-event-card.error {
+  border-color: transparent;
+  background: transparent;
 }
 
 .progress-event-index {
@@ -728,9 +833,48 @@
   font-weight: 700;
 }
 
+.progress-event-card::before {
+  content: "";
+  position: absolute;
+  top: 14px;
+  bottom: -2px;
+  left: 6px;
+  width: 1px;
+  background: color-mix(in srgb, var(--border-default) 76%, transparent);
+}
+
+.progress-event-card:last-child::before {
+  display: none;
+}
+
+.progress-event-node {
+  position: relative;
+  z-index: 1;
+  width: 13px;
+  height: 13px;
+  margin-top: 3px;
+  border-radius: 999px;
+  border: 2px solid var(--border-default);
+  background: var(--bg-card);
+}
+
+.progress-event-card.active .progress-event-node {
+  border-color: var(--brand-500);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--brand-500) 12%, transparent);
+}
+
+.progress-event-card.completed .progress-event-node {
+  border-color: var(--success);
+}
+
+.progress-event-card.error .progress-event-node {
+  border-color: var(--danger);
+}
+
 .progress-event-copy {
   display: grid;
-  gap: 6px;
+  gap: 7px;
+  min-width: 0;
 }
 
 .progress-event-topline {
@@ -742,10 +886,46 @@
 
 .progress-event-topline strong {
   line-height: 1.4;
+  color: var(--text-primary);
 }
 
-.progress-event-topline span {
+.progress-event-topline span,
+.progress-event-topline time {
   color: var(--text-tertiary);
   font-size: 0.8rem;
+}
+
+.progress-event-count {
+  color: var(--text-tertiary);
+  font-weight: 700;
+}
+
+.progress-event-bar {
+  position: relative;
+  overflow: hidden;
+  width: 100%;
+  height: 5px;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--border-subtle) 72%, transparent);
+}
+
+.progress-event-bar span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--brand-500);
+}
+
+.progress-event-card.completed .progress-event-bar span {
+  background: var(--success);
+}
+
+.progress-event-card.error .progress-event-bar span {
+  background: var(--danger);
+}
+
+.progress-event-meta {
+  color: var(--text-tertiary);
+  font-size: 0.78rem;
 }
 

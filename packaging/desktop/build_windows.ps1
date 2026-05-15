@@ -8,6 +8,7 @@ $ErrorActionPreference = "Stop"
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..\..")
 $desktopDir = Join-Path $repoRoot "apps\desktop"
 $rceditPatchScript = Join-Path $repoRoot "scripts\patch_electron_builder_rcedit.js"
+$webStaticValidationScript = Join-Path $repoRoot "scripts\validate_web_static_assets.js"
 $winCodeSignVersion = "2.6.0"
 $winCodeSignArchiveName = "winCodeSign-$winCodeSignVersion.7z"
 $winCodeSignUrl = "https://github.com/electron-userland/electron-builder-binaries/releases/download/winCodeSign-$winCodeSignVersion/$winCodeSignArchiveName"
@@ -35,6 +36,89 @@ function Ensure-PythonPip {
     if ($LASTEXITCODE -ne 0) {
         throw "pip is still unavailable after ensurepip for $PythonExe"
     }
+}
+
+function Invoke-ProcessChecked {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$FilePath,
+        [Parameter(Mandatory = $true)]
+        [string[]]$ArgumentList,
+        [Parameter(Mandatory = $true)]
+        [string]$FailureMessage
+    )
+
+    $process = Start-Process `
+        -FilePath $FilePath `
+        -ArgumentList $ArgumentList `
+        -NoNewWindow `
+        -Wait `
+        -PassThru
+    if ($process.ExitCode -ne 0) {
+        throw $FailureMessage
+    }
+}
+
+function Test-PythonModule {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$PythonExe,
+        [Parameter(Mandatory = $true)]
+        [string]$ModuleName
+    )
+
+    $stdoutPath = [System.IO.Path]::GetTempFileName()
+    $stderrPath = [System.IO.Path]::GetTempFileName()
+    try {
+        $process = Start-Process `
+            -FilePath $PythonExe `
+            -ArgumentList "-c `"import $ModuleName`"" `
+            -NoNewWindow `
+            -Wait `
+            -PassThru `
+            -RedirectStandardOutput $stdoutPath `
+            -RedirectStandardError $stderrPath
+        return $process.ExitCode -eq 0
+    }
+    finally {
+        Remove-Item $stdoutPath -Force -ErrorAction SilentlyContinue
+        Remove-Item $stderrPath -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Ensure-IconPython {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$BasePythonExe
+    )
+
+    if (Test-PythonModule -PythonExe $BasePythonExe -ModuleName "PIL") {
+        return $BasePythonExe
+    }
+
+    $iconVenvDir = Join-Path $repoRoot "build\icon-python"
+    $iconPython = Join-Path $iconVenvDir "Scripts\python.exe"
+
+    if (-not (Test-Path $iconPython)) {
+        Write-Host "Creating isolated Python environment for icon generation: $iconVenvDir"
+        New-Item -ItemType Directory -Force -Path (Split-Path $iconVenvDir -Parent) | Out-Null
+        Invoke-ProcessChecked `
+            -FilePath $BasePythonExe `
+            -ArgumentList @("-m", "venv", $iconVenvDir) `
+            -FailureMessage "Failed to create icon generation Python environment."
+    }
+
+    Ensure-PythonPip -PythonExe $iconPython
+
+    if (-not (Test-PythonModule -PythonExe $iconPython -ModuleName "PIL")) {
+        Write-Host "Pillow is missing; installing Pillow into the isolated icon generation environment..."
+        Invoke-ProcessChecked `
+            -FilePath $iconPython `
+            -ArgumentList @("-m", "pip", "install", "--disable-pip-version-check", "Pillow") `
+            -FailureMessage "Failed to install Pillow for icon generation."
+    }
+
+    return $iconPython
 }
 
 function Ensure-LocalRcedit {
@@ -79,7 +163,6 @@ if (-not $python312) {
 }
 
 Write-Host "Using Python 3.12:" $python312
-Ensure-PythonPip -PythonExe $python312
 
 # Clean electron-builder caches that are safe to rebuild, but keep locally extracted
 # rcedit binaries so packaging does not depend on GitHub availability.
@@ -112,29 +195,9 @@ try {
         throw "Icon generator script was not found: $iconScript"
     }
     Write-Host "Ensuring Pillow is available for icon generation..."
-    $probeErrorPath = [System.IO.Path]::GetTempFileName()
-    try {
-        $probeProcess = Start-Process `
-            -FilePath $python312 `
-            -ArgumentList '-c "from PIL import Image"' `
-            -NoNewWindow `
-            -Wait `
-            -PassThru `
-            -RedirectStandardError $probeErrorPath
-        $pillowAvailable = ($probeProcess.ExitCode -eq 0)
-    }
-    finally {
-        Remove-Item $probeErrorPath -Force -ErrorAction SilentlyContinue
-    }
-    if (-not $pillowAvailable) {
-        Write-Host "Pillow is missing; installing Pillow into the selected Python 3.12 environment..."
-        & $python312 -m pip install --disable-pip-version-check Pillow
-        if ($LASTEXITCODE -ne 0) {
-            throw "Failed to install Pillow for icon generation."
-        }
-    }
+    $iconPython = Ensure-IconPython -BasePythonExe $python312
     Write-Host "Generating application icon..."
-    & $python312 $iconScript
+    & $iconPython $iconScript
     if ($LASTEXITCODE -ne 0) {
         throw "Application icon generation failed."
     }
@@ -150,6 +213,15 @@ try {
     }
     else {
         Write-Host "SkipPrebuild enabled: reusing existing renderer and backend artifacts."
+    }
+
+    if (-not (Test-Path $webStaticValidationScript)) {
+        throw "Web static asset validation script was not found: $webStaticValidationScript"
+    }
+    Write-Host "Validating web static asset references..."
+    node $webStaticValidationScript
+    if ($LASTEXITCODE -ne 0) {
+        throw "Web static asset validation failed."
     }
 
     npm run build:electron

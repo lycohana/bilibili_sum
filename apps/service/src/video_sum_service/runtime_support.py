@@ -33,6 +33,7 @@ from video_sum_infra.runtime import (
     runtime_library_dirs,
     runtime_python_candidates,
     runtime_python_executable,
+    runtime_pythonpath_dirs,
     sanitized_subprocess_dll_search,
     write_runtime_metadata,
 )
@@ -68,6 +69,9 @@ _RUNTIME_EXTENSION_PACKAGE_KEYS: set[str] = {
     "chromadb",
     "sentence_transformers",
 }
+_RUNTIME_ROOT_APP_DIRS: frozenset[str] = frozenset({"Lib", "lib", "Scripts", "bin", "DLLs", "stdlib"})
+_RUNTIME_ROOT_APP_FILES: frozenset[str] = frozenset({"pythonpath.pth"})
+_RUNTIME_ROOT_STALE_FILES: frozenset[str] = frozenset({"pyvenv.cfg"})
 
 
 def _split_env_urls(raw_value: str | None) -> list[str]:
@@ -113,9 +117,12 @@ def runtime_subprocess_env(runtime_channel: str) -> dict[str, str]:
     env["PYTHONUTF8"] = "1"
 
     path_entries = [str(path) for path in runtime_library_dirs(runtime_channel)]
-    ffmpeg_dir = ffmpeg_location()
-    if ffmpeg_dir is not None:
-        path_entries.append(str(ffmpeg_dir))
+    pythonpath_entries = [str(path) for path in runtime_pythonpath_dirs(runtime_channel)]
+    if pythonpath_entries:
+        env["PYTHONPATH"] = os.pathsep.join(pythonpath_entries)
+    ffmpeg_exe = ffmpeg_location()
+    if ffmpeg_exe is not None:
+        path_entries.append(str(ffmpeg_exe.parent))
 
     current_path = env.get("PATH", "")
     inherited_entries: list[str] = []
@@ -345,7 +352,7 @@ def torch_install_with_fallbacks(
         except subprocess.CalledProcessError as exc:
             attempts.append((label, exc))
 
-    raise HTTPException(status_code=500, detail=pip_install_error_detail("CUDA 运行时依赖", attempts))
+    raise HTTPException(status_code=500, detail=pip_install_error_detail("CUDA 运行环境依赖", attempts))
 
 
 def ensure_runtime_pip(python_executable: Path, runtime_channel: str) -> None:
@@ -428,10 +435,7 @@ def ensure_runtime_channel(runtime_channel: str) -> Path | None:
     base_metadata = read_runtime_metadata(base_dir)
     target_metadata = read_runtime_metadata(target_dir)
     target_ready = runtime_python_executable(runtime_channel) is not None
-    target_matches_base = (
-        target_metadata.get("appVersion") == base_metadata.get("appVersion")
-        and target_metadata.get("runtimeLayout") == base_metadata.get("runtimeLayout")
-    )
+    target_matches_base = runtime_metadata_matches_base(target_metadata, base_metadata)
     if target_ready and target_matches_base:
         return target_dir
 
@@ -456,6 +460,7 @@ def inspect_runtime_channels() -> dict[str, object]:
     base_metadata = read_runtime_metadata(base_dir)
     base_app_version = str(base_metadata.get("appVersion") or "")
     base_layout = str(base_metadata.get("runtimeLayout") or "")
+    base_python_version = str(base_metadata.get("pythonVersion") or "")
     channels: list[dict[str, object]] = []
 
     for runtime_channel in sorted(discovered, key=lambda item: (item != "base", item)):
@@ -470,10 +475,7 @@ def inspect_runtime_channels() -> dict[str, object]:
             exists
             and runtime_channel != "base"
             and ready
-            and (
-                (base_app_version and app_version != base_app_version)
-                or (base_layout and layout != base_layout)
-            )
+            and not runtime_metadata_matches_base(metadata, base_metadata)
         )
         channels.append(
             {
@@ -486,6 +488,8 @@ def inspect_runtime_channels() -> dict[str, object]:
                 "runtimeLayout": layout,
                 "targetAppVersion": base_app_version,
                 "targetRuntimeLayout": base_layout,
+                "pythonVersion": str(metadata.get("pythonVersion") or ""),
+                "targetPythonVersion": base_python_version,
                 "needsUpdate": needs_update,
                 "cudaVariant": str(metadata.get("cudaVariant") or ""),
                 "localAsrInstalled": bool(metadata.get("localAsrInstalled")),
@@ -496,6 +500,7 @@ def inspect_runtime_channels() -> dict[str, object]:
     return {
         "baseAppVersion": base_app_version,
         "baseRuntimeLayout": base_layout,
+        "basePythonVersion": base_python_version,
         "pipIndexes": pip_index_options(),
         "channels": channels,
     }
@@ -534,10 +539,21 @@ def sync_all_runtime_channels() -> dict[str, object]:
 
 def sync_runtime_base(target_dir: Path, base_dir: Path, runtime_channel: str) -> None:
     target_metadata = read_runtime_metadata(target_dir)
-    copy_runtime_item(base_dir / "stdlib", target_dir / "stdlib")
-    copy_runtime_item(base_dir / "DLLs", target_dir / "DLLs")
-    sync_runtime_lib(target_dir / "Lib", base_dir / "Lib")
-    sync_runtime_scripts(target_dir / "Scripts", base_dir / "Scripts")
+
+    for item in base_dir.iterdir():
+        if item.name == "video_sum_runtime.json":
+            continue
+        if not runtime_root_item_should_sync(item):
+            continue
+        if item.name in {"Lib", "lib"}:
+            sync_runtime_lib(target_dir / item.name, item)
+            continue
+        if item.name in {"Scripts", "bin"}:
+            sync_runtime_scripts(target_dir / item.name, item)
+            continue
+        copy_runtime_item(item, target_dir / item.name)
+
+    remove_stale_runtime_root_items(target_dir, base_dir)
 
     base_metadata = read_runtime_metadata(base_dir)
     (target_dir / "video_sum_runtime.json").write_text(
@@ -556,6 +572,35 @@ def sync_runtime_base(target_dir: Path, base_dir: Path, runtime_channel: str) ->
     )
 
 
+def runtime_metadata_matches_base(target_metadata: dict[str, object], base_metadata: dict[str, object]) -> bool:
+    return (
+        target_metadata.get("appVersion") == base_metadata.get("appVersion")
+        and target_metadata.get("runtimeLayout") == base_metadata.get("runtimeLayout")
+        and target_metadata.get("pythonVersion") == base_metadata.get("pythonVersion")
+    )
+
+
+def runtime_root_item_should_sync(item: Path) -> bool:
+    name = item.name
+    lower_name = name.lower()
+    if name in _RUNTIME_ROOT_APP_DIRS or name in _RUNTIME_ROOT_APP_FILES:
+        return True
+    if lower_name in {"python.exe", "pythonw.exe", "python3.dll"}:
+        return True
+    if lower_name.startswith("python") and (lower_name.endswith(".dll") or lower_name.endswith("._pth")):
+        return True
+    if lower_name.startswith("vcruntime") and lower_name.endswith(".dll"):
+        return True
+    return False
+
+
+def remove_stale_runtime_root_items(target_dir: Path, base_dir: Path) -> None:
+    for name in _RUNTIME_ROOT_STALE_FILES:
+        target = target_dir / name
+        if target.exists():
+            target.unlink()
+
+
 def sync_runtime_scripts(target_scripts_dir: Path, base_scripts_dir: Path) -> None:
     if not base_scripts_dir.exists():
         return
@@ -572,6 +617,9 @@ def sync_runtime_lib(target_lib_dir: Path, base_lib_dir: Path) -> None:
     for item in base_lib_dir.iterdir():
         if item.name == "site-packages":
             sync_runtime_site_packages(target_lib_dir / "site-packages", item)
+            continue
+        if item.is_dir() and (item / "site-packages").exists():
+            sync_runtime_lib(target_lib_dir / item.name, item)
             continue
         copy_runtime_item(item, target_lib_dir / item.name)
 
@@ -829,6 +877,7 @@ def build_worker(
         siliconflow_asr_model=runtime_settings.siliconflow_asr_model,
         siliconflow_asr_api_key=runtime_settings.siliconflow_asr_api_key,
         llm_enabled=runtime_settings.llm_enabled,
+        llm_provider=runtime_settings.llm_provider,
         llm_api_key=runtime_settings.llm_api_key,
         llm_base_url=runtime_settings.llm_base_url,
         llm_model=runtime_settings.llm_model,
@@ -937,6 +986,7 @@ def serialize_settings(
         "llm_api_key_configured": bool(current_settings.llm_api_key),
         "knowledge_llm_mode": current_settings.knowledge_llm_mode,
         "knowledge_llm_enabled": current_settings.knowledge_llm_enabled,
+        "knowledge_llm_provider": current_settings.knowledge_llm_provider,
         "knowledge_llm_base_url": current_settings.knowledge_llm_base_url,
         "knowledge_llm_model": current_settings.knowledge_llm_model,
         "knowledge_llm_api_key": "",

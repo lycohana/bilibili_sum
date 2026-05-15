@@ -94,8 +94,15 @@ export function App() {
     let disposed = false;
     async function checkAuth() {
       if (window.desktop) {
-        setAuthenticated(true);
-        setAuthChecked(true);
+        try {
+          await api.createAuthSession(await window.desktop.backend.getAccessToken());
+        } catch {
+          // Auth headers are still attached to desktop fetches; session setup mainly supports EventSource.
+        }
+        if (!disposed) {
+          setAuthenticated(true);
+          setAuthChecked(true);
+        }
         return;
       }
       try {
@@ -409,10 +416,10 @@ export function App() {
     && !snapshot.runtimeInitializing
   );
   const runtimeStatusText = useMemo(() => {
-    if (snapshot.runtimeInitializing) return "运行时准备中";
-    if (runtimeStartupStatus === "error") return "运行时异常";
-    if (snapshot.environment?.runtimeReady === false) return "运行时未就绪";
-    if (snapshot.environment) return "运行时就绪";
+    if (snapshot.runtimeInitializing) return "运行环境准备中";
+    if (runtimeStartupStatus === "error") return "运行环境异常";
+    if (snapshot.environment?.runtimeReady === false) return "运行环境未就绪";
+    if (snapshot.environment) return "运行环境就绪";
     return snapshot.serviceOnline ? "检测中" : "等待服务";
   }, [runtimeStartupStatus, snapshot.environment, snapshot.runtimeInitializing, snapshot.serviceOnline]);
 

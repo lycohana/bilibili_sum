@@ -55,6 +55,7 @@ def _knowledge_settings_signature(settings) -> tuple[object, ...]:
         str(settings.llm_api_key or ""),
         str(getattr(settings, "knowledge_llm_mode", "same_as_main") or "same_as_main"),
         bool(getattr(settings, "knowledge_llm_enabled", False)),
+        str(getattr(settings, "knowledge_llm_provider", "openai-compatible") or "openai-compatible"),
         str(getattr(settings, "knowledge_llm_base_url", "") or ""),
         str(getattr(settings, "knowledge_llm_model", "") or ""),
         str(getattr(settings, "knowledge_llm_api_key", "") or ""),
@@ -113,7 +114,7 @@ def _require_knowledge_runtime() -> None:
     if not _knowledge_runtime_ready():
         raise HTTPException(
             status_code=424,
-            detail="知识库依赖未安装。请先到设置中的知识库或运行时板块安装知识库依赖。",
+            detail="知识库依赖未安装。请先到设置中的知识库或运行环境板块安装知识库依赖。",
         )
 
 

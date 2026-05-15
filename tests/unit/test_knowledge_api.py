@@ -7,7 +7,14 @@ from video_sum_infra.config import ServiceSettings
 from video_sum_service.app import app
 from video_sum_service.context import settings_manager
 from video_sum_service.knowledge.index_service import KnowledgeIndexService
-from video_sum_service.knowledge.local_llm import KnowledgeLlmStreamEvent, _extract_stream_delta, _extract_stream_reasoning_delta, chat_knowledge_llm
+from video_sum_service.knowledge.local_llm import (
+    KnowledgeLlmStreamEvent,
+    _extract_stream_delta,
+    _extract_stream_reasoning_delta,
+    chat_knowledge_llm,
+    ensure_knowledge_llm_settings,
+    knowledge_llm_available,
+)
 from video_sum_service.knowledge.rag_service import (
     KNOWLEDGE_QA_SYSTEM_PROMPT,
     KnowledgeAgent,
@@ -567,6 +574,7 @@ def test_extract_stream_delta_accepts_common_compatible_shapes() -> None:
     assert _extract_stream_delta({"choices": [{"delta": {"content": "openai"}}]}) == "openai"
     assert _extract_stream_delta({"message": {"content": "ollama"}}) == "ollama"
     assert _extract_stream_delta({"response": "text"}) == "text"
+    assert _extract_stream_delta({"type": "content_block_delta", "delta": {"type": "text_delta", "text": "claude"}}) == "claude"
 
 
 def test_extract_stream_reasoning_delta_accepts_reasoning_shapes() -> None:
@@ -579,6 +587,7 @@ def test_chat_knowledge_llm_returns_clear_timeout_error(monkeypatch) -> None:
         knowledge_llm_mode="custom",
         knowledge_llm_enabled=True,
         knowledge_llm_base_url="https://api.example.com/v1",
+        knowledge_llm_api_key="test-key",
         knowledge_llm_model="remote-model",
     )
 
@@ -611,6 +620,7 @@ def test_chat_knowledge_llm_normalizes_mimo_model(monkeypatch) -> None:
         knowledge_llm_mode="custom",
         knowledge_llm_enabled=True,
         knowledge_llm_base_url="https://api.example.com/v1",
+        knowledge_llm_api_key="test-key",
         knowledge_llm_model="MiMo-V2.5-Pro",
     )
     calls: list[dict[str, object]] = []
@@ -642,3 +652,67 @@ def test_chat_knowledge_llm_normalizes_mimo_model(monkeypatch) -> None:
 
     assert content == "答案"
     assert calls[0]["json"]["model"] == "mimo-v2.5-pro"
+
+
+def test_knowledge_llm_availability_requires_api_key() -> None:
+    missing_key = ServiceSettings(
+        knowledge_llm_mode="custom",
+        knowledge_llm_enabled=True,
+        knowledge_llm_base_url="https://api.example.com/v1",
+        knowledge_llm_model="remote-model",
+    )
+    ready = missing_key.model_copy(update={"knowledge_llm_api_key": "test-key"})
+
+    assert knowledge_llm_available(missing_key) is False
+    assert knowledge_llm_available(ready) is True
+    try:
+        ensure_knowledge_llm_settings(missing_key)
+    except HTTPException as exc:
+        assert exc.status_code == 400
+        assert "API Key" in str(exc.detail)
+    else:
+        raise AssertionError("expected HTTPException")
+
+
+def test_chat_knowledge_llm_accepts_anthropic_messages_response(monkeypatch) -> None:
+    settings = ServiceSettings(
+        llm_provider="openai-compatible",
+        knowledge_llm_mode="custom",
+        knowledge_llm_enabled=True,
+        knowledge_llm_provider="anthropic",
+        knowledge_llm_base_url="https://api.anthropic.com/v1",
+        knowledge_llm_api_key="test-key",
+        knowledge_llm_model="claude-3-5-haiku-latest",
+    )
+    calls: list[dict[str, object]] = []
+
+    class FakeResponse:
+        status_code = 200
+        text = '{"content":[{"type":"text","text":"答案"}]}'
+
+        def json(self) -> dict[str, object]:
+            return {"content": [{"type": "text", "text": "答案"}]}
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def post(self, url: str, headers: dict[str, str], json: dict[str, object]) -> FakeResponse:
+            calls.append({"url": url, "headers": headers, "json": json})
+            return FakeResponse()
+
+    monkeypatch.setattr("video_sum_service.knowledge.local_llm.httpx.Client", FakeClient)
+
+    content, _body = chat_knowledge_llm(settings, system_prompt="system", user_prompt="user")
+
+    assert content == "答案"
+    assert calls[0]["url"] == "https://api.anthropic.com/v1/messages"
+    assert calls[0]["headers"]["x-api-key"] == "test-key"
+    assert calls[0]["headers"]["anthropic-version"] == "2023-06-01"
+    assert calls[0]["json"]["system"] == "system"

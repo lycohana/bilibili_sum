@@ -1,3 +1,16 @@
+const extraResources = [
+  {
+    from: "../../dist/BiliSum",
+    to: "backend/BiliSum"
+  },
+  process.platform === "win32"
+    ? {
+        from: "../../apps/desktop/build/icon.ico",
+        to: "icon.ico"
+      }
+    : null
+].filter(Boolean);
+
 module.exports = {
   appId: "com.bilisum.desktop",
   productName: "BiliSum",
@@ -9,16 +22,20 @@ module.exports = {
     "dist-electron/**/*",
     "announcement.md"
   ],
-  extraResources: [
-    {
-      "from": "../../dist/BiliSum",
-      "to": "backend/BiliSum"
-    },
-    {
-      "from": "../../apps/desktop/build/icon.ico",
-      "to": "icon.ico"
-    }
-  ],
+  extraResources,
+  mac: {
+    target: ["dmg", "zip"],
+    artifactName: "${productName}-${version}-${os}-${arch}.${ext}",
+    icon: "../../apps/desktop/build/icon.icns",
+    category: "public.app-category.productivity",
+    hardenedRuntime: false,
+    gatekeeperAssess: false,
+    identity: null
+  },
+  dmg: {
+    sign: false,
+    artifactName: "${productName}-${version}-${os}-${arch}.${ext}"
+  },
   win: {
     "target": [
       {

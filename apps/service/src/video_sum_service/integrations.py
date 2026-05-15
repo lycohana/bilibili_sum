@@ -6,7 +6,16 @@ import httpx
 from fastapi import HTTPException
 
 from video_sum_infra.config import ServiceSettings
-from video_sum_infra.llm import normalize_openai_compatible_model_name
+from video_sum_infra.llm import (
+    ANTHROPIC_API_VERSION,
+    anthropic_messages_url,
+    build_anthropic_messages_payload,
+    extract_llm_message_content,
+    is_anthropic_llm,
+    normalize_openai_compatible_model_name,
+    normalize_llm_provider,
+    openai_chat_completions_url,
+)
 from video_sum_infra.runtime import service_log_path
 
 from video_sum_service.context import COVER_CACHE_DIR, settings_manager
@@ -81,32 +90,6 @@ def extract_http_error_detail(response: httpx.Response) -> str:
     return text or f"HTTP {response.status_code}"
 
 
-def extract_llm_message_content(body: dict[str, object] | None) -> str:
-    if not isinstance(body, dict):
-        return ""
-    choices = body.get("choices")
-    if not isinstance(choices, list) or not choices:
-        return ""
-    first = choices[0]
-    if not isinstance(first, dict):
-        return ""
-    message = first.get("message")
-    if not isinstance(message, dict):
-        return ""
-    content = message.get("content")
-    if isinstance(content, str):
-        return content.strip()
-    if isinstance(content, list):
-        text_parts: list[str] = []
-        for item in content:
-            if isinstance(item, dict):
-                text = item.get("text")
-                if isinstance(text, str) and text.strip():
-                    text_parts.append(text.strip())
-        return "\n".join(text_parts).strip()
-    return ""
-
-
 def build_test_wav_bytes(duration_ms: int = 250, sample_rate: int = 16000) -> bytes:
     frame_count = max(1, int(sample_rate * duration_ms / 1000))
     buffer = io.BytesIO()
@@ -125,6 +108,7 @@ def build_effective_llm_test_settings(payload: SettingsUpdatePayload | None = No
         current_dump = {
             **current_dump,
             "llm_enabled": current_settings.knowledge_llm_enabled,
+            "llm_provider": current_settings.knowledge_llm_provider,
             "llm_base_url": current_settings.knowledge_llm_base_url,
             "llm_api_key": current_settings.knowledge_llm_api_key,
             "llm_model": current_settings.knowledge_llm_model,
@@ -141,7 +125,9 @@ def probe_llm_connection(payload: SettingsUpdatePayload | None = None) -> dict[s
     base_url = str(effective_settings.llm_base_url or "").strip().rstrip("/")
     api_key = str(effective_settings.llm_api_key or "").strip()
     model = str(effective_settings.llm_model or "").strip()
-    request_model = normalize_openai_compatible_model_name(model)
+    provider = normalize_llm_provider(effective_settings.llm_provider)
+    use_anthropic = is_anthropic_llm(provider, base_url)
+    request_model = model if use_anthropic else normalize_openai_compatible_model_name(model)
 
     if not base_url:
         raise HTTPException(status_code=400, detail="请先填写 API Base URL。")
@@ -150,10 +136,6 @@ def probe_llm_connection(payload: SettingsUpdatePayload | None = None) -> dict[s
     if not model:
         raise HTTPException(status_code=400, detail="请先填写模型名称。")
 
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
     request_payload = {
         "model": request_model,
         "messages": [
@@ -175,13 +157,28 @@ def probe_llm_connection(payload: SettingsUpdatePayload | None = None) -> dict[s
         "enable_thinking": False,
         "chat_template_kwargs": {"enable_thinking": False},
     }
+    if use_anthropic:
+        headers = {
+            "x-api-key": api_key,
+            "anthropic-version": ANTHROPIC_API_VERSION,
+            "Content-Type": "application/json",
+        }
+        request_url = anthropic_messages_url(base_url)
+        request_json = build_anthropic_messages_payload(request_payload)
+    else:
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
+        request_url = openai_chat_completions_url(base_url)
+        request_json = request_payload
 
     try:
         with httpx.Client(timeout=20, follow_redirects=True) as client:
             response = client.post(
-                f"{base_url}/chat/completions",
+                request_url,
                 headers=headers,
-                json=request_payload,
+                json=request_json,
             )
     except httpx.HTTPError as exc:
         raise HTTPException(status_code=502, detail=f"LLM 连接失败：{exc}") from exc

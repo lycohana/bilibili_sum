@@ -10,12 +10,15 @@ on:
 permissions:
   contents: read
 
+env:
+  electron_config_cache: ${{ github.workspace }}/.cache/electron
+
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  detect-windows-package-check:
+  detect-desktop-package-check:
     runs-on: ubuntu-latest
     outputs:
       should_run: ${{ steps.detect.outputs.should_run }}
@@ -25,6 +28,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          token: ${{ secrets.PAT_TOKEN }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -68,12 +72,12 @@ jobs:
           fi
 
           if [ "${EVENT_NAME}" = "push" ] && [ -n "${release_bump}" ]; then
-            echo "Release workflow will validate the Windows package for this push; skip duplicate CI packaging check."
+            echo "Release workflow will validate desktop packages for this push; skip duplicate CI packaging check."
             should_run="false"
           fi
 
           echo "should_run=${should_run}" >> "$GITHUB_OUTPUT"
-          echo "Packaging validation needed: ${should_run}"
+          echo "Desktop packaging validation needed: ${should_run}"
 
   validate:
     runs-on: ubuntu-latest
@@ -81,11 +85,20 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.PAT_TOKEN }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            pyproject.toml
+            apps/service/pyproject.toml
+            packages/core/pyproject.toml
+            packages/infra/pyproject.toml
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -105,10 +118,10 @@ jobs:
       - name: Run Python tests
         run: python -m pytest -q
 
-      - name: Install desktop dependencies
+      - name: Install desktop dependencies without package install scripts
         env:
           ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
-        run: npm ci --prefix apps/desktop
+        run: npm ci --prefix apps/desktop --prefer-offline --no-audit --fund=false --ignore-scripts
 
       - name: Run desktop tests
         run: npm --prefix apps/desktop test
@@ -120,8 +133,8 @@ jobs:
         run: npm run npx:test
 
   validate-windows-package:
-    needs: detect-windows-package-check
-    if: ${{ needs.detect-windows-package-check.outputs.should_run == 'true' }}
+    needs: detect-desktop-package-check
+    if: ${{ needs.detect-desktop-package-check.outputs.should_run == 'true' }}
     runs-on: windows-latest
 
     steps:
@@ -129,6 +142,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          token: ${{ secrets.PAT_TOKEN }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -142,8 +156,17 @@ jobs:
           cache: npm
           cache-dependency-path: apps/desktop/package-lock.json
 
+      - name: Cache Electron downloads
+        uses: actions/cache@v4
+        with:
+          path: |
+            .cache/electron
+          key: ${{ runner.os }}-electron-${{ hashFiles('apps/desktop/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-electron-
+
       - name: Install uv
-        run: python -m pip install --upgrade pip uv
+        run: python -m pip install --disable-pip-version-check --upgrade pip uv
 
       - name: Verify version files are synced
         run: python scripts/bump_version.py --check
@@ -151,7 +174,7 @@ jobs:
       - name: Install desktop dependencies
         env:
           ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
-        run: npm ci --prefix apps/desktop
+        run: npm ci --prefix apps/desktop --prefer-offline --no-audit --fund=false
 
       - name: Set up FFmpeg
         id: setup-ffmpeg
@@ -167,12 +190,24 @@ jobs:
           VIDEO_SUM_FFMPEG_DIR: ${{ steps.setup-ffmpeg.outputs.ffmpeg-path }}
         run: npm run package:win
 
-  validate-docker-image:
-    runs-on: ubuntu-latest
+  validate-macos-package:
+    needs: detect-desktop-package-check
+    if: ${{ needs.detect-desktop-package-check.outputs.should_run == 'true' }}
+    runs-on: macos-latest
+    env:
+      ELECTRON_BUILDER_CACHE: ${{ github.workspace }}/.cache/electron-builder
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.PAT_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -181,10 +216,63 @@ jobs:
           cache: npm
           cache-dependency-path: apps/desktop/package-lock.json
 
+      - name: Cache Electron downloads
+        uses: actions/cache@v4
+        with:
+          path: |
+            .cache/electron
+          key: ${{ runner.os }}-electron-${{ hashFiles('apps/desktop/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-electron-
+
+      - name: Cache electron-builder downloads
+        uses: actions/cache@v4
+        with:
+          path: .cache/electron-builder
+          key: ${{ runner.os }}-electron-builder-${{ hashFiles('apps/desktop/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-electron-builder-
+
+      - name: Install uv
+        run: python -m pip install --disable-pip-version-check --upgrade pip uv
+
+      - name: Verify version files are synced
+        run: python scripts/bump_version.py --check
+
       - name: Install desktop dependencies
         env:
           ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
-        run: npm ci --prefix apps/desktop
+        run: npm ci --prefix apps/desktop --prefer-offline --no-audit --fund=false
+
+      - name: Install FFmpeg
+        run: brew install ffmpeg
+
+      - name: Build macOS package for validation
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: npm run package:mac
+
+  validate-docker-image:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.PAT_TOKEN }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+
+      - name: Install desktop dependencies without package install scripts
+        env:
+          ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
+        run: npm ci --prefix apps/desktop --prefer-offline --no-audit --fund=false --ignore-scripts
 
       - name: Build web static assets
         run: npm run build:web
@@ -199,3 +287,5 @@ jobs:
           file: ./Dockerfile
           push: false
           tags: bilisum:ci
+          cache-from: type=gha,scope=bilisum-docker
+          cache-to: type=gha,mode=max,scope=bilisum-docker
