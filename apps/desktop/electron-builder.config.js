@@ -3,16 +3,13 @@ const extraResources = [
     from: "../../dist/BiliSum",
     to: "backend/BiliSum"
   },
-  process.platform === "darwin"
+  process.platform === "win32"
     ? {
-        from: "../../apps/desktop/build/icon.icns",
-        to: "icon.icns"
-      }
-    : {
         from: "../../apps/desktop/build/icon.ico",
         to: "icon.ico"
       }
-];
+    : null
+].filter(Boolean);
 
 module.exports = {
   appId: "com.bilisum.desktop",
