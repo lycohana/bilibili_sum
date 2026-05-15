@@ -105,10 +105,10 @@ jobs:
       - name: Run Python tests
         run: python -m pytest -q
 
-      - name: Install desktop dependencies
+      - name: Install desktop dependencies without package install scripts
         env:
           ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
-        run: npm ci --prefix apps/desktop
+        run: npm ci --prefix apps/desktop --ignore-scripts
 
       - name: Run desktop tests
         run: npm --prefix apps/desktop test
@@ -223,10 +223,10 @@ jobs:
           cache: npm
           cache-dependency-path: apps/desktop/package-lock.json
 
-      - name: Install desktop dependencies
+      - name: Install desktop dependencies without package install scripts
         env:
           ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
-        run: npm ci --prefix apps/desktop
+        run: npm ci --prefix apps/desktop --ignore-scripts
 
       - name: Build web static assets
         run: npm run build:web
