@@ -26,7 +26,15 @@ from video_sum_core.errors import (
 from video_sum_core.models.tasks import InputType, MindMapNode, TaskMindMap, TaskResult
 from video_sum_core.pipeline.base import PipelineContext, PipelineEvent, PipelineEventReporter, PipelineRunner
 from video_sum_core.utils import ensure_directory, normalize_video_url, sanitize_filename
-from video_sum_infra.llm import normalize_openai_compatible_model_name
+from video_sum_infra.llm import (
+    ANTHROPIC_API_VERSION,
+    anthropic_messages_url,
+    build_anthropic_messages_payload,
+    extract_text_from_content_blocks,
+    is_anthropic_llm,
+    normalize_openai_compatible_model_name,
+    openai_chat_completions_url,
+)
 from video_sum_infra.config import (
     DEFAULT_KNOWLEDGE_NOTE_SYSTEM_PROMPT,
     DEFAULT_KNOWLEDGE_NOTE_USER_PROMPT_TEMPLATE,
@@ -173,6 +181,7 @@ class PipelineSettings:
     siliconflow_asr_model: str = "TeleAI/TeleSpeechASR"
     siliconflow_asr_api_key: str = ""
     llm_enabled: bool = False
+    llm_provider: str = "openai-compatible"
     llm_api_key: str = ""
     llm_base_url: str = ""
     llm_model: str = ""
@@ -1497,18 +1506,34 @@ class RealPipelineRunner(PipelineRunner):
         retry_count: int | None = None,
     ) -> dict[str, object]:
         payload = dict(payload)
-        payload["model"] = normalize_openai_compatible_model_name(str(payload.get("model") or ""))
-        headers = {
-            "Authorization": f"Bearer {self._settings.llm_api_key}",
-            "Content-Type": "application/json",
-        }
+        use_anthropic = is_anthropic_llm(self._settings.llm_provider, base_url)
+        payload["model"] = (
+            str(payload.get("model") or "").strip()
+            if use_anthropic
+            else normalize_openai_compatible_model_name(str(payload.get("model") or ""))
+        )
+        if use_anthropic:
+            headers = {
+                "x-api-key": self._settings.llm_api_key,
+                "anthropic-version": ANTHROPIC_API_VERSION,
+                "Content-Type": "application/json",
+            }
+            request_url = anthropic_messages_url(base_url)
+            request_payload = build_anthropic_messages_payload(payload)
+        else:
+            headers = {
+                "Authorization": f"Bearer {self._settings.llm_api_key}",
+                "Content-Type": "application/json",
+            }
+            request_url = openai_chat_completions_url(base_url)
+            request_payload = payload
         transport_retry_count = max(0, int(self._settings.summary_chunk_retry_count if retry_count is None else retry_count))
         last_error: Exception | None = None
         response: httpx.Response | None = None
         for attempt in range(transport_retry_count + 1):
             try:
                 with httpx.Client(timeout=timeout, follow_redirects=True) as client:
-                    response = client.post(f"{base_url}/chat/completions", headers=headers, json=payload)
+                    response = client.post(request_url, headers=headers, json=request_payload)
                 break
             except Exception as exc:
                 last_error = exc
@@ -1544,17 +1569,39 @@ class RealPipelineRunner(PipelineRunner):
             raise VideoSumError(f"LLM request failed with status {status_code}: {detail}") from exc
         logger.info("llm json response status=%s model=%s", response.status_code, self._settings.llm_model)
         response_json = response.json()
-        content = response_json["choices"][0]["message"]["content"]
+        content = self._extract_llm_response_content(response_json)
         parsed = self._parse_llm_json_content(content)
         usage = response_json.get("usage") or {}
         parsed.setdefault("title", "")
         parsed.setdefault("overview", "")
         parsed.setdefault("bulletPoints", [])
         parsed.setdefault("chapters", [])
-        parsed["llm_prompt_tokens"] = _safe_int(usage.get("prompt_tokens"))
-        parsed["llm_completion_tokens"] = _safe_int(usage.get("completion_tokens"))
-        parsed["llm_total_tokens"] = _safe_int(usage.get("total_tokens"))
+        prompt_tokens = _safe_int(usage.get("prompt_tokens") or usage.get("input_tokens"))
+        completion_tokens = _safe_int(usage.get("completion_tokens") or usage.get("output_tokens"))
+        total_tokens = _safe_int(usage.get("total_tokens"))
+        if total_tokens is None and prompt_tokens is not None and completion_tokens is not None:
+            total_tokens = prompt_tokens + completion_tokens
+        parsed["llm_prompt_tokens"] = prompt_tokens
+        parsed["llm_completion_tokens"] = completion_tokens
+        parsed["llm_total_tokens"] = total_tokens
         return parsed
+
+    def _extract_llm_response_content(self, response_json: object) -> str:
+        if not isinstance(response_json, dict):
+            raise VideoSumError("LLM returned an unexpected response payload.")
+        content = extract_text_from_content_blocks(response_json.get("content"))
+        if content:
+            return content
+        try:
+            message = response_json["choices"][0]["message"]
+        except (KeyError, IndexError, TypeError) as exc:
+            raise VideoSumError("LLM returned no readable message content.") from exc
+        if not isinstance(message, dict):
+            raise VideoSumError("LLM returned no readable message content.")
+        content = extract_text_from_content_blocks(message.get("content"))
+        if content:
+            return content
+        raise VideoSumError("LLM returned no readable message content.")
 
     def _preflight_llm_availability(self) -> None:
         base_url = (self._settings.llm_base_url or "").rstrip("/")

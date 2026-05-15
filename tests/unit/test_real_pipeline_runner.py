@@ -617,6 +617,67 @@ def test_llm_json_request_normalizes_mimo_model(monkeypatch: pytest.MonkeyPatch,
     assert calls[0]["json"]["model"] == "mimo-v2.5-pro"
 
 
+def test_llm_json_request_accepts_anthropic_messages_response(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    runner = RealPipelineRunner(
+        PipelineSettings(
+            tasks_dir=tmp_path,
+            llm_enabled=True,
+            llm_provider="anthropic",
+            llm_api_key="test-key",
+            llm_base_url="https://api.anthropic.com/v1",
+            llm_model="claude-3-5-haiku-latest",
+        )
+    )
+    calls: list[dict[str, object]] = []
+
+    class FakeResponse:
+        status_code = 200
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, object]:
+            return {
+                "content": [{"type": "text", "text": '{"overview":"ok"}'}],
+                "usage": {"input_tokens": 1, "output_tokens": 2},
+            }
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def __enter__(self) -> "FakeClient":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def post(self, url: str, headers: dict[str, str], json: dict[str, object]) -> FakeResponse:
+            calls.append({"url": url, "headers": headers, "json": json})
+            return FakeResponse()
+
+    monkeypatch.setattr("video_sum_core.pipeline.real.httpx.Client", FakeClient)
+
+    result = runner._request_llm_json(
+        base_url="https://api.anthropic.com/v1",
+        payload={
+            "model": "claude-3-5-haiku-latest",
+            "messages": [
+                {"role": "system", "content": "system"},
+                {"role": "user", "content": "user"},
+            ],
+            "response_format": {"type": "json_object"},
+        },
+    )
+
+    assert result["overview"] == "ok"
+    assert calls[0]["url"] == "https://api.anthropic.com/v1/messages"
+    assert calls[0]["headers"]["x-api-key"] == "test-key"
+    assert calls[0]["headers"]["anthropic-version"] == "2023-06-01"
+    assert calls[0]["json"]["system"] == "system"
+    assert "response_format" not in calls[0]["json"]
+
+
 def test_export_transcript_snapshot_creates_resummary_artifacts(tmp_path: Path) -> None:
     runner = RealPipelineRunner(PipelineSettings(tasks_dir=tmp_path))
 

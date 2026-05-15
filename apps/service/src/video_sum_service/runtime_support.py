@@ -875,6 +875,7 @@ def build_worker(
         siliconflow_asr_model=runtime_settings.siliconflow_asr_model,
         siliconflow_asr_api_key=runtime_settings.siliconflow_asr_api_key,
         llm_enabled=runtime_settings.llm_enabled,
+        llm_provider=runtime_settings.llm_provider,
         llm_api_key=runtime_settings.llm_api_key,
         llm_base_url=runtime_settings.llm_base_url,
         llm_model=runtime_settings.llm_model,

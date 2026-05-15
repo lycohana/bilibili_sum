@@ -1083,6 +1083,56 @@ def test_llm_connection_normalizes_mimo_model_and_requests_json_mode(monkeypatch
     assert calls[0]["json"]["chat_template_kwargs"] == {"enable_thinking": False}
 
 
+def test_llm_connection_accepts_anthropic_messages_response(monkeypatch, tmp_path: Path) -> None:
+    current = ServiceSettings(
+        data_dir=tmp_path / "data",
+        cache_dir=tmp_path / "cache",
+        tasks_dir=tmp_path / "tasks",
+        runtime_channel="base",
+        llm_enabled=True,
+        llm_provider="anthropic",
+        llm_base_url="https://api.anthropic.com/v1",
+        llm_api_key="test-key",
+        llm_model="claude-3-5-haiku-latest",
+    )
+    settings_manager._settings = current
+
+    calls: list[dict[str, object]] = []
+
+    class FakeResponse:
+        status_code = 200
+        text = '{"content":[{"type":"text","text":"{\\"ok\\":true,\\"message\\":\\"test\\"}"}]}'
+
+        def json(self) -> dict[str, object]:
+            return {"content": [{"type": "text", "text": '{"ok":true,"message":"test"}'}]}
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def __enter__(self) -> "FakeClient":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def post(self, url: str, headers: dict[str, str], json: dict[str, object]) -> FakeResponse:
+            calls.append({"url": url, "headers": headers, "json": json})
+            return FakeResponse()
+
+    monkeypatch.setattr(service_app.httpx, "Client", FakeClient)
+
+    response = probe_llm_connection()
+
+    assert response["ok"] is True
+    assert calls[0]["url"] == "https://api.anthropic.com/v1/messages"
+    assert calls[0]["headers"]["x-api-key"] == "test-key"
+    assert calls[0]["headers"]["anthropic-version"] == "2023-06-01"
+    assert calls[0]["json"]["model"] == "claude-3-5-haiku-latest"
+    assert calls[0]["json"]["system"]
+    assert "response_format" not in calls[0]["json"]
+
+
 def test_llm_connection_requires_base_url(tmp_path: Path) -> None:
     current = ServiceSettings(
         data_dir=tmp_path / "data",
