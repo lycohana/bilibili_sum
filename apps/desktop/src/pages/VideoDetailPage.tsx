@@ -30,7 +30,6 @@ import {
   type TaskPanelState,
 } from "../detailModel";
 import type { MindMapNode, TaskDetail, TaskEvent, TaskMarkdownExportResponse, TaskMindMapResponse, TaskStatus, TaskSummary, TaskVisualEvidenceResponse, VideoAssetDetail, VideoPageBatchOption, VideoTaskBatchResponse, VisualEvidenceFrame, VisualEvidenceObservation } from "../types";
-import type { VisualNoteMode } from "../types";
 import { formatDateTime, formatDuration, formatTaskDuration, formatTokenCount, sanitizeMindMapLabel, summarizeEvents, taskStatusLabel } from "../utils";
 import { buildPlayerEmbedDescriptor, withPlayerSeek } from "../videoPlayer";
 
@@ -120,6 +119,8 @@ type FloatingPlayerLayout = {
   y: number;
 };
 
+type KnowledgeNoteViewMode = "text" | "visual";
+
 const MINDMAP_ROOT_ACCENT: MindMapAccent = {
   stroke: "#4c9fdd",
   surface: "rgba(76, 159, 221, 0.18)",
@@ -143,6 +144,7 @@ const FLOATING_PLAYER_VIEWPORT_MARGIN = 20;
 const FLOATING_PLAYER_TOP_OFFSET = 92;
 const FLOATING_PLAYER_CHROME_HEIGHT = 62;
 const LOCAL_VIDEO_SUFFIXES = new Set([".mp4", ".mov", ".mkv", ".avi", ".wmv", ".webm", ".flv", ".m4v", ".ts", ".mpeg", ".mpg"]);
+const SUMMARY_PREFERENCE_STORAGE_KEY = "bilisum.summaryPreference";
 
 const detailTabs: Array<{ id: DetailTab; label: string; description: string }> = [
   { id: "knowledge", label: "知识卡片", description: "按概览、要点、章节整理当前任务结果。" },
@@ -285,6 +287,35 @@ function shouldDisplayMindMapTimestamp(seconds?: number | null) {
   return typeof seconds === "number" && Number.isFinite(seconds) && seconds > 0;
 }
 
+function loadKnowledgeNoteViewMode(): KnowledgeNoteViewMode {
+  if (typeof window === "undefined") {
+    return "text";
+  }
+  try {
+    const rawValue = window.localStorage.getItem(SUMMARY_PREFERENCE_STORAGE_KEY);
+    if (!rawValue) {
+      return "text";
+    }
+    const parsed = JSON.parse(rawValue) as { noteMode?: unknown };
+    return parsed.noteMode === "visual" ? "visual" : "text";
+  } catch {
+    return "text";
+  }
+}
+
+function saveKnowledgeNoteViewMode(mode: KnowledgeNoteViewMode) {
+  if (typeof window === "undefined") {
+    return;
+  }
+  try {
+    const rawValue = window.localStorage.getItem(SUMMARY_PREFERENCE_STORAGE_KEY);
+    const parsed = rawValue ? JSON.parse(rawValue) as Record<string, unknown> : {};
+    window.localStorage.setItem(SUMMARY_PREFERENCE_STORAGE_KEY, JSON.stringify({ ...parsed, noteMode: mode }));
+  } catch {
+    window.localStorage.setItem(SUMMARY_PREFERENCE_STORAGE_KEY, JSON.stringify({ noteMode: mode }));
+  }
+}
+
 async function loadTaskContext(taskId: string): Promise<TaskContext> {
   const [detail, events] = await Promise.all([api.getTaskResult(taskId), api.getTaskEvents(taskId)]);
   return { detail, events };
@@ -322,7 +353,8 @@ export function VideoDetailPage({ onRefresh, onOpenCookieSettings, onOpenCookieT
   const [mindMapLoading, setMindMapLoading] = useState<Record<string, boolean>>({});
   const [visualEvidence, setVisualEvidence] = useState<Record<string, TaskVisualEvidenceResponse>>({});
   const [visualEvidenceLoading, setVisualEvidenceLoading] = useState<Record<string, boolean>>({});
-  const [visualNoteModeDraft, setVisualNoteModeDraft] = useState<VisualNoteMode>("vlm_integrated");
+  const [knowledgeNoteViewMode, setKnowledgeNoteViewMode] = useState<KnowledgeNoteViewMode>(() => loadKnowledgeNoteViewMode());
+  const [knowledgeNoteModeMenuOpen, setKnowledgeNoteModeMenuOpen] = useState(false);
   const [isExportingKnowledgeCard, setIsExportingKnowledgeCard] = useState(false);
   const [isExportingKnowledgeNote, setIsExportingKnowledgeNote] = useState(false);
   const [isExportingTranscript, setIsExportingTranscript] = useState(false);
@@ -346,6 +378,7 @@ export function VideoDetailPage({ onRefresh, onOpenCookieSettings, onOpenCookieT
   const playerFrameRef = useRef<HTMLDivElement | null>(null);
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
   const knowledgeExportRef = useRef<HTMLElement | null>(null);
+  const knowledgeNoteModeMenuRef = useRef<HTMLDivElement | null>(null);
   const knowledgeNoteExportMenuRef = useRef<HTMLDivElement | null>(null);
   const lastChapterGroupSignatureRef = useRef("");
   const activeVideoIdRef = useRef(videoId);
@@ -496,32 +529,6 @@ export function VideoDetailPage({ onRefresh, onOpenCookieSettings, onOpenCookieT
         mode: "text",
         status: "failed",
         error_message: error instanceof Error ? error.message : "图文笔记加载失败",
-        updated_at: null,
-        frame_count: 0,
-        insert_count: 0,
-        visual_note_markdown: "",
-        enhanced_note_markdown: "",
-        context: null,
-      };
-      setVisualEvidence((current) => ({ ...current, [taskId]: failedState }));
-      throw error;
-    } finally {
-      setVisualEvidenceLoading((current) => omitRecordKey(current, taskId));
-    }
-  }
-
-  async function triggerVisualEvidenceGeneration(taskId: string, options: { force?: boolean; mode?: string } = {}) {
-    setVisualEvidenceLoading((current) => ({ ...current, [taskId]: true }));
-    try {
-      const response = await api.generateTaskVisualEvidence(taskId, { force: options.force, mode: options.mode });
-      setVisualEvidence((current) => ({ ...current, [taskId]: response }));
-      return response;
-    } catch (error) {
-      const failedState: TaskVisualEvidenceResponse = {
-        task_id: taskId,
-        mode: "text",
-        status: "failed",
-        error_message: error instanceof Error ? error.message : "图文笔记生成失败",
         updated_at: null,
         frame_count: 0,
         insert_count: 0,
@@ -744,11 +751,8 @@ export function VideoDetailPage({ onRefresh, onOpenCookieSettings, onOpenCookieT
   }, [activeTab, selectedTaskId]);
 
   useEffect(() => {
-    const currentMode = selectedTaskId ? visualEvidence[selectedTaskId]?.mode : null;
-    if (currentMode === "frame_insert" || currentMode === "vlm_integrated") {
-      setVisualNoteModeDraft(currentMode);
-    }
-  }, [selectedTaskId, visualEvidence]);
+    saveKnowledgeNoteViewMode(knowledgeNoteViewMode);
+  }, [knowledgeNoteViewMode]);
 
   useEffect(() => {
     if (!selectedTaskId) {
@@ -874,7 +878,7 @@ export function VideoDetailPage({ onRefresh, onOpenCookieSettings, onOpenCookieT
   }, [latestEvents, latestTaskId]);
 
   useEffect(() => {
-    if (taskPanelState !== "expanded" && !actionMenuOpen && !pageMenuOpen && !knowledgeNoteExportMenuOpen) {
+    if (taskPanelState !== "expanded" && !actionMenuOpen && !pageMenuOpen && !knowledgeNoteExportMenuOpen && !knowledgeNoteModeMenuOpen) {
       return;
     }
 
@@ -884,6 +888,7 @@ export function VideoDetailPage({ onRefresh, onOpenCookieSettings, onOpenCookieT
       const clickedActionMenu = actionMenuRef.current?.contains(target);
       const clickedPageSwitcher = pageSwitcherRef.current?.contains(target);
       const clickedKnowledgeNoteExportMenu = knowledgeNoteExportMenuRef.current?.contains(target);
+      const clickedKnowledgeNoteModeMenu = knowledgeNoteModeMenuRef.current?.contains(target);
       const clickedBatchSide = batchSideRef.current?.contains(target);
 
       if (!clickedTaskPopover && !clickedBatchSide) {
@@ -899,6 +904,9 @@ export function VideoDetailPage({ onRefresh, onOpenCookieSettings, onOpenCookieT
       if (!clickedKnowledgeNoteExportMenu) {
         setKnowledgeNoteExportMenuOpen(false);
       }
+      if (!clickedKnowledgeNoteModeMenu) {
+        setKnowledgeNoteModeMenuOpen(false);
+      }
     }
 
     function handleEscape(event: KeyboardEvent) {
@@ -908,6 +916,7 @@ export function VideoDetailPage({ onRefresh, onOpenCookieSettings, onOpenCookieT
         setActionMenuSection(null);
         setPageMenuOpen(false);
         setKnowledgeNoteExportMenuOpen(false);
+        setKnowledgeNoteModeMenuOpen(false);
       }
     }
 
@@ -917,7 +926,7 @@ export function VideoDetailPage({ onRefresh, onOpenCookieSettings, onOpenCookieT
       document.removeEventListener("mousedown", handlePointerDown);
       window.removeEventListener("keydown", handleEscape);
     };
-  }, [actionMenuOpen, knowledgeNoteExportMenuOpen, pageMenuOpen, taskPanelState]);
+  }, [actionMenuOpen, knowledgeNoteExportMenuOpen, knowledgeNoteModeMenuOpen, pageMenuOpen, taskPanelState]);
 
   async function handleCopyKnowledgeCardAsImage() {
     if (!knowledgeExportRef.current || isExportingKnowledgeCard) {
@@ -1105,7 +1114,11 @@ export function VideoDetailPage({ onRefresh, onOpenCookieSettings, onOpenCookieT
   const selectedVisualEvidence = selectedTaskId ? visualEvidence[selectedTaskId] ?? null : null;
   const selectedVisualEvidenceStatus = selectedVisualEvidence?.status || selectedTaskDetail?.result?.visual_note_status || "idle";
   const selectedEnhancedNoteMarkdown = selectedVisualEvidence?.enhanced_note_markdown || selectedVisualEvidence?.visual_note_markdown || "";
-  const displayedKnowledgeNoteMarkdown = selectedEnhancedNoteMarkdown.trim() ? selectedEnhancedNoteMarkdown : selectedKnowledgeNoteMarkdown;
+  const hasEnhancedKnowledgeNote = Boolean(selectedEnhancedNoteMarkdown.trim());
+  const displayedKnowledgeNoteMarkdown = knowledgeNoteViewMode === "visual" && hasEnhancedKnowledgeNote
+    ? selectedEnhancedNoteMarkdown
+    : selectedKnowledgeNoteMarkdown;
+  const knowledgeNoteModeLabel = knowledgeNoteViewMode === "visual" ? "图文" : "纯文本";
   const visualEvidenceFrames = useMemo(
     () => buildVisualEvidenceItems(selectedTaskId, selectedVisualEvidence),
     [selectedTaskId, selectedVisualEvidence],
@@ -1404,28 +1417,6 @@ export function VideoDetailPage({ onRefresh, onOpenCookieSettings, onOpenCookieT
       setStatus(force ? "正在重新生成思维导图..." : "正在生成思维导图...");
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "思维导图生成失败");
-    }
-  }
-
-  async function handleGenerateVisualEvidence(force = false, mode: VisualNoteMode = visualNoteModeDraft) {
-    if (!selectedTaskId) {
-      return;
-    }
-    setActiveTab("summary");
-    setStatus(force ? "已发起重新生成图文笔记..." : "已发起生成图文笔记...");
-    try {
-      const response = await triggerVisualEvidenceGeneration(selectedTaskId, {
-        force,
-        mode,
-      });
-      await ensureTaskContext(selectedTaskId, { force: true }).catch(() => undefined);
-      if (response.status === "ready" || response.status === "partial") {
-        setStatus("图文笔记已更新");
-        return;
-      }
-      setStatus(force ? "正在重新生成图文笔记..." : "正在生成图文笔记...");
-    } catch (error) {
-      setStatus(error instanceof Error ? error.message : "图文笔记生成失败");
     }
   }
 
@@ -2503,7 +2494,61 @@ export function VideoDetailPage({ onRefresh, onOpenCookieSettings, onOpenCookieT
                     <div className="detail-section-heading">
                       <h3 className="detail-section-label">Knowledge Note</h3>
                       <div className="detail-section-heading-actions">
-                        <span className="detail-section-meta">完整学习视图</span>
+                        <span className="detail-section-meta">完整学习视图 · {knowledgeNoteModeLabel}</span>
+                        <div className="detail-section-menu" ref={knowledgeNoteModeMenuRef}>
+                          <button
+                            className={`detail-section-icon-button detail-section-menu-trigger ${knowledgeNoteModeMenuOpen ? "is-open" : ""}`}
+                            type="button"
+                            onClick={() => setKnowledgeNoteModeMenuOpen((current) => !current)}
+                            aria-haspopup="menu"
+                            aria-expanded={knowledgeNoteModeMenuOpen}
+                            aria-label="选择知识笔记显示形式"
+                            title="笔记形式"
+                          >
+                            {knowledgeNoteViewMode === "visual" ? <IconCopyImage /> : <IconFileText />}
+                            <IconChevronDown className="detail-section-menu-caret" />
+                          </button>
+                          {knowledgeNoteModeMenuOpen ? (
+                            <div className="detail-section-popover detail-note-mode-popover" role="menu" aria-label="知识笔记显示形式">
+                              <button
+                                className={`detail-section-menu-item detail-note-mode-option ${knowledgeNoteViewMode === "visual" ? "is-selected" : ""}`}
+                                type="button"
+                                role="menuitemradio"
+                                aria-checked={knowledgeNoteViewMode === "visual"}
+                                onClick={() => {
+                                  setKnowledgeNoteViewMode("visual");
+                                  setKnowledgeNoteModeMenuOpen(false);
+                                }}
+                              >
+                                <span className="detail-section-menu-item-icon" aria-hidden="true">
+                                  <IconCopyImage />
+                                </span>
+                                <span className="detail-section-menu-copy">
+                                  <strong>图文</strong>
+                                  <small>{hasEnhancedKnowledgeNote ? "显示带图片的整合笔记" : "运行会同时生成，完成后自动可见"}</small>
+                                </span>
+                              </button>
+                              <button
+                                className={`detail-section-menu-item detail-note-mode-option ${knowledgeNoteViewMode === "text" ? "is-selected" : ""}`}
+                                type="button"
+                                role="menuitemradio"
+                                aria-checked={knowledgeNoteViewMode === "text"}
+                                onClick={() => {
+                                  setKnowledgeNoteViewMode("text");
+                                  setKnowledgeNoteModeMenuOpen(false);
+                                }}
+                              >
+                                <span className="detail-section-menu-item-icon" aria-hidden="true">
+                                  <IconFileText />
+                                </span>
+                                <span className="detail-section-menu-copy">
+                                  <strong>纯文本</strong>
+                                  <small>显示基础知识笔记正文</small>
+                                </span>
+                              </button>
+                            </div>
+                          ) : null}
+                        </div>
                         <div className="detail-section-menu" ref={knowledgeNoteExportMenuRef}>
                           <button
                             className={`detail-section-icon-button detail-section-menu-trigger ${knowledgeNoteExportMenuOpen ? "is-open" : ""}`}
@@ -2574,61 +2619,10 @@ export function VideoDetailPage({ onRefresh, onOpenCookieSettings, onOpenCookieT
                     ) : (
                       <p className="detail-section-body">当前任务还没有生成知识笔记。</p>
                     )}
-                  </section>
-
-                  <section className="detail-content-section">
-                    <div className="detail-section-heading">
-                      <h3 className="detail-section-label">Transcript</h3>
-                      <div className="detail-section-heading-actions">
-                        <span className="detail-section-meta">{selectedTranscript ? "原始转写" : "暂无内容"}</span>
-                        <button
-                          className="detail-section-icon-button"
-                          type="button"
-                          disabled={!canExportSelectedTranscript || isExportingTranscript}
-                          onClick={() => void handleExportTranscript()}
-                          aria-label={isExportingTranscript ? "正在导出转写文本" : "导出转写文本"}
-                          title={isExportingTranscript ? "正在导出转写文本" : "导出转写文本"}
-                        >
-                          <IconExportNote />
-                        </button>
-                      </div>
-                    </div>
-                    <pre className="transcript-full">{selectedTranscript || "暂无转写全文。"}</pre>
-                  </section>
-
-                  <section className="detail-content-section detail-visual-support-section">
-                    <div className="detail-section-heading">
-                      <h3 className="detail-section-label">图文补充</h3>
-                      <div className="detail-section-heading-actions">
-                        <select
-                          className="detail-inline-select"
-                          aria-label="图文笔记生成模式"
-                          value={visualNoteModeDraft}
-                          disabled={!selectedTaskId || selectedTaskDetail?.status !== "completed" || Boolean(selectedTaskId && visualEvidenceLoading[selectedTaskId])}
-                          onChange={(event) => setVisualNoteModeDraft(event.target.value as VisualNoteMode)}
-                        >
-                          <option value="frame_insert">只插入关键画面</option>
-                          <option value="vlm_integrated">VLM 理解整合</option>
-                        </select>
-                        <span className="detail-section-meta">{formatVisualEvidenceStatus(selectedVisualEvidenceStatus, visualEvidenceFrames.length, selectedVisualEvidence?.insert_count ?? 0)}</span>
-                        <button
-                          className="detail-section-text-action"
-                          type="button"
-                          disabled={!selectedTaskId || selectedTaskDetail?.status !== "completed" || Boolean(selectedTaskId && visualEvidenceLoading[selectedTaskId])}
-                          onClick={() => void handleGenerateVisualEvidence(["ready", "partial", "failed"].includes(selectedVisualEvidenceStatus), visualNoteModeDraft)}
-                        >
-                          {selectedTaskId && visualEvidenceLoading[selectedTaskId]
-                            ? "处理中..."
-                            : selectedVisualEvidenceStatus === "ready" || selectedVisualEvidenceStatus === "partial"
-                              ? "重新生成"
-                              : "生成图文笔记"}
-                        </button>
-                      </div>
-                    </div>
-                    <details className="detail-visual-assets-details">
+                    <details className="detail-visual-assets-details detail-note-assets-details">
                       <summary>
                         <span>查看图片素材记录</span>
-                        <small>正文中的图文笔记以文字为主，这里只保留截图来源。</small>
+                        <small>{formatVisualEvidenceStatus(selectedVisualEvidenceStatus, visualEvidenceFrames.length, selectedVisualEvidence?.insert_count ?? 0)}</small>
                       </summary>
                       <VisualEvidencePanel
                         frames={visualEvidenceFrames}
@@ -2683,6 +2677,26 @@ export function VideoDetailPage({ onRefresh, onOpenCookieSettings, onOpenCookieT
                         ) : null}
                       </div>
                     ) : null}
+                  </section>
+
+                  <section className="detail-content-section">
+                    <div className="detail-section-heading">
+                      <h3 className="detail-section-label">Transcript</h3>
+                      <div className="detail-section-heading-actions">
+                        <span className="detail-section-meta">{selectedTranscript ? "原始转写" : "暂无内容"}</span>
+                        <button
+                          className="detail-section-icon-button"
+                          type="button"
+                          disabled={!canExportSelectedTranscript || isExportingTranscript}
+                          onClick={() => void handleExportTranscript()}
+                          aria-label={isExportingTranscript ? "正在导出转写文本" : "导出转写文本"}
+                          title={isExportingTranscript ? "正在导出转写文本" : "导出转写文本"}
+                        >
+                          <IconExportNote />
+                        </button>
+                      </div>
+                    </div>
+                    <pre className="transcript-full">{selectedTranscript || "暂无转写全文。"}</pre>
                   </section>
 
                 </section>

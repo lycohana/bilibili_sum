@@ -45,7 +45,7 @@ export type AppUpdateInfo = {
 };
 
 export type LlmTestPayload = Partial<ServiceSettings> & {
-  llm_test_scope?: "main" | "knowledge";
+  llm_test_scope?: "main" | "knowledge" | "visual";
 };
 
 export type BilibiliCookieCaptureResponse = {

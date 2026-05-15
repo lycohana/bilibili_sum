@@ -7,6 +7,7 @@ export type FloatingNotice = {
   message: string;
   tone?: FloatingNoticeTone;
   durationMs?: number | null;
+  version?: number | string;
 };
 
 function inferTone(message: string): FloatingNoticeTone {
@@ -42,7 +43,7 @@ export function FloatingNoticeStack({ notices }: { notices: FloatingNotice[] }) 
         return {
           ...notice,
           tone,
-          signature: `${notice.id}:${notice.message}`,
+          signature: `${notice.id}:${notice.version ?? "stable"}:${notice.message}`,
           autoDismissMs: resolveAutoDismissDuration(notice.message, tone, notice.durationMs),
         };
       })

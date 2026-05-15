@@ -10,6 +10,7 @@ import subprocess
 import time
 import base64
 import hashlib
+from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
@@ -190,17 +191,24 @@ class PipelineSettings:
     llm_model: str = ""
     visual_evidence_enabled: bool = False
     visual_note_mode: str = "text"
+    visual_multimodal_enabled: bool = False
+    visual_download_resolution: str = "720p"
     visual_evidence_use_llm: bool = True
+    visual_vlm_provider: str = "openai-compatible"
     visual_evidence_base_url: str = ""
     visual_evidence_model: str = ""
     visual_evidence_api_key: str = ""
     visual_evidence_max_frames: int = 12
-    visual_evidence_frame_interval_seconds: int = 60
+    visual_evidence_frame_interval_seconds: int = 10
     visual_evidence_frame_width: int = 960
+    visual_evidence_vlm_image_width: int = 768
+    visual_evidence_image_quality: int = 85
     visual_evidence_timeout_seconds: int = 120
     visual_evidence_retry_count: int = 1
     visual_note_system_prompt: str = ""
     visual_note_user_prompt_template: str = ""
+    visual_frame_planning_prompt: str = ""
+    visual_vlm_prompt: str = ""
     summary_system_prompt: str = ""
     summary_user_prompt_template: str = ""
     knowledge_note_system_prompt: str = ""
@@ -327,6 +335,16 @@ class RealPipelineRunner(PipelineRunner):
         summary = self._summarize(transcript, segments, title, emit)
         emit("exporting", 97, "正在导出任务结果")
         result = self._export_result(task_dir, title, transcript, segments, summary)
+        emit(
+            "exporting",
+            98,
+            "纯文本知识笔记已写入，正在生成图文笔记",
+            {
+                "result": result.model_dump(mode="json"),
+                "result_scope": "knowledge_note",
+            },
+        )
+        result = self._build_inline_visual_note(context.task_id, task_input, task_dir, title, result, emit)
         emit("exporting", 99, "结果文件已写入本地目录")
         logger.info(
             "pipeline url run finish task_id=%s segments=%d transcript_chars=%d output_dir=%s",
@@ -363,6 +381,16 @@ class RealPipelineRunner(PipelineRunner):
         summary = self._summarize(transcript, segments, title, emit, source_kind=source_kind)
         emit("exporting", 97, "正在导出新的摘要结果")
         result = self._export_result(task_dir, title, transcript, segments, summary)
+        emit(
+            "exporting",
+            98,
+            "纯文本知识笔记已写入，正在生成图文笔记",
+            {
+                "result": result.model_dump(mode="json"),
+                "result_scope": "knowledge_note",
+            },
+        )
+        result = self._build_inline_visual_note(context.task_id, context.task_input, task_dir, title, result, emit)
         emit("exporting", 99, "新的摘要结果已写入本地目录")
         logger.info(
             "pipeline transcript rerun finish task_id=%s segments=%d transcript_chars=%d output_dir=%s",
@@ -414,6 +442,16 @@ class RealPipelineRunner(PipelineRunner):
         summary = self._summarize(transcript, segments, title, emit)
         emit("exporting", 97, "正在导出任务结果")
         result = self._export_result(task_dir, title, transcript, segments, summary)
+        emit(
+            "exporting",
+            98,
+            "纯文本知识笔记已写入，正在生成图文笔记",
+            {
+                "result": result.model_dump(mode="json"),
+                "result_scope": "knowledge_note",
+            },
+        )
+        result = self._build_inline_visual_note(context.task_id, task_input, task_dir, title, result, emit)
         emit("exporting", 99, "结果文件已写入本地目录")
         logger.info(
             "pipeline local media run finish task_id=%s input_type=%s source=%s segments=%d transcript_chars=%d output_dir=%s",
@@ -2076,7 +2114,6 @@ P 数索引：
         task_dir = ensure_directory(self._settings.tasks_dir / task_id)
         visual_dir = ensure_directory(task_dir / "visual_evidence")
         frames_dir = ensure_directory(visual_dir / "frames")
-        source_path, source_kind, warnings = self._prepare_visual_source(task_input, task_dir, title)
         frame_index_path = visual_dir / "frame_index.json"
         context_path = visual_dir / "visual_context.json"
         note_path = visual_dir / "visual_note.md"
@@ -2113,10 +2150,20 @@ P 数索引：
             return context, enhanced_note_path, context_path
 
         report("visual_keyinfo_planning", 24, "正在提取适合截图的关键信息点", {"mode": mode})
-        keyframe_plan = self._build_visual_keyframe_plan(title, result, mode)
+        report("visual_source_preparing", 34, "正在并发准备视频画面来源", {"mode": mode})
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            source_future = executor.submit(self._prepare_visual_source, task_input, task_dir, title)
+            plan_future = executor.submit(self._build_visual_keyframe_plan, title, result, mode)
+            source_path, source_kind, warnings = source_future.result()
+            keyframe_plan = plan_future.result()
         self._write_json_atomic(keyframe_plan_path, keyframe_plan)
         keyframes = [item for item in keyframe_plan.get("keyframes", []) if isinstance(item, dict)]
-        report("visual_source_preparing", 34, "正在准备图文笔记的视频画面来源", {"mode": mode, "keyframe_count": len(keyframes)})
+        report(
+            "visual_source_ready",
+            40,
+            "视频画面来源和截图规划已就绪",
+            {"mode": mode, "keyframe_count": len(keyframes), "source_kind": source_kind},
+        )
 
         if source_path is None:
             context = self._build_visual_context_payload(
@@ -2216,6 +2263,109 @@ P 数索引：
         self._write_json_atomic(context_path, context)
         return context, enhanced_note_path, context_path
 
+    def _build_inline_visual_note(
+        self,
+        task_id: str,
+        task_input: TaskInput,
+        task_dir: Path,
+        title: str,
+        result: TaskResult,
+        emit: Callable[[str, int, str, dict[str, object] | None], None],
+    ) -> TaskResult:
+        mode = self._visual_note_mode()
+        if not self._settings.visual_evidence_enabled or mode == "text":
+            return result.model_copy(update={"visual_note_mode": mode})
+        if not result.knowledge_note_markdown.strip():
+            return result.model_copy(
+                update={
+                    "visual_note_mode": mode,
+                    "visual_note_status": "skipped",
+                    "visual_note_error_message": "纯文本知识笔记为空，已跳过图文笔记。",
+                }
+            )
+
+        started_result = result.model_copy(
+            update={
+                "visual_note_mode": mode,
+                "visual_note_status": "generating",
+                "visual_note_error_message": None,
+            }
+        )
+        emit(
+            "visual_generating",
+            20,
+            "正在生成图文笔记",
+            {"mode": mode, "result": started_result.model_dump(mode="json"), "result_scope": "visual_note"},
+        )
+
+        try:
+            def handle_visual_event(event: PipelineEvent) -> None:
+                emit(event.stage, event.progress, event.message, dict(event.payload or {}))
+
+            context, note_path, context_path = self.build_and_export_visual_evidence(
+                task_id=task_id,
+                task_input=task_input,
+                title=title,
+                result=started_result,
+                mode=mode,
+                on_event=handle_visual_event,
+            )
+        except Exception as exc:
+            logger.exception("inline visual note generation failed task_id=%s error=%s", task_id, exc)
+            failed_result = started_result.model_copy(
+                update={
+                    "visual_note_status": "failed",
+                    "visual_note_error_message": str(exc),
+                    "visual_note_updated_at": datetime.now(timezone.utc),
+                }
+            )
+            emit(
+                "visual_failed",
+                100,
+                "图文笔记生成失败，纯文本笔记已保留",
+                {"mode": mode, "error": str(exc), "result": failed_result.model_dump(mode="json"), "result_scope": "visual_note"},
+            )
+            return failed_result
+
+        status_value = str(context.get("status") or "partial")
+        warnings = [str(item) for item in context.get("warnings", []) if str(item).strip()]
+        artifacts = {
+            **started_result.artifacts,
+            "visual_enhanced_note_path": str(Path(note_path)),
+            "visual_note_path": str(Path(note_path).parent / "visual_note.md"),
+            "visual_context_path": str(Path(context_path)),
+            "visual_frame_index_path": str(Path(note_path).parent / "frame_index.json"),
+            "visual_insert_plan_path": str(Path(note_path).parent / "visual_insert_plan.json"),
+        }
+        final_result = started_result.model_copy(
+            update={
+                "artifacts": artifacts,
+                "visual_note_mode": str(context.get("mode") or mode),
+                "visual_note_status": status_value,
+                "visual_note_error_message": "\n".join(warnings) if status_value in {"failed", "partial", "unsupported"} and warnings else None,
+                "visual_note_artifact_path": str(Path(note_path).parent / "visual_note.md"),
+                "visual_enhanced_note_artifact_path": str(Path(note_path)),
+                "visual_note_updated_at": datetime.now(timezone.utc),
+                "visual_frame_count": int(context.get("frame_count") or 0),
+                "visual_insert_count": int(context.get("insert_count") or 0),
+            }
+        )
+        emit(
+            "visual_completed" if status_value == "ready" else "visual_partial",
+            100,
+            "图文笔记生成完成" if status_value == "ready" else "图文笔记已降级完成",
+            {
+                "mode": final_result.visual_note_mode,
+                "status": status_value,
+                "frame_count": final_result.visual_frame_count,
+                "insert_count": final_result.visual_insert_count,
+                "warnings": warnings,
+                "result": final_result.model_dump(mode="json"),
+                "result_scope": "visual_note",
+            },
+        )
+        return final_result
+
     def _visual_note_mode(self, mode_override: str | None = None) -> str:
         return normalize_visual_note_mode(mode_override or self._settings.visual_note_mode or "text")
 
@@ -2280,17 +2430,29 @@ P 数索引：
             "chapters": result.timeline,
             "chapterGroups": result.chapter_groups,
         }
-        user_prompt = (
+        user_template = self._settings.visual_frame_planning_prompt.strip() or (
             "请根据视频摘要和知识笔记，选择最值得截图辅助理解的关键画面。\n"
             "目标链路是：先找知识点 -> 按时间点截图 -> 让 VLM 理解图片 -> 整合成图文笔记。\n"
             "只返回 JSON 对象，格式：{\"keyframes\":[{\"timestamp_seconds\":数字,\"anchor_heading\":\"应插入到的笔记标题\","
             "\"concept\":\"被图片支撑的知识点\",\"reason\":\"为什么需要截图\",\"caption_hint\":\"图片标题建议\","
             "\"note_hint\":\"插入笔记时应补充的说明\",\"priority\":0到1}]}。\n"
             f"最多选择 {max_frames} 张；不要平均抽帧，只选能解释界面、代码、图表、演示、对比或步骤的画面。\n"
-            f"视频标题：{title}\n模式：{mode}\n摘要 JSON：\n"
-            f"{_truncate_text(json.dumps(summary_payload, ensure_ascii=False), 9000)}\n\n"
-            f"知识笔记：\n{_truncate_text(result.knowledge_note_markdown or '', 12000)}"
+            "视频标题：{title}\n模式：{mode}\n摘要 JSON：\n{summary_json}\n\n知识笔记：\n{knowledge_note_markdown}"
         )
+        try:
+            user_prompt = user_template.format(
+                title=title,
+                mode=mode,
+                max_frames=max_frames,
+                summary_json=_truncate_text(json.dumps(summary_payload, ensure_ascii=False), 9000),
+                knowledge_note_markdown=_truncate_text(result.knowledge_note_markdown or "", 12000),
+            )
+        except (KeyError, IndexError, ValueError):
+            user_prompt = (
+                f"{user_template}\n\n视频标题：{title}\n模式：{mode}\n摘要 JSON：\n"
+                f"{_truncate_text(json.dumps(summary_payload, ensure_ascii=False), 9000)}\n\n"
+                f"知识笔记：\n{_truncate_text(result.knowledge_note_markdown or '', 12000)}"
+            )
         payload = {
             "model": self._settings.llm_model,
             "messages": [
@@ -2381,7 +2543,7 @@ P 数索引：
                 return video_path, "url_video", warnings
             except Exception as exc:
                 logger.warning("visual video download skipped source=%s error=%s", task_input.source, exc)
-                return None, "url_video", [f"低清视频源准备失败：{exc}"]
+                return None, "url_video", [f"图文笔记视频源准备失败：{exc}"]
         if task_input.input_type is InputType.AUDIO_FILE:
             return None, "audio_file", ["音频任务没有可截图的视频画面。"]
         return None, "transcript_text", ["纯转写任务没有可截图的视频画面。"]
@@ -2389,9 +2551,14 @@ P 数索引：
     def _download_video_for_visuals(self, url: str, output_dir: Path, safe_title: str) -> Path:
         ensure_directory(output_dir)
         output_template = str(output_dir / f"{safe_title}.visual.%(ext)s")
+        height = self._visual_download_height()
         options = {
             **self._base_ydl_options(),
-            "format": "worstvideo[height<=480][ext=mp4]/worstvideo[height<=480]/worst[height<=480]/worst",
+            "format": (
+                f"bestvideo[height<={height}][ext=mp4]+bestaudio[ext=m4a]/"
+                f"bestvideo[height<={height}]+bestaudio/"
+                f"best[height<={height}][ext=mp4]/best[height<={height}]/best"
+            ),
             "outtmpl": output_template,
             "noplaylist": True,
         }
@@ -2406,12 +2573,33 @@ P 数索引：
             self._raise_ydl_error(exc)
         candidates = sorted(output_dir.glob(f"{safe_title}.visual.*"), key=lambda item: item.stat().st_mtime, reverse=True)
         if not candidates:
-            raise VideoSumError("低清视频下载失败。")
+            raise VideoSumError("图文笔记视频源下载失败。")
         return candidates[0]
+
+    def _visual_download_height(self) -> int:
+        value = str(self._settings.visual_download_resolution or "720p").strip().lower()
+        if value in {"auto", "best", "source", "original"}:
+            return 2160
+        aliases = {
+            "360p": 360,
+            "480p": 480,
+            "720p": 720,
+            "1080p": 1080,
+            "1440p": 1440,
+            "2k": 1440,
+            "2160p": 2160,
+            "4k": 2160,
+        }
+        if value in aliases:
+            return aliases[value]
+        match = re.search(r"(\d{3,4})", value)
+        if match:
+            return max(360, min(int(match.group(1)), 2160))
+        return 720
 
     def _choose_visual_timestamps(self, result: TaskResult) -> list[float]:
         max_frames = max(1, min(int(self._settings.visual_evidence_max_frames or 12), 30))
-        min_interval = max(10, int(self._settings.visual_evidence_frame_interval_seconds or 60))
+        min_interval = max(10, int(self._settings.visual_evidence_frame_interval_seconds or 10))
         candidates: list[float] = []
         for item in result.timeline or []:
             if not isinstance(item, dict):
@@ -2449,9 +2637,11 @@ P 数索引：
         frames: list[dict[str, object]] = []
         seen_hashes: set[str] = set()
         width = max(320, min(int(self._settings.visual_evidence_frame_width or 960), 1600))
+        analysis_width = max(320, min(int(self._settings.visual_evidence_vlm_image_width or 768), width))
         for index, timestamp in enumerate(timestamps, start=1):
             frame_id = f"f{index:04d}"
             target = frames_dir / f"{frame_id}.jpg"
+            analysis_target = frames_dir / f"{frame_id}.analysis.jpg"
             command = [
                 str(ffmpeg_exe),
                 "-y",
@@ -2484,12 +2674,46 @@ P 数索引：
             if result.returncode != 0 or not target.exists():
                 warnings.append(f"{self._format_seconds(timestamp)} 截图失败。")
                 continue
+            if analysis_width < width:
+                analysis_command = [
+                    str(ffmpeg_exe),
+                    "-y",
+                    "-i",
+                    str(target),
+                    "-vf",
+                    f"scale='min({analysis_width},iw)':-2",
+                    "-q:v",
+                    str(self._ffmpeg_jpeg_quality_for_visual_analysis()),
+                    str(analysis_target),
+                ]
+                try:
+                    analysis_result = subprocess.run(
+                        analysis_command,
+                        capture_output=True,
+                        text=True,
+                        encoding="utf-8",
+                        errors="replace",
+                        timeout=30,
+                        check=False,
+                        **_windows_hidden_subprocess_kwargs(),
+                    )
+                    if analysis_result.returncode != 0 or not analysis_target.exists():
+                        analysis_target = target
+                except (OSError, subprocess.SubprocessError):
+                    analysis_target = target
+            else:
+                analysis_target = target
             digest = self._sha256_file(target)
             if digest in seen_hashes:
                 try:
                     target.unlink()
                 except OSError:
                     pass
+                if analysis_target != target:
+                    try:
+                        analysis_target.unlink()
+                    except OSError:
+                        pass
                 continue
             seen_hashes.add(digest)
             frames.append(
@@ -2499,7 +2723,9 @@ P 数索引：
                     "timestamp": self._format_seconds(float(timestamp)),
                     "file_name": target.name,
                     "image_path": f"frames/{target.name}",
+                    "analysis_image_path": f"frames/{analysis_target.name}",
                     "_absolute_path": str(target),
+                    "_analysis_absolute_path": str(analysis_target),
                     "sha256": digest,
                     "selected": True,
                     "reason": "chapter_anchor",
@@ -2507,8 +2733,19 @@ P 数索引：
             )
         return frames, warnings
 
+    def _ffmpeg_jpeg_quality_for_visual_analysis(self) -> str:
+        try:
+            quality = int(self._settings.visual_evidence_image_quality or 85)
+        except (TypeError, ValueError):
+            quality = 85
+        quality = max(1, min(quality, 100))
+        qscale = round(31 - ((quality - 1) * 29 / 99))
+        return str(max(2, min(qscale, 31)))
+
     def _visual_llm_available(self) -> bool:
         if not self._settings.visual_evidence_use_llm:
+            return False
+        if hasattr(self._settings, "visual_multimodal_enabled") and not self._settings.visual_multimodal_enabled:
             return False
         base_url, model, api_key = self._visual_llm_config()
         return bool(base_url and model and api_key)
@@ -2536,20 +2773,29 @@ P 数索引：
         timeout = max(15, int(self._settings.visual_evidence_timeout_seconds or 120))
         retry_count = max(0, min(int(self._settings.visual_evidence_retry_count or 1), 3))
         for frame in frames:
-            image_path = frame.get("_absolute_path")
+            image_path = frame.get("_analysis_absolute_path") or frame.get("_absolute_path")
             if not image_path:
-                image_path = str(frame.get("image_path") or "")
+                image_path = str(frame.get("analysis_image_path") or frame.get("image_path") or "")
             image_file = Path(str(image_path))
             if not image_file.exists():
                 # frame_index stores paths relative to the visual directory.
                 continue
             image_data = base64.b64encode(image_file.read_bytes()).decode("ascii")
-            prompt = (
+            prompt = self._settings.visual_vlm_prompt.strip() or (
                 "请只基于截图可见内容输出 JSON。不要猜测画面外信息。"
                 "字段：visual_type, caption, ocr_text, semantic_summary, importance, should_insert, "
                 "suggested_anchor, note_explanation, scene, confidence。"
-                f"\n视频标题：{title}\n时间点：{frame.get('timestamp')}\n章节线索：\n{timeline_hint}"
+                "\n视频标题：{title}\n时间点：{timestamp}\n章节线索：\n{timeline_hint}"
             )
+            try:
+                prompt = prompt.format(
+                    title=title,
+                    timestamp=frame.get("timestamp"),
+                    timeline_hint=timeline_hint,
+                    knowledge_note_markdown=_truncate_text(result.knowledge_note_markdown or "", 4000),
+                )
+            except (KeyError, IndexError, ValueError):
+                prompt = f"{prompt}\n视频标题：{title}\n时间点：{frame.get('timestamp')}\n章节线索：\n{timeline_hint}"
             payload = {
                 "model": normalize_openai_compatible_model_name(model),
                 "messages": [

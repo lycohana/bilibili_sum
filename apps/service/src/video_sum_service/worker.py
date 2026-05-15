@@ -321,7 +321,11 @@ class TaskWorker:
             )
             if self._auto_generate_mindmap and self._can_auto_generate_mindmap(final_result):
                 self.submit_mindmap(task_id)
-            if self._auto_generate_visual_evidence and self._can_generate_visual_evidence(record, final_result):
+            if (
+                self._auto_generate_visual_evidence
+                and final_result.visual_note_status not in {"generating", "ready", "partial", "unsupported", "failed"}
+                and self._can_generate_visual_evidence(record, final_result)
+            ):
                 self.submit_visual_evidence(task_id)
             if self._knowledge_index_auto_rebuild == "on_task_completed":
                 self._index_completed_task(record.video_id, task_id)
@@ -463,7 +467,9 @@ class TaskWorker:
                     "visual_note_artifact_path": str(Path(note_path)),
                     "visual_enhanced_note_artifact_path": str(Path(note_path)),
                     "visual_note_updated_at": datetime.now(timezone.utc),
+                    "visual_note_mode": str(context.get("mode") or normalized_mode),
                     "visual_frame_count": int(context.get("frame_count") or 0),
+                    "visual_insert_count": int(context.get("insert_count") or 0),
                 }
             )
             self._repository.save_result(task_id, final_result)

@@ -70,6 +70,14 @@ type SettingsPageProps = {
 };
 
 const TASK_LIST_LIMIT = 60;
+type GenerationModelDialog = "main" | "visual" | null;
+type GenerationModelScope = Exclude<GenerationModelDialog, null>;
+type ModelAvailabilityStatus = "unknown" | "checking" | "available" | "unavailable";
+
+type ModelAvailabilityState = {
+  status: ModelAvailabilityStatus;
+  message: string;
+};
 
 type SettingsSearchItem = {
   category: SettingsCategory;
@@ -132,6 +140,8 @@ const SETTINGS_SEARCH_ITEMS: SettingsSearchItem[] = [
   { category: "generation", targetKey: "llm_enabled", title: "启用 LLM 摘要", description: "打开或关闭大模型摘要。", keywords: ["llm", "摘要", "开启", "关闭"] },
   { category: "generation", targetKey: "auto_generate_mindmap", title: "自动生成思维导图", description: "摘要完成后自动生成导图。", keywords: ["导图", "mindmap", "自动", "思维导图"] },
   { category: "generation", targetKey: "visual_note_mode", title: "图文笔记形式", description: "选择纯文本、插图笔记或 VLM 理解型图文笔记。", keywords: ["视觉", "图片", "截图", "图文笔记", "vlm"] },
+  { category: "generation", targetKey: "visual_download_resolution", title: "图文视频分辨率", description: "图文笔记专用视频下载清晰度。", keywords: ["图文", "分辨率", "下载", "截图"] },
+  { category: "generation", targetKey: "visual_multimodal_enabled", title: "多模态理解", description: "是否调用 VLM 理解截图。", keywords: ["vlm", "多模态", "视觉", "图片理解"] },
   { category: "generation", targetKey: "llm_base_url", title: "LLM API Base URL", description: "主摘要 LLM API 地址。", keywords: ["base url", "openai", "compatible", "api", "地址"] },
   { category: "generation", targetKey: "llm_api_key", title: "LLM API Key", description: "主摘要 LLM API 密钥。", keywords: ["key", "apikey", "api key", "密钥"] },
   { category: "generation", targetKey: "llm_model", title: "LLM 模型名称", description: "主摘要使用的模型名。", keywords: ["model", "模型", "gpt", "qwen", "mimo", "claude"] },
@@ -150,6 +160,8 @@ const SETTINGS_SEARCH_ITEMS: SettingsSearchItem[] = [
   { category: "prompts", targetKey: "knowledge_note_system_prompt", title: "知识笔记 System Prompt", description: "控制知识笔记角色、风格和整体约束。", keywords: ["知识笔记", "prompt", "system", "提示词", "风格"] },
   { category: "prompts", targetKey: "knowledge_note_user_prompt_template", title: "知识笔记 User Template", description: "控制知识笔记变量、结构和 Markdown 格式。", keywords: ["知识笔记", "template", "模板", "格式", "summary_json", "transcript"] },
   { category: "prompts", targetKey: "visual_note_system_prompt", title: "图文笔记 System Prompt", description: "控制 VLM 图文笔记整合风格。", keywords: ["图文笔记", "prompt", "vlm", "图片"] },
+  { category: "prompts", targetKey: "visual_frame_planning_prompt", title: "捕获帧规划 Prompt", description: "控制如何判断哪些时间点值得截图。", keywords: ["截图", "规划", "关键帧", "prompt"] },
+  { category: "prompts", targetKey: "visual_vlm_prompt", title: "画面理解 Prompt", description: "控制 VLM 如何解析截图。", keywords: ["vlm", "画面理解", "ocr", "prompt"] },
   { category: "performance", targetKey: "task_concurrency", title: "任务并发数", description: "控制整体任务吞吐。", keywords: ["并发", "concurrency", "任务", "性能"] },
   { category: "performance", targetKey: "mindmap_concurrency", title: "导图并发数", description: "控制导图生成并发。", keywords: ["导图", "并发", "mindmap"] },
   { category: "performance", targetKey: "summary_chunk_concurrency", title: "摘要分块并发数", description: "控制单任务内部摘要请求并发。", keywords: ["摘要", "分块", "并发", "chunk"] },
@@ -232,7 +244,12 @@ export function SettingsPage({
   const [asrTestStatus, setAsrTestStatus] = useState("");
   const [asrTestBusy, setAsrTestBusy] = useState(false);
   const [llmTestStatus, setLlmTestStatus] = useState("");
+  const [llmTestNoticeVersion, setLlmTestNoticeVersion] = useState(0);
   const [llmTestBusy, setLlmTestBusy] = useState(false);
+  const [modelAvailability, setModelAvailability] = useState<Record<GenerationModelScope, ModelAvailabilityState>>({
+    main: { status: "unknown", message: "" },
+    visual: { status: "unknown", message: "" },
+  });
   const [storageOverview, setStorageOverview] = useState<StorageOverview | null>(null);
   const [storageLoading, setStorageLoading] = useState(false);
   const [storageCleaning, setStorageCleaning] = useState(false);
@@ -241,6 +258,7 @@ export function SettingsPage({
   const [pendingFocusTarget, setPendingFocusTarget] = useState<string | null>(null);
   const [activeFocusTarget, setActiveFocusTarget] = useState<string | null>(null);
   const [knowledgePromptGuideOpen, setKnowledgePromptGuideOpen] = useState(false);
+  const [generationModelDialog, setGenerationModelDialog] = useState<GenerationModelDialog>(null);
   const [settingsSearchQuery, setSettingsSearchQuery] = useState("");
   const [taskListOpen, setTaskListOpen] = useState(false);
   const [taskListLoading, setTaskListLoading] = useState(false);
@@ -248,6 +266,7 @@ export function SettingsPage({
   const [taskList, setTaskList] = useState<TaskSummary[]>([]);
   const focusTargetRefs = useRef<Record<string, HTMLElement | null>>({});
   const lastHandledExternalFocusNonce = useRef<number | null>(null);
+  const silentModelCheckRunId = useRef(0);
 
   useEffect(() => {
     if (isDirty) {
@@ -506,8 +525,69 @@ export function SettingsPage({
       .slice(0, 8)
     : [];
   const llmApiKeyReady = hasUsableApiKey(form?.llm_api_key, form?.llm_api_key_configured);
+  const visualApiKeyReady = hasUsableApiKey(form?.visual_evidence_api_key, form?.visual_evidence_api_key_configured) || llmApiKeyReady;
   const knowledgeLlmApiKeyReady = hasUsableApiKey(form?.knowledge_llm_api_key, form?.knowledge_llm_api_key_configured);
-  const llmReady = Boolean(form?.llm_enabled && llmApiKeyReady);
+  const llmEnabled = Boolean(form?.llm_enabled);
+  const visualMultimodalEnabled = Boolean(form?.visual_multimodal_enabled);
+  const llmReady = Boolean(form?.llm_enabled && llmApiKeyReady && String(form?.llm_base_url || "").trim() && String(form?.llm_model || "").trim());
+  const visualLlmReady = Boolean(
+    form?.visual_multimodal_enabled
+    && visualApiKeyReady
+    && String(form?.visual_evidence_base_url || form?.llm_base_url || "").trim()
+    && String(form?.visual_evidence_model || form?.llm_model || "").trim(),
+  );
+  const mainModelAvailability = modelAvailability.main;
+  const visualModelAvailability = modelAvailability.visual;
+  const mainModelStatusLabel = mainModelAvailability.status === "available"
+    ? "可用"
+    : mainModelAvailability.status === "unavailable"
+      ? "不可用"
+      : mainModelAvailability.status === "checking"
+        ? "检查中"
+        : llmReady
+          ? "可用"
+          : llmEnabled
+            ? "待配置"
+            : "关闭";
+  const mainModelStatusClass = mainModelAvailability.status === "available" || (mainModelAvailability.status === "unknown" && llmReady)
+    ? "success"
+    : mainModelAvailability.status === "unavailable"
+      ? "danger"
+      : mainModelAvailability.status === "checking" || llmEnabled
+        ? "warning"
+        : "";
+  const mainModelSummary = llmEnabled
+    ? mainModelAvailability.status === "unavailable"
+      ? "不可用"
+      : llmReady
+        ? "已配置"
+        : "待补全"
+    : "未启用";
+  const visualModelStatusLabel = visualModelAvailability.status === "available"
+    ? "可用"
+    : visualModelAvailability.status === "unavailable"
+      ? "不可用"
+      : visualModelAvailability.status === "checking"
+        ? "检查中"
+        : visualLlmReady
+          ? "可用"
+          : visualMultimodalEnabled
+            ? "待确认"
+            : "关闭";
+  const visualModelStatusClass = visualModelAvailability.status === "available" || (visualModelAvailability.status === "unknown" && visualLlmReady)
+    ? "success"
+    : visualModelAvailability.status === "unavailable"
+      ? "danger"
+      : visualModelAvailability.status === "checking" || visualMultimodalEnabled
+        ? "warning"
+        : "";
+  const visualModelSummary = visualMultimodalEnabled
+    ? visualModelAvailability.status === "unavailable"
+      ? "不可用"
+      : visualLlmReady
+        ? "已配置"
+        : "跟随或待补全"
+    : "未启用";
   const knowledgeLlmUsesCustom = String(form?.knowledge_llm_mode || "same_as_main").trim().toLowerCase() === "custom";
   const knowledgeLlmReady = knowledgeLlmUsesCustom
     ? Boolean(form?.knowledge_llm_enabled && knowledgeLlmApiKeyReady && String(form?.knowledge_llm_base_url || "").trim() && String(form?.knowledge_llm_model || "").trim())
@@ -655,6 +735,10 @@ export function SettingsPage({
   function updateForm(next: ServiceSettings) {
     setIsDirty(true);
     setForm(next);
+    setModelAvailability({
+      main: { status: "unknown", message: "" },
+      visual: { status: "unknown", message: "" },
+    });
   }
 
   function resetKnowledgeNotePrompt(field: "system" | "template") {
@@ -672,10 +756,12 @@ export function SettingsPage({
     });
   }
 
-  function resetVisualNotePrompt(field: "system" | "template") {
+  function resetVisualNotePrompt(field: "system" | "template" | "planning" | "vlm") {
     if (!form) return;
     const defaultSystemPrompt = form.defaults?.visual_note_system_prompt || form.visual_note_system_prompt;
     const defaultUserTemplate = form.defaults?.visual_note_user_prompt_template || form.visual_note_user_prompt_template;
+    const defaultPlanningPrompt = form.defaults?.visual_frame_planning_prompt || form.visual_frame_planning_prompt;
+    const defaultVlmPrompt = form.defaults?.visual_vlm_prompt || form.visual_vlm_prompt;
     updateForm({
       ...form,
       visual_note_system_prompt: field === "system"
@@ -684,6 +770,12 @@ export function SettingsPage({
       visual_note_user_prompt_template: field === "template"
         ? defaultUserTemplate
         : form.visual_note_user_prompt_template,
+      visual_frame_planning_prompt: field === "planning"
+        ? defaultPlanningPrompt
+        : form.visual_frame_planning_prompt,
+      visual_vlm_prompt: field === "vlm"
+        ? defaultVlmPrompt
+        : form.visual_vlm_prompt,
     });
   }
 
@@ -862,25 +954,66 @@ export function SettingsPage({
     }
   }
 
+  function buildLlmTestPayload(scope: GenerationModelScope) {
+    if (!form) {
+      return null;
+    }
+    if (scope === "main") {
+      return {
+        llm_enabled: form.llm_enabled,
+        llm_provider: form.llm_provider,
+        llm_base_url: form.llm_base_url,
+        llm_model: form.llm_model,
+        ...(form.llm_api_key.trim() && !isMaskedApiKey(form.llm_api_key) ? { llm_api_key: form.llm_api_key } : {}),
+      };
+    }
+    const visualApiKey = String(form.visual_evidence_api_key || "").trim();
+    const mainApiKey = String(form.llm_api_key || "").trim();
+    return {
+      llm_test_scope: "visual" as const,
+      llm_enabled: form.visual_multimodal_enabled,
+      llm_provider: form.visual_vlm_provider || form.llm_provider,
+      llm_base_url: form.visual_evidence_base_url || form.llm_base_url,
+      llm_model: form.visual_evidence_model || form.llm_model,
+      ...(!visualApiKey || isMaskedApiKey(visualApiKey)
+        ? mainApiKey && !isMaskedApiKey(mainApiKey)
+          ? { llm_api_key: mainApiKey }
+          : {}
+        : { llm_api_key: visualApiKey }),
+    };
+  }
+
+  async function runLlmConnectionTest(scope: GenerationModelScope) {
+    const payload = buildLlmTestPayload(scope);
+    if (!payload) {
+      throw new Error("模型配置尚未加载。");
+    }
+    return api.testLlmConnection(payload);
+  }
+
   async function testLlmConnection() {
     if (!form || llmTestBusy) {
       return;
     }
     try {
       setLlmTestBusy(true);
+      setLlmTestNoticeVersion((current) => current + 1);
       setLlmTestStatus("正在测试 LLM 连接与 JSON 输出...");
-      const response = await api.testLlmConnection({
-        llm_enabled: form.llm_enabled,
-        llm_provider: form.llm_provider,
-        llm_base_url: form.llm_base_url,
-        llm_model: form.llm_model,
-        ...(form.llm_api_key.trim() && !isMaskedApiKey(form.llm_api_key) ? { llm_api_key: form.llm_api_key } : {}),
-      });
+      const response = await runLlmConnectionTest("main");
       const preview = response.jsonPreview || response.responsePreview;
       const suffix = preview ? `，示例：${preview}` : "";
       setLlmTestStatus(`${response.message}${suffix}`);
+      setModelAvailability((current) => ({
+        ...current,
+        main: { status: "available", message: response.message },
+      }));
     } catch (error) {
-      setLlmTestStatus(error instanceof Error ? error.message : "LLM 连接测试失败");
+      const message = error instanceof Error ? error.message : "LLM 连接测试失败";
+      setLlmTestStatus(message);
+      setModelAvailability((current) => ({
+        ...current,
+        main: { status: "unavailable", message },
+      }));
     } finally {
       setLlmTestBusy(false);
     }
@@ -892,6 +1025,7 @@ export function SettingsPage({
     }
     try {
       setLlmTestBusy(true);
+      setLlmTestNoticeVersion((current) => current + 1);
       setLlmTestStatus("正在测试知识库 LLM 连接与 JSON 输出...");
       const response = await api.testLlmConnection({
         llm_test_scope: "knowledge",
@@ -908,6 +1042,76 @@ export function SettingsPage({
       setLlmTestStatus(error instanceof Error ? error.message : "知识库 LLM 连接测试失败");
     } finally {
       setLlmTestBusy(false);
+    }
+  }
+
+  async function testVisualLlmConnection() {
+    if (!form || llmTestBusy) {
+      return;
+    }
+    try {
+      setLlmTestBusy(true);
+      setLlmTestNoticeVersion((current) => current + 1);
+      setLlmTestStatus("正在测试视觉模型连接与 JSON 输出...");
+      const response = await runLlmConnectionTest("visual");
+      const preview = response.jsonPreview || response.responsePreview;
+      const suffix = preview ? `，示例：${preview}` : "";
+      setLlmTestStatus(`${response.message}${suffix}`);
+      setModelAvailability((current) => ({
+        ...current,
+        visual: { status: "available", message: response.message },
+      }));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "视觉模型连接测试失败";
+      setLlmTestStatus(message);
+      setModelAvailability((current) => ({
+        ...current,
+        visual: { status: "unavailable", message },
+      }));
+    } finally {
+      setLlmTestBusy(false);
+    }
+  }
+
+  function closeGenerationModelDialog() {
+    const scope = generationModelDialog;
+    setGenerationModelDialog(null);
+    if (!scope) {
+      return;
+    }
+    void silentlyCheckGenerationModel(scope);
+  }
+
+  async function silentlyCheckGenerationModel(scope: GenerationModelScope) {
+    if (!form || llmTestBusy) {
+      return;
+    }
+    const runId = silentModelCheckRunId.current + 1;
+    silentModelCheckRunId.current = runId;
+    setModelAvailability((current) => ({
+      ...current,
+      [scope]: { status: "checking", message: "" },
+    }));
+    try {
+      const response = await runLlmConnectionTest(scope);
+      if (silentModelCheckRunId.current !== runId) {
+        return;
+      }
+      setModelAvailability((current) => ({
+        ...current,
+        [scope]: { status: "available", message: response.message },
+      }));
+    } catch (error) {
+      if (silentModelCheckRunId.current !== runId) {
+        return;
+      }
+      setModelAvailability((current) => ({
+        ...current,
+        [scope]: {
+          status: "unavailable",
+          message: error instanceof Error ? error.message : "模型不可用",
+        },
+      }));
     }
   }
 
@@ -1046,7 +1250,7 @@ export function SettingsPage({
           { id: "settings-knowledge-deps-status", message: knowledgeDepsStatus },
           { id: "settings-runtime-status", message: runtimeStatusMessage },
           { id: "settings-asr-test-status", message: asrTestStatus },
-          { id: "settings-llm-test-status", message: llmTestStatus },
+          { id: "settings-llm-test-status", message: llmTestStatus, version: llmTestNoticeVersion },
           { id: "settings-storage-status", message: storageStatus },
           { id: "settings-backend-error", message: desktop.backend?.lastError || "", tone: "error" },
           { id: "settings-service-status", message: serviceStatus },
@@ -1737,146 +1941,254 @@ export function SettingsPage({
           )}
 
           {activeCategory === "generation" && (
-            <section className="settings-category-section">
+            <section className="settings-category-section generation-settings-section">
               <header className="settings-category-header">
                 <h2>摘要生成</h2>
-                <p>管理主摘要 LLM、摘要语言、切块策略和思维导图开关。</p>
+                <p>按“基础生成、模型接入、自动产物、图文截图、长视频切块”分层管理，日常开关留在页面，密钥和模型细节放进悬浮窗。</p>
               </header>
-              <div className="settings-form-group">
-                <label className="settings-input-group">
-                  <span className="settings-input-label">启用 LLM 摘要</span>
-                  <select
-                    className="settings-select-field"
-                    ref={registerFocusTarget("llm_enabled") as (node: HTMLSelectElement | null) => void}
-                    value={form.llm_enabled ? "true" : "false"}
-                    onChange={(e) => updateForm({ ...form, llm_enabled: e.target.value === "true" })}
-                  >
-                    <option value="false">关闭</option>
-                    <option value="true">开启</option>
-                  </select>
-                  <span className="settings-input-caption">使用大语言模型生成更高质量的视频摘要</span>
-                </label>
-                <label className="settings-input-group" ref={registerFocusTarget("auto_generate_mindmap") as (node: HTMLLabelElement | null) => void}>
-                  <span className="settings-input-label">自动生成思维导图</span>
-                  <select className="settings-select-field" value={form.auto_generate_mindmap ? "true" : "false"} onChange={(e) => updateForm({ ...form, auto_generate_mindmap: e.target.value === "true" })}>
-                    <option value="false">关闭</option>
-                    <option value="true">开启</option>
-                  </select>
-                  <span className="settings-input-caption">任务摘要完成后，后台自动发起思维导图生成。关闭后仍可在详情页手动生成。</span>
-                </label>
-                <label className="settings-input-group" ref={registerFocusTarget("visual_note_mode") as (node: HTMLLabelElement | null) => void}>
-                  <span className="settings-input-label">知识笔记形式</span>
-                  <select
-                    className="settings-select-field"
-                    value={form.visual_note_mode || "text"}
-                    onChange={(e) => updateForm({
-                      ...form,
-                      visual_note_mode: e.target.value as typeof form.visual_note_mode,
-                      visual_evidence_enabled: e.target.value !== "text" ? form.visual_evidence_enabled : false,
-                      visual_evidence_use_llm: e.target.value === "vlm_integrated",
-                    })}
-                  >
-                    <option value="text">纯文本笔记</option>
-                    <option value="frame_insert">插图笔记</option>
-                    <option value="vlm_integrated">理解型图文笔记</option>
-                  </select>
-                  <span className="settings-input-caption">纯文本不抽帧；插图笔记按章节插入关键画面；理解型图文笔记会调用 VLM 解析图片内容。</span>
-                </label>
-                <label className="settings-input-group" ref={registerFocusTarget("visual_evidence_enabled") as (node: HTMLLabelElement | null) => void}>
-                  <span className="settings-input-label">自动生成图文笔记</span>
-                  <select className="settings-select-field" value={form.visual_evidence_enabled ? "true" : "false"} disabled={(form.visual_note_mode || "text") === "text"} onChange={(e) => updateForm({ ...form, visual_evidence_enabled: e.target.value === "true" })}>
-                    <option value="false">关闭</option>
-                    <option value="true">开启</option>
-                  </select>
-                  <span className="settings-input-caption">摘要完成后在独立队列生成图文版；关闭后仍可在详情页手动生成。</span>
-                </label>
-                {(form.visual_note_mode || "text") !== "text" ? (
-                  <>
-                <label className="settings-input-group">
-                  <span className="settings-input-label">使用 VLM 解析图片</span>
-                  <select className="settings-select-field" value={form.visual_evidence_use_llm ? "true" : "false"} disabled={(form.visual_note_mode || "text") !== "vlm_integrated"} onChange={(e) => updateForm({ ...form, visual_evidence_use_llm: e.target.value === "true" })}>
-                    <option value="true">开启</option>
-                    <option value="false">只保存截图</option>
-                  </select>
-                  <span className="settings-input-caption">理解型图文笔记会调用 OpenAI Compatible 视觉模型生成 caption、OCR 和画面说明；未配置时自动降级为插图笔记。</span>
-                </label>
-                {(form.visual_note_mode || "text") === "vlm_integrated" ? (
-                  <>
-                <label className="settings-input-group">
-                  <span className="settings-input-label">视觉 API Base URL</span>
-                  <input className="settings-input-field" value={form.visual_evidence_base_url} onChange={(e) => updateForm({ ...form, visual_evidence_base_url: e.target.value })} placeholder="留空则跟随主 LLM Base URL" />
-                </label>
-                <label className="settings-input-group">
-                  <span className="settings-input-label">视觉模型名称</span>
-                  <input className="settings-input-field" value={form.visual_evidence_model} onChange={(e) => updateForm({ ...form, visual_evidence_model: e.target.value })} placeholder="留空则跟随主 LLM 模型" />
-                </label>
-                <label className="settings-input-group">
-                  <span className="settings-input-label">视觉 API Key</span>
-                  <input className="settings-input-field" type="password" value={form.visual_evidence_api_key} onFocus={selectMaskedApiKey} onChange={(e) => updateForm({ ...form, visual_evidence_api_key: e.target.value })} placeholder="留空则跟随主 LLM API Key" />
-                </label>
-                  </>
-                ) : null}
-                <label className="settings-input-group">
-                  <span className="settings-input-label">最多截图数</span>
-                  <input className="settings-input-field" type="number" min={1} max={30} value={form.visual_evidence_max_frames} onChange={(e) => updateForm({ ...form, visual_evidence_max_frames: parseMinOneInt(e.target.value, 12) })} />
-                  <span className="settings-input-caption">后端会硬限制在 1-30 张，并优先按章节时间线选帧。</span>
-                </label>
-                <label className="settings-input-group">
-                  <span className="settings-input-label">截图最小间隔（秒）</span>
-                  <input className="settings-input-field" type="number" min={10} value={form.visual_evidence_frame_interval_seconds} onChange={(e) => updateForm({ ...form, visual_evidence_frame_interval_seconds: parseMinOneInt(e.target.value, 60) })} />
-                </label>
-                  </>
-                ) : null}
-                {form.llm_enabled && (
-                  <>
+              <div className="generation-settings-tree">
+                <section className="settings-tree-panel">
+                  <header className="settings-tree-panel-header">
+                    <span className="settings-tree-index">01</span>
+                    <div>
+                      <h3>基础生成</h3>
+                      <p>控制摘要是否使用 LLM、输出语言和失败重试。</p>
+                    </div>
+                  </header>
+                  <div className="settings-tree-grid">
                     <label className="settings-input-group">
-                      <span className="settings-input-label">LLM 提供商</span>
-                      <select className="settings-select-field" value={form.llm_provider} onChange={(e) => updateForm({ ...form, llm_provider: e.target.value })}>
-                        <option value="openai-compatible">OpenAI Compatible</option>
-                        <option value="openai">OpenAI</option>
-                        <option value="anthropic">Anthropic</option>
-                        <option value="custom">自定义</option>
+                      <span className="settings-input-label">启用 LLM 摘要</span>
+                      <select
+                        className="settings-select-field"
+                        ref={registerFocusTarget("llm_enabled") as (node: HTMLSelectElement | null) => void}
+                        value={form.llm_enabled ? "true" : "false"}
+                        onChange={(e) => updateForm({ ...form, llm_enabled: e.target.value === "true" })}
+                      >
+                        <option value="false">关闭</option>
+                        <option value="true">开启</option>
+                      </select>
+                      <span className="settings-input-caption">使用大语言模型生成更高质量的视频摘要。</span>
+                    </label>
+                    <label className="settings-input-group" ref={registerFocusTarget("summary_mode") as (node: HTMLLabelElement | null) => void}>
+                      <span className="settings-input-label">摘要模式</span>
+                      <select className="settings-select-field" value={form.summary_mode} onChange={(e) => updateForm({ ...form, summary_mode: e.target.value })}>
+                        <option value="llm">LLM 智能摘要</option>
+                        <option value="extract">仅转写</option>
                       </select>
                     </label>
-                    <label
-                      className={`settings-input-group settings-focus-target ${activeFocusTarget === "llm_base_url" ? "is-highlighted" : ""}`}
-                      ref={registerFocusTarget("llm_base_url") as (node: HTMLLabelElement | null) => void}
-                    >
-                      <span className="settings-input-label">API Base URL</span>
-                      <input className="settings-input-field" value={form.llm_base_url} onChange={(e) => updateForm({ ...form, llm_base_url: e.target.value })} placeholder="https://api.openai.com/v1" />
-                      <span className="settings-input-caption">主摘要 LLM API 的基础 URL 地址。</span>
+                    <label className="settings-input-group" ref={registerFocusTarget("language") as (node: HTMLLabelElement | null) => void}>
+                      <span className="settings-input-label">输出语言</span>
+                      <select className="settings-select-field" value={form.language} onChange={(e) => updateForm({ ...form, language: e.target.value })}>
+                        <option value="zh">中文</option>
+                        <option value="en">English</option>
+                        <option value="ja">日本語</option>
+                      </select>
                     </label>
-                    <label
-                      className={`settings-input-group settings-focus-target ${activeFocusTarget === "llm_api_key" ? "is-highlighted" : ""}`}
-                      ref={registerFocusTarget("llm_api_key") as (node: HTMLLabelElement | null) => void}
-                    >
-                      <span className="settings-input-label">API Key</span>
-                      <input className="settings-input-field" type="password" value={form.llm_api_key} onFocus={selectMaskedApiKey} onChange={(e) => updateForm({ ...form, llm_api_key: e.target.value })} placeholder="sk-..." />
-                      <span className="settings-input-caption">LLM 服务的 API 密钥</span>
+                    <label className="settings-input-group" ref={registerFocusTarget("summary_chunk_retry_count") as (node: HTMLLabelElement | null) => void}>
+                      <span className="settings-input-label">重试次数</span>
+                      <input className="settings-input-field" type="number" min={1} value={form.summary_chunk_retry_count} onChange={(e) => updateForm({ ...form, summary_chunk_retry_count: parseMinOneInt(e.target.value, 2) })} />
+                      <span className="settings-input-caption">摘要 API 调用失败时的重试次数。</span>
                     </label>
-                    <label
-                      className={`settings-input-group settings-focus-target ${activeFocusTarget === "llm_model" ? "is-highlighted" : ""}`}
-                      ref={registerFocusTarget("llm_model") as (node: HTMLLabelElement | null) => void}
-                    >
-                      <span className="settings-input-label">模型名称</span>
-                      <input className="settings-input-field" value={form.llm_model} onChange={(e) => updateForm({ ...form, llm_model: e.target.value })} placeholder="gpt-4o-mini / claude-3-haiku" />
-                      <span className="settings-input-caption">要使用的 LLM 模型名称</span>
-                    </label>
-                    <div className="settings-inline-actions">
-                      <button
-                        className="secondary-button"
-                        type="button"
-                        disabled={llmTestBusy}
-                        onClick={() => void testLlmConnection()}
-                      >
-                        {llmTestBusy ? "测试中..." : "测试是否可用"}
-                      </button>
-                      <span className="settings-input-caption">
-                        使用当前表单中的 Base URL、API Key 和模型名临时请求一次，并校验是否能返回合法 JSON，不会保存设置。
-                      </span>
+                  </div>
+                </section>
+
+                <section className="settings-tree-panel">
+                  <header className="settings-tree-panel-header">
+                    <span className="settings-tree-index">02</span>
+                    <div>
+                      <h3>模型接入</h3>
+                      <p>主摘要模型和视觉理解模型只展示状态，具体地址、密钥和测试放入悬浮窗。</p>
                     </div>
-                  </>
-                )}
+                  </header>
+                  <div className="settings-model-summary-grid">
+                    <article
+                      className={`settings-model-card settings-focus-target ${activeFocusTarget === "llm_base_url" || activeFocusTarget === "llm_api_key" || activeFocusTarget === "llm_model" ? "is-highlighted" : ""}`}
+                      ref={(node) => {
+                        registerFocusTarget("llm_base_url")(node);
+                        registerFocusTarget("llm_api_key")(node);
+                        registerFocusTarget("llm_model")(node);
+                      }}
+                    >
+                      <div className="settings-model-card-top">
+                        <div>
+                          <span className="settings-model-kicker">主摘要模型</span>
+                          <strong>{mainModelSummary}</strong>
+                        </div>
+                        <span className={`settings-status-pill ${mainModelStatusClass}`} title={mainModelAvailability.message || undefined}>{mainModelStatusLabel}</span>
+                      </div>
+                      <dl className="settings-model-meta">
+                        <div>
+                          <dt>Provider</dt>
+                          <dd>{form.llm_provider || "openai-compatible"}</dd>
+                        </div>
+                        <div>
+                          <dt>Model</dt>
+                          <dd>{form.llm_model || "未填写"}</dd>
+                        </div>
+                        <div>
+                          <dt>Base URL</dt>
+                          <dd>{form.llm_base_url || "未填写"}</dd>
+                        </div>
+                      </dl>
+                      <button className="secondary-button" type="button" onClick={() => setGenerationModelDialog("main")}>
+                        编辑与测试
+                      </button>
+                    </article>
+                    <article
+                      className={`settings-model-card settings-focus-target ${activeFocusTarget === "visual_multimodal_enabled" ? "is-highlighted" : ""}`}
+                      ref={registerFocusTarget("visual_multimodal_enabled") as (node: HTMLElement | null) => void}
+                    >
+                      <div className="settings-model-card-top">
+                        <div>
+                          <span className="settings-model-kicker">视觉理解模型</span>
+                          <strong>{visualModelSummary}</strong>
+                        </div>
+                        <span className={`settings-status-pill ${visualModelStatusClass}`} title={visualModelAvailability.message || undefined}>{visualModelStatusLabel}</span>
+                      </div>
+                      <dl className="settings-model-meta">
+                        <div>
+                          <dt>来源</dt>
+                          <dd>{form.visual_evidence_base_url || form.visual_evidence_model || hasUsableApiKey(form.visual_evidence_api_key, form.visual_evidence_api_key_configured) ? "独立配置" : "跟随主 LLM"}</dd>
+                        </div>
+                        <div>
+                          <dt>Model</dt>
+                          <dd>{form.visual_evidence_model || form.llm_model || "未填写"}</dd>
+                        </div>
+                        <div>
+                          <dt>Base URL</dt>
+                          <dd>{form.visual_evidence_base_url || form.llm_base_url || "未填写"}</dd>
+                        </div>
+                      </dl>
+                      <button className="secondary-button" type="button" onClick={() => setGenerationModelDialog("visual")}>
+                        编辑与测试
+                      </button>
+                    </article>
+                  </div>
+                </section>
+
+                <section className="settings-tree-panel">
+                  <header className="settings-tree-panel-header">
+                    <span className="settings-tree-index">03</span>
+                    <div>
+                      <h3>自动产物</h3>
+                      <p>摘要完成后是否自动追加导图和图文笔记。</p>
+                    </div>
+                  </header>
+                  <div className="settings-tree-grid">
+                    <label className="settings-input-group" ref={registerFocusTarget("auto_generate_mindmap") as (node: HTMLLabelElement | null) => void}>
+                      <span className="settings-input-label">自动生成思维导图</span>
+                      <select className="settings-select-field" value={form.auto_generate_mindmap ? "true" : "false"} onChange={(e) => updateForm({ ...form, auto_generate_mindmap: e.target.value === "true" })}>
+                        <option value="false">关闭</option>
+                        <option value="true">开启</option>
+                      </select>
+                      <span className="settings-input-caption">关闭后仍可在详情页手动生成。</span>
+                    </label>
+                    <label className="settings-input-group" ref={registerFocusTarget("visual_note_mode") as (node: HTMLLabelElement | null) => void}>
+                      <span className="settings-input-label">知识笔记形式</span>
+                      <select
+                        className="settings-select-field"
+                        value={form.visual_note_mode || "text"}
+                        onChange={(e) => updateForm({
+                          ...form,
+                          visual_note_mode: e.target.value as typeof form.visual_note_mode,
+                          visual_evidence_enabled: e.target.value !== "text" ? form.visual_evidence_enabled : false,
+                          visual_evidence_use_llm: e.target.value === "vlm_integrated",
+                          visual_multimodal_enabled: e.target.value === "vlm_integrated" ? form.visual_multimodal_enabled : false,
+                        })}
+                      >
+                        <option value="text">纯文本笔记</option>
+                        <option value="frame_insert">插图笔记</option>
+                        <option value="vlm_integrated">理解型图文笔记</option>
+                      </select>
+                      <span className="settings-input-caption">纯文本不抽帧；理解型图文会调用 VLM 解析图片内容。</span>
+                    </label>
+                    <label className="settings-input-group" ref={registerFocusTarget("visual_evidence_enabled") as (node: HTMLLabelElement | null) => void}>
+                      <span className="settings-input-label">自动生成图文笔记</span>
+                      <select className="settings-select-field" value={form.visual_evidence_enabled ? "true" : "false"} disabled={(form.visual_note_mode || "text") === "text"} onChange={(e) => updateForm({ ...form, visual_evidence_enabled: e.target.value === "true" })}>
+                        <option value="false">关闭</option>
+                        <option value="true">开启</option>
+                      </select>
+                      <span className="settings-input-caption">摘要完成后在独立队列生成图文版。</span>
+                    </label>
+                    <label className="settings-input-group">
+                      <span className="settings-input-label">多模态理解</span>
+                      <select className="settings-select-field" value={form.visual_multimodal_enabled ? "true" : "false"} disabled={(form.visual_note_mode || "text") !== "vlm_integrated"} onChange={(e) => updateForm({ ...form, visual_multimodal_enabled: e.target.value === "true", visual_evidence_use_llm: e.target.value === "true" })}>
+                        <option value="false">关闭，仅按文本语义插图</option>
+                        <option value="true">开启，调用 VLM 理解画面</option>
+                      </select>
+                      <span className="settings-input-caption">开启后会把压缩识别图送入视觉模型。</span>
+                    </label>
+                  </div>
+                </section>
+
+                {(form.visual_note_mode || "text") !== "text" ? (
+                  <section className="settings-tree-panel">
+                    <header className="settings-tree-panel-header">
+                      <span className="settings-tree-index">04</span>
+                      <div>
+                        <h3>图文截图</h3>
+                        <p>只影响图文笔记抽帧和图片质量，不影响文本总结。</p>
+                      </div>
+                    </header>
+                    <div className="settings-tree-grid">
+                      <label className="settings-input-group" ref={registerFocusTarget("visual_download_resolution") as (node: HTMLLabelElement | null) => void}>
+                        <span className="settings-input-label">下载分辨率</span>
+                        <select className="settings-select-field" value={form.visual_download_resolution || "720p"} onChange={(e) => updateForm({ ...form, visual_download_resolution: e.target.value })}>
+                          <option value="auto">自动</option>
+                          <option value="360p">360p</option>
+                          <option value="480p">480p</option>
+                          <option value="720p">720p</option>
+                        </select>
+                        <span className="settings-input-caption">只影响图文笔记抽帧视频。</span>
+                      </label>
+                      <label className="settings-input-group">
+                        <span className="settings-input-label">最多截图数</span>
+                        <input className="settings-input-field" type="number" min={1} max={30} value={form.visual_evidence_max_frames} onChange={(e) => updateForm({ ...form, visual_evidence_max_frames: parseMinOneInt(e.target.value, 12) })} />
+                        <span className="settings-input-caption">后端限制在 1-30 张。</span>
+                      </label>
+                      <label className="settings-input-group">
+                        <span className="settings-input-label">截图最小间隔（秒）</span>
+                        <input className="settings-input-field" type="number" min={10} value={form.visual_evidence_frame_interval_seconds} onChange={(e) => updateForm({ ...form, visual_evidence_frame_interval_seconds: parseMinOneInt(e.target.value, 10) })} />
+                      </label>
+                      <label className="settings-input-group">
+                        <span className="settings-input-label">笔记图片宽度</span>
+                        <input className="settings-input-field" type="number" min={320} max={1600} value={form.visual_evidence_frame_width} onChange={(e) => updateForm({ ...form, visual_evidence_frame_width: parseMinOneInt(e.target.value, 960) })} />
+                        <span className="settings-input-caption">控制最终图文笔记中的截图宽度上限。</span>
+                      </label>
+                      <label className="settings-input-group">
+                        <span className="settings-input-label">识别图质量</span>
+                        <input className="settings-input-field" type="number" min={1} max={100} value={form.visual_evidence_image_quality} onChange={(e) => updateForm({ ...form, visual_evidence_image_quality: parseMinOneInt(e.target.value, 85) })} />
+                        <span className="settings-input-caption">仅用于 VLM 识别压缩图。</span>
+                      </label>
+                    </div>
+                  </section>
+                ) : null}
+
+                <section className="settings-tree-panel">
+                  <header className="settings-tree-panel-header">
+                    <span className="settings-tree-index">{(form.visual_note_mode || "text") !== "text" ? "05" : "04"}</span>
+                    <div>
+                      <h3>长视频切块</h3>
+                      <p>控制长视频拆分摘要的连续性和单块长度。</p>
+                    </div>
+                  </header>
+                  <div className="settings-tree-grid">
+                    <label className="settings-input-group" ref={registerFocusTarget("summary_chunk_target_chars") as (node: HTMLLabelElement | null) => void}>
+                      <span className="settings-input-label">分块目标字符数</span>
+                      <input className="settings-input-field" type="number" min={1} value={form.summary_chunk_target_chars} onChange={(e) => updateForm({ ...form, summary_chunk_target_chars: parseMinOneInt(e.target.value, 2200) })} />
+                      <span className="settings-input-caption">LLM 处理时分块的目标字符数。</span>
+                    </label>
+                    <label className="settings-input-group" ref={registerFocusTarget("summary_chunk_overlap_segments") as (node: HTMLLabelElement | null) => void}>
+                      <span className="settings-input-label">分块重叠段数</span>
+                      <input className="settings-input-field" type="number" min={1} value={form.summary_chunk_overlap_segments} onChange={(e) => updateForm({ ...form, summary_chunk_overlap_segments: parseMinOneInt(e.target.value, 2) })} />
+                      <span className="settings-input-caption">分块之间保留的重叠段落。</span>
+                    </label>
+                    <div className="settings-inline-alert info">
+                      <strong>分块并发在性能页调整</strong>
+                      <span>如果需要控制单个任务内部同时请求的摘要块数量，请前往“性能与资源”。</span>
+                    </div>
+                  </div>
+                </section>
               </div>
             </section>
           )}
@@ -2068,47 +2380,6 @@ export function SettingsPage({
             </section>
           )}
 
-          {activeCategory === "generation" && (
-            <section className="settings-category-section">
-              <header className="settings-category-header">
-                <h2>摘要细节</h2>
-                <p>控制摘要模式、输出语言、长视频切块和失败重试。</p>
-              </header>
-              <div className="settings-form-group">
-                <label className="settings-input-group" ref={registerFocusTarget("summary_mode") as (node: HTMLLabelElement | null) => void}>
-                  <span className="settings-input-label">摘要模式</span>
-                  <select className="settings-select-field" value={form.summary_mode} onChange={(e) => updateForm({ ...form, summary_mode: e.target.value })}>
-                    <option value="llm">LLM 智能摘要</option>
-                    <option value="extract">抽取式摘要</option>
-                  </select>
-                </label>
-                <label className="settings-input-group" ref={registerFocusTarget("language") as (node: HTMLLabelElement | null) => void}>
-                  <span className="settings-input-label">语言</span>
-                  <select className="settings-select-field" value={form.language} onChange={(e) => updateForm({ ...form, language: e.target.value })}>
-                    <option value="zh">中文</option>
-                    <option value="en">English</option>
-                    <option value="ja">日本語</option>
-                  </select>
-                </label>
-                <label className="settings-input-group" ref={registerFocusTarget("summary_chunk_target_chars") as (node: HTMLLabelElement | null) => void}>
-                  <span className="settings-input-label">分块目标字符数</span>
-                  <input className="settings-input-field" type="number" min={1} value={form.summary_chunk_target_chars} onChange={(e) => updateForm({ ...form, summary_chunk_target_chars: parseMinOneInt(e.target.value, 2200) })} />
-                  <span className="settings-input-caption">LLM 处理时分块的目标字符数</span>
-                </label>
-                <label className="settings-input-group" ref={registerFocusTarget("summary_chunk_overlap_segments") as (node: HTMLLabelElement | null) => void}>
-                  <span className="settings-input-label">分块重叠段数</span>
-                  <input className="settings-input-field" type="number" min={1} value={form.summary_chunk_overlap_segments} onChange={(e) => updateForm({ ...form, summary_chunk_overlap_segments: parseMinOneInt(e.target.value, 2) })} />
-                  <span className="settings-input-caption">分块之间的重叠段数，保证连续性</span>
-                </label>
-                <label className="settings-input-group" ref={registerFocusTarget("summary_chunk_retry_count") as (node: HTMLLabelElement | null) => void}>
-                  <span className="settings-input-label">重试次数</span>
-                  <input className="settings-input-field" type="number" min={1} value={form.summary_chunk_retry_count} onChange={(e) => updateForm({ ...form, summary_chunk_retry_count: parseMinOneInt(e.target.value, 2) })} />
-                  <span className="settings-input-caption">API 调用失败时的重试次数</span>
-                </label>
-              </div>
-            </section>
-          )}
-
           {activeCategory === "prompts" && (
             <section className="settings-category-section">
               <header className="settings-category-header">
@@ -2170,6 +2441,40 @@ export function SettingsPage({
                       恢复默认
                     </button>
                     <span className="settings-input-caption">控制理解型图文笔记如何把图片解析整合进正文。</span>
+                  </div>
+                </label>
+                <label className="settings-input-group" ref={registerFocusTarget("visual_frame_planning_prompt") as (node: HTMLLabelElement | null) => void}>
+                  <span className="settings-input-label">捕获帧规划 Prompt</span>
+                  <textarea
+                    className="textarea-field"
+                    rows={10}
+                    value={form.visual_frame_planning_prompt || ""}
+                    onChange={(e) => updateForm({ ...form, visual_frame_planning_prompt: e.target.value })}
+                  />
+                  <div className="settings-inline-actions">
+                    <button className="secondary-button" type="button" onClick={() => resetVisualNotePrompt("planning")}>
+                      恢复默认
+                    </button>
+                    <span className="settings-input-caption">
+                      可用变量：{"{title}"}、{"{summary_json}"}、{"{knowledge_note_markdown}"}、{"{segments_excerpt}"}、{"{max_frames}"}。
+                    </span>
+                  </div>
+                </label>
+                <label className="settings-input-group" ref={registerFocusTarget("visual_vlm_prompt") as (node: HTMLLabelElement | null) => void}>
+                  <span className="settings-input-label">画面理解 Prompt</span>
+                  <textarea
+                    className="textarea-field"
+                    rows={10}
+                    value={form.visual_vlm_prompt || ""}
+                    onChange={(e) => updateForm({ ...form, visual_vlm_prompt: e.target.value })}
+                  />
+                  <div className="settings-inline-actions">
+                    <button className="secondary-button" type="button" onClick={() => resetVisualNotePrompt("vlm")}>
+                      恢复默认
+                    </button>
+                    <span className="settings-input-caption">
+                      可用变量：{"{title}"}、{"{timestamp}"}、{"{context}"}。
+                    </span>
                   </div>
                 </label>
                 <label className="settings-input-group" ref={registerFocusTarget("visual_note_user_prompt_template") as (node: HTMLLabelElement | null) => void}>
@@ -2718,6 +3023,104 @@ export function SettingsPage({
           )}
         </div>
       </main>
+      {generationModelDialog ? (
+        <div className="update-dialog-overlay" role="presentation" onClick={closeGenerationModelDialog}>
+          <section
+            className="update-dialog generation-model-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="generation-model-dialog-title"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <header className="update-dialog-header">
+              <div>
+                <span className="settings-model-kicker">模型接入</span>
+                <h2 id="generation-model-dialog-title">{generationModelDialog === "main" ? "主摘要模型" : "视觉理解模型"}</h2>
+              </div>
+              <button className="close-button" type="button" aria-label="关闭模型配置" onClick={closeGenerationModelDialog}>
+                ×
+              </button>
+            </header>
+            <div className="update-dialog-body generation-model-dialog-body">
+              {generationModelDialog === "main" ? (
+                <>
+                  <label className="settings-input-group">
+                    <span className="settings-input-label">LLM 提供商</span>
+                    <select className="settings-select-field" value={form.llm_provider} onChange={(e) => updateForm({ ...form, llm_provider: e.target.value })}>
+                      <option value="openai-compatible">OpenAI Compatible</option>
+                      <option value="openai">OpenAI</option>
+                      <option value="anthropic">Anthropic</option>
+                      <option value="custom">自定义</option>
+                    </select>
+                  </label>
+                  <label className={`settings-input-group settings-focus-target ${activeFocusTarget === "llm_base_url" ? "is-highlighted" : ""}`}>
+                    <span className="settings-input-label">API Base URL</span>
+                    <input className="settings-input-field" value={form.llm_base_url} onChange={(e) => updateForm({ ...form, llm_base_url: e.target.value })} placeholder="https://api.openai.com/v1" />
+                    <span className="settings-input-caption">主摘要 LLM API 的基础 URL 地址。</span>
+                  </label>
+                  <label className={`settings-input-group settings-focus-target ${activeFocusTarget === "llm_api_key" ? "is-highlighted" : ""}`}>
+                    <span className="settings-input-label">API Key</span>
+                    <input className="settings-input-field" type="password" value={form.llm_api_key} onFocus={selectMaskedApiKey} onChange={(e) => updateForm({ ...form, llm_api_key: e.target.value })} placeholder="sk-..." />
+                    <span className="settings-input-caption">已保存的密钥会用 ****** 显示，直接输入新值即可替换。</span>
+                  </label>
+                  <label className={`settings-input-group settings-focus-target ${activeFocusTarget === "llm_model" ? "is-highlighted" : ""}`}>
+                    <span className="settings-input-label">模型名称</span>
+                    <input className="settings-input-field" value={form.llm_model} onChange={(e) => updateForm({ ...form, llm_model: e.target.value })} placeholder="gpt-4o-mini / claude-3-haiku" />
+                  </label>
+                  <div className={`settings-inline-alert ${llmReady ? "success" : "warning"}`}>
+                    <strong>{llmReady ? "主摘要模型配置完整" : "主摘要模型仍需补全"}</strong>
+                    <span>{llmReady ? "可以保存后用于摘要、导图和默认视觉模型。": "启用 LLM 摘要时，需要 Base URL、API Key 与模型名称都有效。"}</span>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="settings-inline-alert info">
+                    <strong>默认跟随主 LLM</strong>
+                    <span>视觉字段留空时，会复用主摘要模型的 Base URL、API Key 和模型名称；只有需要单独 VLM 时再填写。</span>
+                  </div>
+                  <label className="settings-input-group">
+                    <span className="settings-input-label">视觉模型提供商</span>
+                    <select className="settings-select-field" value={form.visual_vlm_provider || "openai-compatible"} onChange={(e) => updateForm({ ...form, visual_vlm_provider: e.target.value })}>
+                      <option value="openai-compatible">OpenAI Compatible</option>
+                      <option value="openai">OpenAI</option>
+                      <option value="custom">自定义</option>
+                    </select>
+                  </label>
+                  <label className="settings-input-group">
+                    <span className="settings-input-label">视觉 API Base URL</span>
+                    <input className="settings-input-field" value={form.visual_evidence_base_url} onChange={(e) => updateForm({ ...form, visual_evidence_base_url: e.target.value })} placeholder="留空则跟随主 LLM Base URL" />
+                  </label>
+                  <label className="settings-input-group">
+                    <span className="settings-input-label">视觉模型名称</span>
+                    <input className="settings-input-field" value={form.visual_evidence_model} onChange={(e) => updateForm({ ...form, visual_evidence_model: e.target.value })} placeholder="留空则跟随主 LLM 模型" />
+                  </label>
+                  <label className="settings-input-group">
+                    <span className="settings-input-label">视觉 API Key</span>
+                    <input className="settings-input-field" type="password" value={form.visual_evidence_api_key} onFocus={selectMaskedApiKey} onChange={(e) => updateForm({ ...form, visual_evidence_api_key: e.target.value })} placeholder="留空则跟随主 LLM API Key" />
+                  </label>
+                  <div className={`settings-inline-alert ${visualLlmReady ? "success" : "warning"}`}>
+                    <strong>{visualLlmReady ? "视觉模型配置完整" : "视觉模型会等待有效模型配置"}</strong>
+                    <span>{visualLlmReady ? "当前有效配置可用于理解型图文笔记。": "请补全独立视觉配置，或确保主摘要模型已完整配置。"}</span>
+                  </div>
+                </>
+              )}
+            </div>
+            <footer className="update-dialog-footer">
+              <button className="secondary-button" type="button" onClick={closeGenerationModelDialog}>
+                关闭
+              </button>
+              <button
+                className="primary-button"
+                type="button"
+                disabled={llmTestBusy}
+                onClick={() => void (generationModelDialog === "main" ? testLlmConnection() : testVisualLlmConnection())}
+              >
+                {llmTestBusy ? "测试中..." : generationModelDialog === "main" ? "测试主模型" : "测试视觉模型"}
+              </button>
+            </footer>
+          </section>
+        </div>
+      ) : null}
       {knowledgePromptGuideOpen ? (
         <div className="update-dialog-overlay" role="presentation" onClick={() => setKnowledgePromptGuideOpen(false)}>
           <section

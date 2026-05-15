@@ -313,7 +313,10 @@ export type ServiceSettings = {
   auto_generate_mindmap: boolean;
   visual_note_mode: VisualNoteMode;
   visual_evidence_enabled: boolean;
+  visual_multimodal_enabled: boolean;
+  visual_download_resolution: string;
   visual_evidence_use_llm: boolean;
+  visual_vlm_provider: string;
   visual_evidence_base_url: string;
   visual_evidence_model: string;
   visual_evidence_api_key: string;
@@ -321,6 +324,7 @@ export type ServiceSettings = {
   visual_evidence_max_frames: number;
   visual_evidence_frame_interval_seconds: number;
   visual_evidence_frame_width: number;
+  visual_evidence_image_quality: number;
   visual_evidence_timeout_seconds: number;
   visual_evidence_retry_count: number;
   llm_provider: string;
@@ -343,6 +347,8 @@ export type ServiceSettings = {
   knowledge_note_user_prompt_template: string;
   visual_note_system_prompt: string;
   visual_note_user_prompt_template: string;
+  visual_frame_planning_prompt: string;
+  visual_vlm_prompt: string;
   summary_chunk_target_chars: number;
   summary_chunk_overlap_segments: number;
   task_concurrency: number;
@@ -357,6 +363,8 @@ export type ServiceSettings = {
     knowledge_note_user_prompt_template?: string;
     visual_note_system_prompt?: string;
     visual_note_user_prompt_template?: string;
+    visual_frame_planning_prompt?: string;
+    visual_vlm_prompt?: string;
   };
 };
 

@@ -373,7 +373,7 @@ function looksLikeMathCell(content: string) {
 }
 
 function wrapBareLatexRuns(line: string) {
-  const segments = line.split(/(\${1,2}[\s\S]*?\${1,2})/g);
+  const segments = line.split(/(\${1,2}[\s\S]*?\${1,2}|!?\[[^\]\n]*\]\([^()\s]*(?:\([^)]*\)[^()\s]*)*\))/g);
   return segments
     .map((segment, index) => (index % 2 === 1 ? segment : wrapBareLatexSegment(segment)))
     .join("");

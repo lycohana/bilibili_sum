@@ -186,6 +186,20 @@
     grid-template-columns: 1fr;
   }
 
+  .summary-submit-control,
+  .summary-split-button {
+    width: 100%;
+  }
+
+  .summary-submit-main.primary-button {
+    flex: 1;
+  }
+
+  .summary-preference-menu {
+    right: 0;
+    width: min(100%, 280px);
+  }
+
   .probe-preview {
     grid-template-columns: 1fr;
   }
@@ -205,6 +219,26 @@
 
   .settings-input-action-row {
     grid-template-columns: 1fr;
+  }
+
+  .settings-tree-grid,
+  .settings-model-summary-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .settings-tree-panel {
+    grid-template-columns: 30px minmax(0, 1fr);
+    padding: 16px;
+  }
+
+  .settings-tree-panel::before {
+    left: 30px;
+  }
+
+  .settings-tree-index {
+    width: 30px;
+    height: 30px;
+    font-size: 0.72rem;
   }
 }
 
