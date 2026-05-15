@@ -634,6 +634,110 @@ def test_ensure_runtime_channel_syncs_base_preserves_cuda(
     assert metadata["localAsrInstalled"] is True
 
 
+def test_ensure_runtime_channel_syncs_base_preserves_macos_runtime(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    runtime_root = tmp_path / "runtime"
+    base_dir = runtime_root / "base"
+    gpu_dir = runtime_root / "gpu-cu128"
+    base_site_packages = base_dir / "lib" / "python3.12" / "site-packages"
+    gpu_site_packages = gpu_dir / "lib" / "python3.12" / "site-packages"
+    base_bin = base_dir / "bin"
+    gpu_bin = gpu_dir / "bin"
+    base_lib = base_dir / "lib"
+    gpu_lib = gpu_dir / "lib"
+    base_stdlib = base_dir / "stdlib"
+    gpu_stdlib = gpu_dir / "stdlib"
+    base_site_packages.mkdir(parents=True)
+    gpu_site_packages.mkdir(parents=True)
+    base_bin.mkdir(parents=True)
+    gpu_bin.mkdir(parents=True)
+    base_stdlib.mkdir(parents=True)
+    gpu_stdlib.mkdir(parents=True)
+    (base_bin / "python").write_text("base-python", encoding="utf-8")
+    (gpu_bin / "python").write_text("gpu-python", encoding="utf-8")
+    (base_lib / "libpython3.12.dylib").write_text("base-libpython", encoding="utf-8")
+    (gpu_lib / "libpython3.12.dylib").write_text("gpu-libpython", encoding="utf-8")
+    (base_dir / "pythonpath.pth").write_text("base-pythonpath", encoding="utf-8")
+    (gpu_dir / "pythonpath.pth").write_text("gpu-pythonpath", encoding="utf-8")
+    (base_stdlib / "filecmp.py").write_text("base-stdlib", encoding="utf-8")
+    (gpu_stdlib / "filecmp.py").write_text("gpu-stdlib", encoding="utf-8")
+    (base_site_packages / "video_sum_service").mkdir()
+    (base_site_packages / "video_sum_service" / "__init__.py").write_text(
+        "version = 'new'",
+        encoding="utf-8",
+    )
+    (base_site_packages / "video_sum_service-2.0.0.dist-info").mkdir()
+    (base_site_packages / "video_sum_service-2.0.0.dist-info" / "METADATA").write_text(
+        "new",
+        encoding="utf-8",
+    )
+    (gpu_site_packages / "video_sum_service").mkdir()
+    (gpu_site_packages / "video_sum_service" / "__init__.py").write_text(
+        "version = 'old'",
+        encoding="utf-8",
+    )
+    (gpu_site_packages / "video_sum_service-1.0.0.dist-info").mkdir()
+    (gpu_site_packages / "video_sum_service-1.0.0.dist-info" / "METADATA").write_text(
+        "old",
+        encoding="utf-8",
+    )
+    (base_bin / "video-sum-transcribe-worker").write_text("new-worker", encoding="utf-8")
+    (gpu_bin / "pip").write_text("keep-pip", encoding="utf-8")
+    (base_dir / "video_sum_runtime.json").write_text(
+        (
+            '{"runtimeChannel":"base","runtimeLayout":"portable-cpython",'
+            '"appVersion":"2.0.0","pythonVersion":"3.12.0"}'
+        ),
+        encoding="utf-8",
+    )
+    (gpu_dir / "video_sum_runtime.json").write_text(
+        '{"runtimeChannel":"gpu-cu128","cudaVariant":"cu128","localAsrInstalled":true}',
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        runtime_support,
+        "managed_runtime_dir",
+        lambda runtime_channel: runtime_root / runtime_channel,
+    )
+    monkeypatch.setattr(
+        runtime_support,
+        "bootstrap_managed_runtime",
+        lambda runtime_channel: base_dir if runtime_channel == "base" else None,
+    )
+    monkeypatch.setattr(
+        runtime_support,
+        "runtime_python_executable",
+        lambda runtime_channel: runtime_root / runtime_channel / "bin" / "python"
+        if (runtime_root / runtime_channel / "bin" / "python").exists()
+        else None,
+    )
+
+    result = runtime_support.ensure_runtime_channel("gpu-cu128")
+    metadata = runtime_support.read_runtime_metadata(gpu_dir)
+
+    assert result == gpu_dir
+    assert (gpu_bin / "python").read_text(encoding="utf-8") == "gpu-python"
+    assert (gpu_lib / "libpython3.12.dylib").read_text(encoding="utf-8") == "gpu-libpython"
+    assert (gpu_dir / "pythonpath.pth").read_text(encoding="utf-8") == "gpu-pythonpath"
+    assert (gpu_stdlib / "filecmp.py").read_text(encoding="utf-8") == "gpu-stdlib"
+    assert (
+        (gpu_site_packages / "video_sum_service" / "__init__.py").read_text(encoding="utf-8")
+        == "version = 'new'"
+    )
+    assert (gpu_site_packages / "video_sum_service-2.0.0.dist-info").exists()
+    assert not (gpu_site_packages / "video_sum_service-1.0.0.dist-info").exists()
+    assert (gpu_bin / "pip").read_text(encoding="utf-8") == "keep-pip"
+    assert (gpu_bin / "video-sum-transcribe-worker").read_text(encoding="utf-8") == "new-worker"
+    assert metadata["appVersion"] == "2.0.0"
+    assert metadata["runtimeLayout"] == "portable-cpython"
+    assert metadata["pythonVersion"] == "3.12.0"
+    assert metadata["cudaVariant"] == "cu128"
+    assert metadata["localAsrInstalled"] is True
+
+
 def test_inspect_runtime_channels_reports_outdated_runtime(monkeypatch, tmp_path: Path) -> None:
     runtime_root = tmp_path / "runtime"
     base_dir = runtime_root / "base"

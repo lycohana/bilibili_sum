@@ -67,8 +67,7 @@ _RUNTIME_EXTENSION_PACKAGE_KEYS: set[str] = {
     "chromadb",
     "sentence_transformers",
 }
-_RUNTIME_ROOT_APP_DIRS: frozenset[str] = frozenset({"Lib", "lib", "Scripts", "bin", "stdlib"})
-_RUNTIME_ROOT_SYNC_FILES: frozenset[str] = frozenset({"pyvenv.cfg", "pythonpath.pth"})
+_RUNTIME_ROOT_APP_DIRS: frozenset[str] = frozenset({"Lib", "lib", "Scripts", "bin"})
 
 
 def _split_env_urls(raw_value: str | None) -> list[str]:
@@ -540,7 +539,7 @@ def sync_runtime_base(target_dir: Path, base_dir: Path, runtime_channel: str) ->
     for item in base_dir.iterdir():
         if item.name == "video_sum_runtime.json":
             continue
-        if item.name not in _RUNTIME_ROOT_APP_DIRS and not should_sync_runtime_root_item(item):
+        if item.name not in _RUNTIME_ROOT_APP_DIRS:
             continue
         if item.name in {"Lib", "lib"}:
             sync_runtime_lib(target_dir / item.name, item)
@@ -575,29 +574,12 @@ def runtime_metadata_matches_base(target_metadata: dict[str, object], base_metad
     )
 
 
-def should_sync_runtime_root_item(item: Path) -> bool:
-    if item.name in _RUNTIME_ROOT_SYNC_FILES:
-        return True
-    if not item.is_file():
-        return False
-    lower_name = item.name.lower()
-    return (
-        lower_name == "python"
-        or lower_name == "python.exe"
-        or lower_name.startswith("python")
-        or lower_name.startswith("libpython")
-    )
-
-
 def sync_runtime_scripts(target_scripts_dir: Path, base_scripts_dir: Path) -> None:
     if not base_scripts_dir.exists():
         return
     target_scripts_dir.mkdir(parents=True, exist_ok=True)
     for pattern in ("video-sum-service*", "video-sum-transcribe-worker*"):
         for item in base_scripts_dir.glob(pattern):
-            copy_runtime_item(item, target_scripts_dir / item.name)
-    for item in base_scripts_dir.glob("python*"):
-        if item.is_file():
             copy_runtime_item(item, target_scripts_dir / item.name)
 
 
@@ -611,8 +593,6 @@ def sync_runtime_lib(target_lib_dir: Path, base_lib_dir: Path) -> None:
             continue
         if item.is_dir() and (item / "site-packages").exists():
             sync_runtime_lib(target_lib_dir / item.name, item)
-            continue
-        copy_runtime_item(item, target_lib_dir / item.name)
 
 
 def sync_runtime_site_packages(
