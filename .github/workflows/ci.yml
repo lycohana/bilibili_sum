@@ -15,7 +15,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  detect-windows-package-check:
+  detect-desktop-package-check:
     runs-on: ubuntu-latest
     outputs:
       should_run: ${{ steps.detect.outputs.should_run }}
@@ -68,12 +68,12 @@ jobs:
           fi
 
           if [ "${EVENT_NAME}" = "push" ] && [ -n "${release_bump}" ]; then
-            echo "Release workflow will validate the Windows package for this push; skip duplicate CI packaging check."
+            echo "Release workflow will validate desktop packages for this push; skip duplicate CI packaging check."
             should_run="false"
           fi
 
           echo "should_run=${should_run}" >> "$GITHUB_OUTPUT"
-          echo "Packaging validation needed: ${should_run}"
+          echo "Desktop packaging validation needed: ${should_run}"
 
   validate:
     runs-on: ubuntu-latest
@@ -120,8 +120,8 @@ jobs:
         run: npm run npx:test
 
   validate-windows-package:
-    needs: detect-windows-package-check
-    if: ${{ needs.detect-windows-package-check.outputs.should_run == 'true' }}
+    needs: detect-desktop-package-check
+    if: ${{ needs.detect-desktop-package-check.outputs.should_run == 'true' }}
     runs-on: windows-latest
 
     steps:
@@ -166,6 +166,48 @@ jobs:
           CSC_PLATFORM: "windows"
           VIDEO_SUM_FFMPEG_DIR: ${{ steps.setup-ffmpeg.outputs.ffmpeg-path }}
         run: npm run package:win
+
+  validate-macos-package:
+    needs: detect-desktop-package-check
+    if: ${{ needs.detect-desktop-package-check.outputs.should_run == 'true' }}
+    runs-on: macos-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+
+      - name: Install uv
+        run: python -m pip install --upgrade pip uv
+
+      - name: Verify version files are synced
+        run: python scripts/bump_version.py --check
+
+      - name: Install desktop dependencies
+        env:
+          ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
+        run: npm ci --prefix apps/desktop
+
+      - name: Install FFmpeg
+        run: brew install ffmpeg
+
+      - name: Build macOS package for validation
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: npm run package:mac
 
   validate-docker-image:
     runs-on: ubuntu-latest

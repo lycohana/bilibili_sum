@@ -159,10 +159,92 @@ jobs:
             dist/release-assets/latest.yml
           if-no-files-found: error
 
+  validate-macos-package:
+    needs: detect-release
+    if: ${{ needs.detect-release.outputs.bump != '' }}
+    runs-on: macos-latest
+    outputs:
+      release_version: ${{ needs.detect-release.outputs.next_version }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+
+      - name: Install uv
+        run: python -m pip install --upgrade pip uv
+
+      - name: Apply release version for validation build
+        run: python scripts/bump_version.py "${{ needs.detect-release.outputs.bump }}"
+
+      - name: Verify version files are synced
+        run: python scripts/bump_version.py --check
+
+      - name: Install desktop dependencies
+        env:
+          ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
+        run: npm ci --prefix apps/desktop
+
+      - name: Install FFmpeg
+        run: brew install ffmpeg
+
+      - name: Build macOS release candidate
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: npm run package:mac
+
+      - name: Collect macOS release assets
+        env:
+          RELEASE_VERSION: ${{ needs.detect-release.outputs.next_version }}
+        run: |
+          set -euo pipefail
+          asset_dir="$GITHUB_WORKSPACE/dist/release-assets-macos"
+          dmg_pattern="BiliSum-${RELEASE_VERSION}-*mac*.dmg"
+
+          if [[ ! -d "$GITHUB_WORKSPACE/dist" ]]; then
+            echo "Build output directory not found: $GITHUB_WORKSPACE/dist" >&2
+            exit 1
+          fi
+
+          mkdir -p "$asset_dir"
+
+          echo "Searching for macOS release assets under $GITHUB_WORKSPACE/dist"
+          dmg_path="$(find "$GITHUB_WORKSPACE/dist" -type f -name "$dmg_pattern" -print -quit)"
+          if [[ -z "$dmg_path" ]]; then
+            echo "No macOS DMG matching $dmg_pattern was found under $GITHUB_WORKSPACE/dist" >&2
+            find "$GITHUB_WORKSPACE/dist" -maxdepth 4 -type f -print
+            exit 1
+          fi
+
+          cp "$dmg_path" "$asset_dir/"
+          echo "Collected macOS release assets:"
+          ls -lh "$asset_dir"
+
+      - name: Upload macOS release assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-assets-macos-${{ needs.detect-release.outputs.next_version }}
+          path: dist/release-assets-macos/BiliSum-*.dmg
+          if-no-files-found: error
+
   create-release-tag:
     needs:
       - detect-release
       - validate-windows-package
+      - validate-macos-package
     if: ${{ needs.detect-release.outputs.bump != '' }}
     runs-on: ubuntu-latest
     outputs:
@@ -223,6 +305,7 @@ jobs:
     needs:
       - detect-release
       - validate-windows-package
+      - validate-macos-package
       - create-release-tag
     if: ${{ needs.detect-release.outputs.bump != '' && needs.create-release-tag.outputs.release_created == 'true' }}
     runs-on: ubuntu-latest
@@ -245,6 +328,12 @@ jobs:
           name: release-assets-${{ needs.detect-release.outputs.next_version }}
           path: dist/release-assets
 
+      - name: Download macOS release assets
+        uses: actions/download-artifact@v4
+        with:
+          name: release-assets-macos-${{ needs.detect-release.outputs.next_version }}
+          path: dist/release-assets
+
       - name: Generate release notes
         run: |
           python scripts/generate_release_notes.py \
@@ -261,6 +350,7 @@ jobs:
           files: |
             dist/release-assets/BiliSum-*-Setup.exe
             dist/release-assets/BiliSum-*-Setup.exe.blockmap
+            dist/release-assets/BiliSum-*.dmg
             dist/release-assets/latest.yml
 
   publish-docker-image:
