@@ -12,7 +12,7 @@ from video_sum_core.errors import (
     UnsupportedInputError,
     VideoSumError,
 )
-from video_sum_core.models.tasks import InputType
+from video_sum_core.models.tasks import InputType, TaskInput, TaskResult
 from video_sum_core.pipeline.base import PipelineContext
 from video_sum_core.pipeline.real import PipelineSettings, RealPipelineRunner
 
@@ -633,3 +633,262 @@ def test_export_transcript_snapshot_creates_resummary_artifacts(tmp_path: Path) 
     assert summary_payload["title"] == "示例标题"
     assert summary_payload["summary"] == {}
     assert summary_payload["segments"][0]["text"] == "第一条"
+
+
+def test_visual_frame_insert_mode_composes_note_without_vlm(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    runner = RealPipelineRunner(PipelineSettings(tasks_dir=tmp_path, visual_note_mode="frame_insert"))
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"video")
+    describe_called = False
+
+    monkeypatch.setattr(runner, "_prepare_visual_source", lambda task_input, task_dir, title: (source, "local_video", []))
+    monkeypatch.setattr(
+        runner,
+        "_build_visual_keyframe_plan",
+        lambda title, result, mode: {
+            "schema_version": 1,
+            "mode": mode,
+            "planner": "test",
+            "keyframes": [
+                {
+                    "timestamp_seconds": 12.0,
+                    "anchor_heading": "主题",
+                    "concept": "主题",
+                    "reason": "截图能解释主题。",
+                    "caption_hint": "主题截图",
+                    "note_hint": "结合截图理解主题。",
+                    "priority": 0.9,
+                }
+            ],
+        },
+    )
+    monkeypatch.setattr(
+        runner,
+        "_extract_visual_frames",
+        lambda source_path, timestamps, frames_dir: (
+            [
+                {
+                    "frame_id": "f0001",
+                    "timestamp_seconds": 12.0,
+                    "timestamp": "00:12",
+                    "file_name": "f0001.jpg",
+                    "image_path": "frames/f0001.jpg",
+                    "_absolute_path": str(frames_dir / "f0001.jpg"),
+                    "sha256": "abc",
+                }
+            ],
+            [],
+        ),
+    )
+
+    def fail_describe(*args, **kwargs):
+        nonlocal describe_called
+        describe_called = True
+        raise AssertionError("frame_insert mode must not call VLM description")
+
+    monkeypatch.setattr(runner, "_visual_llm_available", lambda: True)
+    monkeypatch.setattr(runner, "_describe_visual_frames", fail_describe)
+
+    context, note_path, _ = runner.build_and_export_visual_evidence(
+        task_id="task-frame",
+        task_input=TaskInput(input_type=InputType.VIDEO_FILE, source=str(source), title="视频"),
+        title="视频",
+        result=TaskResult(
+            knowledge_note_markdown="# 主题\n\n正文段落。",
+            timeline=[{"title": "主题", "start": 12.0, "summary": "章节摘要"}],
+        ),
+        mode="frame_insert",
+    )
+
+    markdown = note_path.read_text(encoding="utf-8")
+    assert context["mode"] == "frame_insert"
+    assert context["insert_count"] == 1
+    assert "visual://f0001" in markdown
+    assert "结合截图理解主题。" in markdown
+    assert "> 结合截图理解主题。" in markdown
+    assert "## 图文笔记素材" not in markdown
+    assert not describe_called
+
+
+def test_visual_vlm_integrated_mode_uses_observations(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    runner = RealPipelineRunner(PipelineSettings(tasks_dir=tmp_path, visual_note_mode="vlm_integrated"))
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"video")
+    describe_called = False
+
+    monkeypatch.setattr(runner, "_prepare_visual_source", lambda task_input, task_dir, title: (source, "local_video", []))
+    monkeypatch.setattr(
+        runner,
+        "_build_visual_keyframe_plan",
+        lambda title, result, mode: {
+            "schema_version": 1,
+            "mode": mode,
+            "planner": "test",
+            "keyframes": [
+                {
+                    "timestamp_seconds": 42.0,
+                    "anchor_heading": "任务链",
+                    "concept": "三层任务链",
+                    "reason": "截图能说明任务链结构。",
+                    "caption_hint": "任务链结构图",
+                    "note_hint": "结合结构图理解任务链。",
+                    "priority": 0.95,
+                }
+            ],
+        },
+    )
+    monkeypatch.setattr(
+        runner,
+        "_extract_visual_frames",
+        lambda source_path, timestamps, frames_dir: (
+            [
+                {
+                    "frame_id": "f0001",
+                    "timestamp_seconds": 42.0,
+                    "timestamp": "00:42",
+                    "file_name": "f0001.jpg",
+                    "image_path": "frames/f0001.jpg",
+                    "_absolute_path": str(frames_dir / "f0001.jpg"),
+                    "sha256": "abc",
+                }
+            ],
+            [],
+        ),
+    )
+    monkeypatch.setattr(runner, "_visual_llm_available", lambda: True)
+
+    def fake_describe(*args, **kwargs):
+        nonlocal describe_called
+        describe_called = True
+        return [
+            {
+                "frame_id": "f0001",
+                "timestamp_seconds": 42.0,
+                "caption": "模型解析的结构图",
+                "semantic_summary": "图中展示三层任务链。",
+                "note_explanation": "这张结构图说明任务链如何串联。",
+                "should_insert": True,
+                "importance": 0.9,
+                "suggested_anchor": "任务链",
+            }
+        ]
+
+    monkeypatch.setattr(runner, "_describe_visual_frames", fake_describe)
+
+    context, note_path, _ = runner.build_and_export_visual_evidence(
+        task_id="task-vlm",
+        task_input=TaskInput(input_type=InputType.VIDEO_FILE, source=str(source), title="视频"),
+        title="视频",
+        result=TaskResult(
+            knowledge_note_markdown="# 任务链\n\n正文段落。",
+            timeline=[{"title": "任务链", "start": 42.0, "summary": "章节摘要"}],
+        ),
+        mode="vlm_integrated",
+    )
+
+    markdown = note_path.read_text(encoding="utf-8")
+    assert describe_called
+    assert context["mode"] == "vlm_integrated"
+    assert context["insert_count"] == 1
+    assert "模型解析的结构图" in markdown
+    assert "这张结构图说明任务链如何串联。" in markdown
+    assert "visual://f0001" in markdown
+
+
+def test_visual_keyframe_plan_prefers_llm_selected_timestamps(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    runner = RealPipelineRunner(
+        PipelineSettings(
+            tasks_dir=tmp_path,
+            visual_note_mode="frame_insert",
+            llm_enabled=True,
+            llm_api_key="key",
+            llm_base_url="https://llm.example/v1",
+            llm_model="test-model",
+        )
+    )
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"video")
+    captured_timestamps: list[float] = []
+
+    monkeypatch.setattr(runner, "_prepare_visual_source", lambda task_input, task_dir, title: (source, "local_video", []))
+    monkeypatch.setattr(
+        runner,
+        "_request_llm_json",
+        lambda *args, **kwargs: {
+            "keyframes": [
+                {
+                    "timestamp_seconds": 88.0,
+                    "anchor_heading": "关键设置",
+                    "concept": "插件配置界面",
+                    "reason": "这里出现了需要截图理解的设置界面。",
+                    "caption_hint": "插件配置界面",
+                    "note_hint": "截图展示了配置入口。",
+                    "priority": 0.91,
+                }
+            ]
+        },
+    )
+
+    def fake_extract(source_path, timestamps, frames_dir):
+        captured_timestamps.extend(timestamps)
+        return (
+            [
+                {
+                    "frame_id": "f0001",
+                    "timestamp_seconds": float(timestamps[0]),
+                    "timestamp": "01:28",
+                    "file_name": "f0001.jpg",
+                    "image_path": "frames/f0001.jpg",
+                    "_absolute_path": str(frames_dir / "f0001.jpg"),
+                    "sha256": "abc",
+                }
+            ],
+            [],
+        )
+
+    monkeypatch.setattr(runner, "_extract_visual_frames", fake_extract)
+
+    context, note_path, _ = runner.build_and_export_visual_evidence(
+        task_id="task-plan",
+        task_input=TaskInput(input_type=InputType.VIDEO_FILE, source=str(source), title="视频"),
+        title="视频",
+        result=TaskResult(
+            knowledge_note_markdown="# 关键设置\n\n正文段落。",
+            timeline=[{"title": "开头", "start": 0.0, "summary": "不是关键设置"}],
+        ),
+        mode="frame_insert",
+    )
+
+    assert captured_timestamps == [88.0]
+    assert context["insert_count"] == 1
+    assert "截图展示了配置入口。" in note_path.read_text(encoding="utf-8")
+    plan_path = tmp_path / "task-plan" / "visual_evidence" / "visual_keyframe_plan.json"
+    assert json.loads(plan_path.read_text(encoding="utf-8"))["planner"] == "llm"
+
+
+def test_visual_note_rejects_image_gallery_model_output(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    runner = RealPipelineRunner(PipelineSettings(tasks_dir=tmp_path, visual_note_mode="vlm_integrated"))
+    monkeypatch.setattr(runner, "_visual_llm_available", lambda: True)
+    monkeypatch.setattr(runner, "_compose_visual_note_with_llm", lambda *args, **kwargs: "![图](visual://f0001)")
+
+    note = runner._compose_visual_enhanced_note(
+        title="视频",
+        result=TaskResult(knowledge_note_markdown="# 文本主体\n\n这里有一段完整的文字说明，图片应该只是补充。"),
+        observations=[{"frame_id": "f0001", "timestamp_seconds": 1, "caption": "图"}],
+        insert_plan={
+            "insertions": [
+                {
+                    "frame_id": "f0001",
+                    "markdown_image": "visual://f0001",
+                    "alt": "图",
+                    "anchor_heading": "文本主体",
+                    "explanation": "图片只补充说明这段文字。",
+                }
+            ]
+        },
+        mode="vlm_integrated",
+    )
+
+    assert note.startswith("# 文本主体")
+    assert "![图](visual://f0001)" in note
+    assert "> 图片只补充说明这段文字。" in note

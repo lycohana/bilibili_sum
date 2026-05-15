@@ -80,6 +80,8 @@ def is_auth_exempt_path(path: str, method: str = "GET") -> bool:
         return True
     if path == "/" or path.startswith("/static/") or path.startswith("/media/"):
         return True
+    if method.upper() == "GET" and path.startswith("/api/v1/tasks/") and "/visual-evidence/media/" in path:
+        return True
     if method.upper() == "GET" and (
         path.startswith("/videos")
         or path.startswith("/settings")

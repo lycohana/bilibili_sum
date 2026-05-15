@@ -180,6 +180,19 @@ class TaskMindMapResponse(BaseModel):
     mindmap: TaskMindMap | None = None
 
 
+class TaskVisualEvidenceResponse(BaseModel):
+    task_id: str
+    mode: str = "text"
+    status: str = "idle"
+    error_message: str | None = None
+    updated_at: datetime | None = None
+    frame_count: int = 0
+    insert_count: int = 0
+    visual_note_markdown: str = ""
+    enhanced_note_markdown: str = ""
+    context: dict[str, object] | None = None
+
+
 class TaskMarkdownExportResponse(BaseModel):
     task_id: str
     target_format: Literal["markdown", "obsidian", "transcript"]

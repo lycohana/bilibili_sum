@@ -5,11 +5,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from threading import Condition, Lock, Thread, current_thread
 
-from video_sum_core.models.tasks import TaskResult, TaskStatus
+from video_sum_core.models.tasks import InputType, TaskInput, TaskResult, TaskStatus
 from video_sum_core.pipeline.base import PipelineContext, PipelineRunner
-from video_sum_infra.config import ServiceSettings
+from video_sum_infra.config import ServiceSettings, normalize_visual_note_mode
 from video_sum_service.repository import SqliteTaskRepository
 from video_sum_service.schemas import TaskRecord
+from video_sum_service.video_assets import resolve_video_page
 
 logger = logging.getLogger("video_sum_service.worker")
 
@@ -18,6 +19,13 @@ logger = logging.getLogger("video_sum_service.worker")
 class _MindmapJob:
     task_id: str
     force: bool
+
+
+@dataclass(frozen=True)
+class _VisualEvidenceJob:
+    task_id: str
+    force: bool
+    mode: str | None = None
 
 
 class _TaskQueueState:
@@ -33,7 +41,15 @@ class _TaskQueueState:
             return job.task_id
         if isinstance(job, _MindmapJob):
             return job.task_id
+        if isinstance(job, _VisualEvidenceJob):
+            return job.task_id
         raise TypeError(f"Unsupported job type: {type(job)!r}")
+
+    def clear_pending(self) -> int:
+        count = len(self.pending)
+        self.pending.clear()
+        self.pending_ids.clear()
+        return count
 
 
 class TaskWorker:
@@ -45,6 +61,7 @@ class TaskWorker:
         pipeline_runner: PipelineRunner,
         *,
         auto_generate_mindmap: bool = False,
+        auto_generate_visual_evidence: bool = False,
         knowledge_index_auto_rebuild: str = "disabled",
         knowledge_index_settings: ServiceSettings | None = None,
         task_concurrency: int = 1,
@@ -53,10 +70,12 @@ class TaskWorker:
         self._repository = repository
         self._pipeline_runner = pipeline_runner
         self._auto_generate_mindmap = auto_generate_mindmap
+        self._auto_generate_visual_evidence = auto_generate_visual_evidence
         self._knowledge_index_auto_rebuild = str(knowledge_index_auto_rebuild or "disabled")
         self._knowledge_index_settings = knowledge_index_settings or ServiceSettings(_env_file=None)
         self._task_state = _TaskQueueState("task", task_concurrency)
         self._mindmap_state = _TaskQueueState("mindmap", mindmap_concurrency)
+        self._visual_state = _TaskQueueState("visual", 1)
         self._lock = Lock()
         self._condition = Condition(self._lock)
         self._accept_new_work = True
@@ -65,6 +84,7 @@ class TaskWorker:
         self._dispatch_threads = [
             Thread(target=self._dispatch_loop, args=(self._task_state, self._run_task_job), daemon=True),
             Thread(target=self._dispatch_loop, args=(self._mindmap_state, self._run_mindmap_job), daemon=True),
+            Thread(target=self._dispatch_loop, args=(self._visual_state, self._run_visual_evidence_job), daemon=True),
         ]
         for thread in self._dispatch_threads:
             thread.start()
@@ -99,15 +119,35 @@ class TaskWorker:
                 payload={"force": force},
             )
 
+    def submit_visual_evidence(self, task_id: str, *, force: bool = False, mode: str | None = None) -> None:
+        logger.info("queue visual evidence generation task_id=%s force=%s mode=%s", task_id, force, mode)
+        enqueued = self._enqueue(self._visual_state, _VisualEvidenceJob(task_id=task_id, force=force, mode=mode))
+        if enqueued:
+            self._repository.append_event(
+                task_id=task_id,
+                stage="visual_queued",
+                progress=100,
+                message="图文笔记已进入后台队列",
+                payload={"force": force, "mode": normalize_visual_note_mode(mode, default="frame_insert") if mode else mode},
+            )
+
     def close_for_new_work(self) -> None:
         with self._condition:
             self._accept_new_work = False
             self._condition.notify_all()
 
-    def shutdown(self, wait: bool = False, timeout: float | None = None) -> None:
+    def shutdown(self, wait: bool = False, timeout: float | None = None, *, cancel_pending: bool = True) -> None:
         with self._condition:
             self._accept_new_work = False
             self._shutdown_requested = True
+            if cancel_pending:
+                dropped = (
+                    self._task_state.clear_pending()
+                    + self._mindmap_state.clear_pending()
+                    + self._visual_state.clear_pending()
+                )
+                if dropped:
+                    logger.info("dropped pending jobs during worker shutdown count=%d", dropped)
             self._condition.notify_all()
         if wait:
             deadline = None if timeout is None else datetime.now(timezone.utc).timestamp() + timeout
@@ -124,6 +164,27 @@ class TaskWorker:
                 if join_timeout == 0:
                     break
                 job_threads[0].join(join_timeout)
+
+    def snapshot(self) -> dict[str, object]:
+        with self._condition:
+            return {
+                "accept_new_work": self._accept_new_work,
+                "shutdown_requested": self._shutdown_requested,
+                "dispatch_threads": sum(1 for thread in self._dispatch_threads if thread.is_alive()),
+                "job_threads": sum(1 for thread in self._job_threads if thread.is_alive()),
+                "queues": {
+                    self._task_state.name: self._queue_snapshot(self._task_state),
+                    self._mindmap_state.name: self._queue_snapshot(self._mindmap_state),
+                    self._visual_state.name: self._queue_snapshot(self._visual_state),
+                },
+            }
+
+    def _queue_snapshot(self, state: _TaskQueueState) -> dict[str, object]:
+        return {
+            "concurrency": state.concurrency,
+            "pending": len(state.pending),
+            "running": len(state.running_ids),
+        }
 
     def _enqueue(self, state: _TaskQueueState, job: object) -> bool:
         job_id = state.job_id_for(job)
@@ -155,6 +216,12 @@ class TaskWorker:
             while True:
                 if self._shutdown_requested and not state.pending and not state.running_ids:
                     return None
+                if self._shutdown_requested and state.pending:
+                    dropped = state.clear_pending()
+                    if dropped:
+                        logger.info("dropped pending %s jobs during worker shutdown count=%d", state.name, dropped)
+                    if not state.running_ids:
+                        return None
                 if not self._accept_new_work and not state.pending and not state.running_ids:
                     return None
                 if state.pending and len(state.running_ids) < state.concurrency:
@@ -254,6 +321,8 @@ class TaskWorker:
             )
             if self._auto_generate_mindmap and self._can_auto_generate_mindmap(final_result):
                 self.submit_mindmap(task_id)
+            if self._auto_generate_visual_evidence and self._can_generate_visual_evidence(record, final_result):
+                self.submit_visual_evidence(task_id)
             if self._knowledge_index_auto_rebuild == "on_task_completed":
                 self._index_completed_task(record.video_id, task_id)
         except Exception as exc:
@@ -273,6 +342,17 @@ class TaskWorker:
             result.knowledge_note_markdown.strip()
             and result.artifacts.get("summary_path")
         )
+
+    def _can_generate_visual_evidence(self, record: TaskRecord, result: TaskResult) -> bool:
+        if result.visual_note_status in {"generating", "ready"}:
+            return False
+        if not hasattr(self._pipeline_runner, "build_and_export_visual_evidence"):
+            return False
+        settings = getattr(self._pipeline_runner, "_settings", None)
+        mode = normalize_visual_note_mode(getattr(settings, "visual_note_mode", "frame_insert"), default="frame_insert")
+        if mode == "text":
+            return False
+        return bool(result.artifacts.get("summary_path") and result.timeline and result.knowledge_note_markdown.strip())
 
     def _index_completed_task(self, video_id: str | None, task_id: str) -> None:
         if not video_id:
@@ -308,6 +388,147 @@ class TaskWorker:
 
     def _run_mindmap_job(self, job: _MindmapJob) -> None:
         self._run_mindmap(job.task_id, job.force)
+
+    def _run_visual_evidence_job(self, job: _VisualEvidenceJob) -> None:
+        self._run_visual_evidence(job.task_id, job.force, job.mode)
+
+    def _run_visual_evidence(self, task_id: str, force: bool, mode: str | None = None) -> None:
+        record = self._repository.get_task(task_id)
+        if record is None or record.result is None:
+            logger.warning("skip missing task result for visual evidence task_id=%s", task_id)
+            return
+        if record.status != TaskStatus.COMPLETED:
+            logger.warning("skip non-completed task visual evidence task_id=%s status=%s", task_id, record.status.value)
+            return
+        if not hasattr(self._pipeline_runner, "build_and_export_visual_evidence"):
+            logger.warning("pipeline runner does not support visual evidence task_id=%s", task_id)
+            return
+        if record.result.visual_note_status == "ready" and not force:
+            return
+
+        normalized_mode = normalize_visual_note_mode(mode or getattr(getattr(self._pipeline_runner, "_settings", None), "visual_note_mode", "frame_insert"), default="frame_insert")
+        if normalized_mode == "text":
+            normalized_mode = "frame_insert"
+        current_result = record.result.model_copy(
+            update={
+                "visual_note_status": "generating",
+                "visual_note_error_message": None,
+            }
+        )
+        self._repository.save_result(task_id, current_result)
+        self._repository.append_event(
+            task_id=task_id,
+            stage="visual_generating",
+            progress=20,
+            message="正在准备图文笔记",
+            payload={"force": force, "mode": normalized_mode},
+        )
+
+        try:
+            def handle_visual_event(event) -> None:
+                payload = dict(getattr(event, "payload", None) or {})
+                self._repository.append_event(
+                    task_id=task_id,
+                    stage=event.stage,
+                    progress=event.progress,
+                    message=event.message,
+                    payload=payload,
+                )
+
+            context, note_path, context_path = self._pipeline_runner.build_and_export_visual_evidence(  # type: ignore[attr-defined]
+                task_id=task_id,
+                task_input=self._resolve_visual_task_input(record),
+                title=record.page_title or record.task_input.title or "图文笔记",
+                result=current_result,
+                mode=normalized_mode,
+                on_event=handle_visual_event,
+            )
+            refreshed = self._repository.get_task(task_id)
+            if refreshed is None or refreshed.result is None:
+                return
+            status_value = str(context.get("status") or "partial")
+            error_message = "\n".join(str(item) for item in context.get("warnings", []) if str(item).strip()) or None
+            final_result = refreshed.result.model_copy(
+                update={
+                    "artifacts": {
+                        **refreshed.result.artifacts,
+                        "visual_enhanced_note_path": str(Path(note_path)),
+                        "visual_note_path": str(Path(note_path).parent / "visual_note.md"),
+                        "visual_context_path": str(Path(context_path)),
+                        "visual_frame_index_path": str(Path(note_path).parent / "frame_index.json"),
+                        "visual_insert_plan_path": str(Path(note_path).parent / "visual_insert_plan.json"),
+                    },
+                    "visual_note_status": status_value,
+                    "visual_note_error_message": error_message if status_value in {"failed", "partial", "unsupported"} else None,
+                    "visual_note_artifact_path": str(Path(note_path)),
+                    "visual_enhanced_note_artifact_path": str(Path(note_path)),
+                    "visual_note_updated_at": datetime.now(timezone.utc),
+                    "visual_frame_count": int(context.get("frame_count") or 0),
+                }
+            )
+            self._repository.save_result(task_id, final_result)
+            if status_value == "ready":
+                event_stage = "visual_completed"
+                event_message = "图文笔记生成完成"
+            elif status_value == "unsupported":
+                event_stage = "visual_failed"
+                event_message = "当前任务无法生成图文笔记"
+            else:
+                event_stage = "visual_partial"
+                event_message = "图文笔记已降级完成"
+            self._repository.append_event(
+                task_id=task_id,
+                stage=event_stage,
+                progress=100,
+                message=event_message,
+                payload={
+                    "status": status_value,
+                    "mode": context.get("mode") or normalized_mode,
+                    "frame_count": final_result.visual_frame_count,
+                    "insert_count": context.get("insert_count", 0),
+                    "warnings": context.get("warnings", []),
+                },
+            )
+        except Exception as exc:
+            logger.exception("visual evidence generation failed task_id=%s error=%s", task_id, exc)
+            refreshed = self._repository.get_task(task_id)
+            if refreshed is None or refreshed.result is None:
+                return
+            failed_result = refreshed.result.model_copy(
+                update={
+                    "visual_note_status": "failed",
+                    "visual_note_error_message": str(exc),
+                    "visual_note_updated_at": datetime.now(timezone.utc),
+                }
+            )
+            self._repository.save_result(task_id, failed_result)
+            self._repository.append_event(
+                task_id=task_id,
+                stage="visual_failed",
+                progress=100,
+                message="图文笔记生成失败",
+                payload={"error": str(exc), "force": force, "mode": normalized_mode},
+            )
+
+    def _resolve_visual_task_input(self, record: TaskRecord) -> TaskInput:
+        if record.task_input.input_type is not InputType.TRANSCRIPT_TEXT:
+            return record.task_input
+        if not record.video_id:
+            return record.task_input
+        video = self._repository.get_video_asset(record.video_id)
+        if video is None:
+            return record.task_input
+        page = resolve_video_page(video, record.page_number)
+        source_url = str(page.source_url if page is not None else video.source_url or "").strip()
+        if not source_url:
+            return record.task_input
+        return TaskInput(
+            input_type=InputType.URL if str(video.platform or "").lower() != "local" else InputType.VIDEO_FILE,
+            source=source_url,
+            title=record.page_title or (page.title if page is not None else video.title) or record.task_input.title,
+            platform_hint=video.platform or record.task_input.platform_hint,
+            options=record.task_input.options,
+        )
 
     def _run_mindmap(self, task_id: str, force: bool) -> None:
         record = self._repository.get_task(task_id)

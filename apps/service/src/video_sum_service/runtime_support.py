@@ -16,6 +16,8 @@ from fastapi import HTTPException
 from video_sum_infra.config import (
     DEFAULT_KNOWLEDGE_NOTE_SYSTEM_PROMPT,
     DEFAULT_KNOWLEDGE_NOTE_USER_PROMPT_TEMPLATE,
+    DEFAULT_VISUAL_NOTE_SYSTEM_PROMPT,
+    DEFAULT_VISUAL_NOTE_USER_PROMPT_TEMPLATE,
     ServiceSettings,
 )
 from video_sum_infra.runtime import (
@@ -830,6 +832,19 @@ def build_worker(
         llm_api_key=runtime_settings.llm_api_key,
         llm_base_url=runtime_settings.llm_base_url,
         llm_model=runtime_settings.llm_model,
+        visual_evidence_enabled=runtime_settings.visual_evidence_enabled,
+        visual_note_mode=runtime_settings.visual_note_mode,
+        visual_evidence_use_llm=runtime_settings.visual_evidence_use_llm,
+        visual_evidence_base_url=runtime_settings.visual_evidence_base_url,
+        visual_evidence_model=runtime_settings.visual_evidence_model,
+        visual_evidence_api_key=runtime_settings.visual_evidence_api_key,
+        visual_evidence_max_frames=runtime_settings.visual_evidence_max_frames,
+        visual_evidence_frame_interval_seconds=runtime_settings.visual_evidence_frame_interval_seconds,
+        visual_evidence_frame_width=runtime_settings.visual_evidence_frame_width,
+        visual_evidence_timeout_seconds=runtime_settings.visual_evidence_timeout_seconds,
+        visual_evidence_retry_count=runtime_settings.visual_evidence_retry_count,
+        visual_note_system_prompt=runtime_settings.visual_note_system_prompt,
+        visual_note_user_prompt_template=runtime_settings.visual_note_user_prompt_template,
         summary_system_prompt=runtime_settings.summary_system_prompt,
         summary_user_prompt_template=runtime_settings.summary_user_prompt_template,
         knowledge_note_system_prompt=runtime_settings.knowledge_note_system_prompt,
@@ -847,6 +862,7 @@ def build_worker(
         repository=repository,
         pipeline_runner=RealPipelineRunner(pipeline_settings),
         auto_generate_mindmap=current_settings.auto_generate_mindmap,
+        auto_generate_visual_evidence=current_settings.visual_evidence_enabled and current_settings.visual_note_mode != "text",
         knowledge_index_auto_rebuild=(
             current_settings.knowledge_index_auto_rebuild
             if current_settings.knowledge_enabled
@@ -864,7 +880,7 @@ def replace_task_worker(app_state, next_worker: TaskWorker) -> TaskWorker:
     previous_worker = getattr(app_state, "task_worker", None)
     app_state.task_worker = next_worker
     if isinstance(previous_worker, TaskWorker):
-        previous_worker.close_for_new_work()
+        previous_worker.shutdown(wait=False, cancel_pending=True)
     return next_worker
 
 
@@ -902,6 +918,18 @@ def serialize_settings(
         "summary_mode": current_settings.summary_mode,
         "llm_enabled": current_settings.llm_enabled,
         "auto_generate_mindmap": current_settings.auto_generate_mindmap,
+        "visual_note_mode": current_settings.visual_note_mode,
+        "visual_evidence_enabled": current_settings.visual_evidence_enabled,
+        "visual_evidence_use_llm": current_settings.visual_evidence_use_llm,
+        "visual_evidence_base_url": current_settings.visual_evidence_base_url,
+        "visual_evidence_model": current_settings.visual_evidence_model,
+        "visual_evidence_api_key": "",
+        "visual_evidence_api_key_configured": bool(current_settings.visual_evidence_api_key),
+        "visual_evidence_max_frames": current_settings.visual_evidence_max_frames,
+        "visual_evidence_frame_interval_seconds": current_settings.visual_evidence_frame_interval_seconds,
+        "visual_evidence_frame_width": current_settings.visual_evidence_frame_width,
+        "visual_evidence_timeout_seconds": current_settings.visual_evidence_timeout_seconds,
+        "visual_evidence_retry_count": current_settings.visual_evidence_retry_count,
         "llm_provider": current_settings.llm_provider,
         "llm_base_url": current_settings.llm_base_url,
         "llm_model": current_settings.llm_model,
@@ -919,6 +947,8 @@ def serialize_settings(
         "summary_user_prompt_template": current_settings.summary_user_prompt_template,
         "knowledge_note_system_prompt": current_settings.knowledge_note_system_prompt,
         "knowledge_note_user_prompt_template": current_settings.knowledge_note_user_prompt_template,
+        "visual_note_system_prompt": current_settings.visual_note_system_prompt,
+        "visual_note_user_prompt_template": current_settings.visual_note_user_prompt_template,
         "summary_chunk_target_chars": current_settings.summary_chunk_target_chars,
         "summary_chunk_overlap_segments": current_settings.summary_chunk_overlap_segments,
         "task_concurrency": current_settings.task_concurrency,
@@ -931,6 +961,8 @@ def serialize_settings(
         "defaults": {
             "knowledge_note_system_prompt": DEFAULT_KNOWLEDGE_NOTE_SYSTEM_PROMPT,
             "knowledge_note_user_prompt_template": DEFAULT_KNOWLEDGE_NOTE_USER_PROMPT_TEMPLATE,
+            "visual_note_system_prompt": DEFAULT_VISUAL_NOTE_SYSTEM_PROMPT,
+            "visual_note_user_prompt_template": DEFAULT_VISUAL_NOTE_USER_PROMPT_TEMPLATE,
         },
     }
 

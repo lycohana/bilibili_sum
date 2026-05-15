@@ -100,6 +100,7 @@ function maskConfiguredApiKeys(settings: ServiceSettings | null): ServiceSetting
     siliconflow_asr_api_key: settings.siliconflow_asr_api_key_configured ? MASKED_API_KEY : settings.siliconflow_asr_api_key,
     llm_api_key: settings.llm_api_key_configured ? MASKED_API_KEY : settings.llm_api_key,
     knowledge_llm_api_key: settings.knowledge_llm_api_key_configured ? MASKED_API_KEY : settings.knowledge_llm_api_key,
+    visual_evidence_api_key: settings.visual_evidence_api_key_configured ? MASKED_API_KEY : settings.visual_evidence_api_key,
   };
 }
 
@@ -125,6 +126,7 @@ const SETTINGS_SEARCH_ITEMS: SettingsSearchItem[] = [
   { category: "transcription", targetKey: "fixed_model", title: "Whisper 固定模型", description: "本地 Whisper 模型大小。", keywords: ["whisper", "tiny", "base", "small", "medium", "large"] },
   { category: "generation", targetKey: "llm_enabled", title: "启用 LLM 摘要", description: "打开或关闭大模型摘要。", keywords: ["llm", "摘要", "开启", "关闭"] },
   { category: "generation", targetKey: "auto_generate_mindmap", title: "自动生成思维导图", description: "摘要完成后自动生成导图。", keywords: ["导图", "mindmap", "自动", "思维导图"] },
+  { category: "generation", targetKey: "visual_note_mode", title: "图文笔记形式", description: "选择纯文本、插图笔记或 VLM 理解型图文笔记。", keywords: ["视觉", "图片", "截图", "图文笔记", "vlm"] },
   { category: "generation", targetKey: "llm_base_url", title: "LLM API Base URL", description: "主摘要 LLM API 地址。", keywords: ["base url", "openai", "compatible", "api", "地址"] },
   { category: "generation", targetKey: "llm_api_key", title: "LLM API Key", description: "主摘要 LLM API 密钥。", keywords: ["key", "apikey", "api key", "密钥"] },
   { category: "generation", targetKey: "llm_model", title: "LLM 模型名称", description: "主摘要使用的模型名。", keywords: ["model", "模型", "gpt", "qwen", "mimo", "claude"] },
@@ -141,6 +143,7 @@ const SETTINGS_SEARCH_ITEMS: SettingsSearchItem[] = [
   { category: "generation", targetKey: "summary_chunk_retry_count", title: "重试次数", description: "摘要 API 失败后的重试次数。", keywords: ["重试", "retry", "失败"] },
   { category: "prompts", targetKey: "knowledge_note_system_prompt", title: "知识笔记 System Prompt", description: "控制知识笔记角色、风格和整体约束。", keywords: ["知识笔记", "prompt", "system", "提示词", "风格"] },
   { category: "prompts", targetKey: "knowledge_note_user_prompt_template", title: "知识笔记 User Template", description: "控制知识笔记变量、结构和 Markdown 格式。", keywords: ["知识笔记", "template", "模板", "格式", "summary_json", "transcript"] },
+  { category: "prompts", targetKey: "visual_note_system_prompt", title: "图文笔记 System Prompt", description: "控制 VLM 图文笔记整合风格。", keywords: ["图文笔记", "prompt", "vlm", "图片"] },
   { category: "performance", targetKey: "task_concurrency", title: "任务并发数", description: "控制整体任务吞吐。", keywords: ["并发", "concurrency", "任务", "性能"] },
   { category: "performance", targetKey: "mindmap_concurrency", title: "导图并发数", description: "控制导图生成并发。", keywords: ["导图", "并发", "mindmap"] },
   { category: "performance", targetKey: "summary_chunk_concurrency", title: "摘要分块并发数", description: "控制单任务内部摘要请求并发。", keywords: ["摘要", "分块", "并发", "chunk"] },
@@ -661,6 +664,21 @@ export function SettingsPage({
     });
   }
 
+  function resetVisualNotePrompt(field: "system" | "template") {
+    if (!form) return;
+    const defaultSystemPrompt = form.defaults?.visual_note_system_prompt || form.visual_note_system_prompt;
+    const defaultUserTemplate = form.defaults?.visual_note_user_prompt_template || form.visual_note_user_prompt_template;
+    updateForm({
+      ...form,
+      visual_note_system_prompt: field === "system"
+        ? defaultSystemPrompt
+        : form.visual_note_system_prompt,
+      visual_note_user_prompt_template: field === "template"
+        ? defaultUserTemplate
+        : form.visual_note_user_prompt_template,
+    });
+  }
+
   function validateSettingsBeforeSave(nextForm: ServiceSettings): { message: string; category: SettingsCategory; targetKey: string } | null {
     if (!String(nextForm.host || "").trim()) {
       return {
@@ -699,6 +717,9 @@ export function SettingsPage({
     }
     if (nextForm.knowledge_llm_api_key_configured && (!String(nextForm.knowledge_llm_api_key || "").trim() || isMaskedApiKey(nextForm.knowledge_llm_api_key))) {
       delete payload.knowledge_llm_api_key;
+    }
+    if (nextForm.visual_evidence_api_key_configured && (!String(nextForm.visual_evidence_api_key || "").trim() || isMaskedApiKey(nextForm.visual_evidence_api_key))) {
+      delete payload.visual_evidence_api_key;
     }
     return payload;
   }
@@ -1728,6 +1749,69 @@ export function SettingsPage({
                   </select>
                   <span className="settings-input-caption">任务摘要完成后，后台自动发起思维导图生成。关闭后仍可在详情页手动生成。</span>
                 </label>
+                <label className="settings-input-group" ref={registerFocusTarget("visual_note_mode") as (node: HTMLLabelElement | null) => void}>
+                  <span className="settings-input-label">知识笔记形式</span>
+                  <select
+                    className="settings-select-field"
+                    value={form.visual_note_mode || "text"}
+                    onChange={(e) => updateForm({
+                      ...form,
+                      visual_note_mode: e.target.value as typeof form.visual_note_mode,
+                      visual_evidence_enabled: e.target.value !== "text" ? form.visual_evidence_enabled : false,
+                      visual_evidence_use_llm: e.target.value === "vlm_integrated",
+                    })}
+                  >
+                    <option value="text">纯文本笔记</option>
+                    <option value="frame_insert">插图笔记</option>
+                    <option value="vlm_integrated">理解型图文笔记</option>
+                  </select>
+                  <span className="settings-input-caption">纯文本不抽帧；插图笔记按章节插入关键画面；理解型图文笔记会调用 VLM 解析图片内容。</span>
+                </label>
+                <label className="settings-input-group" ref={registerFocusTarget("visual_evidence_enabled") as (node: HTMLLabelElement | null) => void}>
+                  <span className="settings-input-label">自动生成图文笔记</span>
+                  <select className="settings-select-field" value={form.visual_evidence_enabled ? "true" : "false"} disabled={(form.visual_note_mode || "text") === "text"} onChange={(e) => updateForm({ ...form, visual_evidence_enabled: e.target.value === "true" })}>
+                    <option value="false">关闭</option>
+                    <option value="true">开启</option>
+                  </select>
+                  <span className="settings-input-caption">摘要完成后在独立队列生成图文版；关闭后仍可在详情页手动生成。</span>
+                </label>
+                {(form.visual_note_mode || "text") !== "text" ? (
+                  <>
+                <label className="settings-input-group">
+                  <span className="settings-input-label">使用 VLM 解析图片</span>
+                  <select className="settings-select-field" value={form.visual_evidence_use_llm ? "true" : "false"} disabled={(form.visual_note_mode || "text") !== "vlm_integrated"} onChange={(e) => updateForm({ ...form, visual_evidence_use_llm: e.target.value === "true" })}>
+                    <option value="true">开启</option>
+                    <option value="false">只保存截图</option>
+                  </select>
+                  <span className="settings-input-caption">理解型图文笔记会调用 OpenAI Compatible 视觉模型生成 caption、OCR 和画面说明；未配置时自动降级为插图笔记。</span>
+                </label>
+                {(form.visual_note_mode || "text") === "vlm_integrated" ? (
+                  <>
+                <label className="settings-input-group">
+                  <span className="settings-input-label">视觉 API Base URL</span>
+                  <input className="settings-input-field" value={form.visual_evidence_base_url} onChange={(e) => updateForm({ ...form, visual_evidence_base_url: e.target.value })} placeholder="留空则跟随主 LLM Base URL" />
+                </label>
+                <label className="settings-input-group">
+                  <span className="settings-input-label">视觉模型名称</span>
+                  <input className="settings-input-field" value={form.visual_evidence_model} onChange={(e) => updateForm({ ...form, visual_evidence_model: e.target.value })} placeholder="留空则跟随主 LLM 模型" />
+                </label>
+                <label className="settings-input-group">
+                  <span className="settings-input-label">视觉 API Key</span>
+                  <input className="settings-input-field" type="password" value={form.visual_evidence_api_key} onFocus={selectMaskedApiKey} onChange={(e) => updateForm({ ...form, visual_evidence_api_key: e.target.value })} placeholder="留空则跟随主 LLM API Key" />
+                </label>
+                  </>
+                ) : null}
+                <label className="settings-input-group">
+                  <span className="settings-input-label">最多截图数</span>
+                  <input className="settings-input-field" type="number" min={1} max={30} value={form.visual_evidence_max_frames} onChange={(e) => updateForm({ ...form, visual_evidence_max_frames: parseMinOneInt(e.target.value, 12) })} />
+                  <span className="settings-input-caption">后端会硬限制在 1-30 张，并优先按章节时间线选帧。</span>
+                </label>
+                <label className="settings-input-group">
+                  <span className="settings-input-label">截图最小间隔（秒）</span>
+                  <input className="settings-input-field" type="number" min={10} value={form.visual_evidence_frame_interval_seconds} onChange={(e) => updateForm({ ...form, visual_evidence_frame_interval_seconds: parseMinOneInt(e.target.value, 60) })} />
+                </label>
+                  </>
+                ) : null}
                 {form.llm_enabled && (
                   <>
                     <label className="settings-input-group">
@@ -2038,6 +2122,38 @@ export function SettingsPage({
                     打开教程
                   </button>
                 </div>
+                <label className="settings-input-group" ref={registerFocusTarget("visual_note_system_prompt") as (node: HTMLLabelElement | null) => void}>
+                  <span className="settings-input-label">图文笔记 System Prompt</span>
+                  <textarea
+                    className="textarea-field"
+                    rows={5}
+                    value={form.visual_note_system_prompt || ""}
+                    onChange={(e) => updateForm({ ...form, visual_note_system_prompt: e.target.value })}
+                  />
+                  <div className="settings-inline-actions">
+                    <button className="secondary-button" type="button" onClick={() => resetVisualNotePrompt("system")}>
+                      恢复默认
+                    </button>
+                    <span className="settings-input-caption">控制理解型图文笔记如何把图片解析整合进正文。</span>
+                  </div>
+                </label>
+                <label className="settings-input-group" ref={registerFocusTarget("visual_note_user_prompt_template") as (node: HTMLLabelElement | null) => void}>
+                  <span className="settings-input-label">图文笔记 User Template</span>
+                  <textarea
+                    className="textarea-field"
+                    rows={12}
+                    value={form.visual_note_user_prompt_template || ""}
+                    onChange={(e) => updateForm({ ...form, visual_note_user_prompt_template: e.target.value })}
+                  />
+                  <div className="settings-inline-actions">
+                    <button className="secondary-button" type="button" onClick={() => resetVisualNotePrompt("template")}>
+                      恢复默认
+                    </button>
+                    <span className="settings-input-caption">
+                      可用变量：{"{title}"}、{"{knowledge_note_markdown}"}、{"{visual_observations_json}"}。
+                    </span>
+                  </div>
+                </label>
               </div>
             </section>
           )}

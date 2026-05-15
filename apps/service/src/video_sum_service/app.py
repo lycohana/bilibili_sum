@@ -13,6 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from video_sum_service.auth import is_auth_exempt_path, request_is_authorized, unauthorized_response
 from video_sum_core.models.tasks import TaskStatus
 from video_sum_infra.db import connect_sqlite
+from video_sum_infra.config import normalize_visual_note_mode
 from video_sum_infra.runtime import (
     activate_runtime_pythonpath,
     bootstrap_managed_runtime,
@@ -50,9 +51,9 @@ from video_sum_service.runtime_startup import (
     start_runtime_startup,
     submit_mindmap_or_queue,
 )
-from video_sum_service.schemas import TaskMindMapResponse
+from video_sum_service.schemas import TaskMindMapResponse, TaskVisualEvidenceResponse
 from video_sum_service.settings_manager import SettingsUpdatePayload
-from video_sum_service.task_artifacts import cleanup_video_files, load_task_mindmap
+from video_sum_service.task_artifacts import cleanup_video_files, load_task_mindmap, load_visual_context, load_visual_note_markdown
 import video_sum_service.video_assets as video_assets
 
 probe_video_asset = video_assets.probe_video_asset
@@ -121,7 +122,7 @@ async def lifespan(app: FastAPI):
         if startup_thread is not None and startup_thread.is_alive():
             startup_thread.join(timeout=10)
         task_worker = getattr(app.state, "task_worker", None)
-        if task_worker is not None:
+        if task_worker is not None and hasattr(task_worker, "shutdown"):
             task_worker.shutdown(wait=True, timeout=10)
         logger.info("application shutdown")
         connection.close()
@@ -497,4 +498,77 @@ def generate_task_mindmap(task_id: str, force: bool = False) -> TaskMindMapRespo
         error_message=refreshed_result.mindmap_error_message,
         updated_at=refreshed_result.mindmap_updated_at,
         mindmap=None,
+    )
+
+
+def get_task_visual_evidence(task_id: str) -> TaskVisualEvidenceResponse:
+    task_store: SqliteTaskRepository = app.state.task_repository
+    record = task_store.get_task(task_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Task not found.")
+    result = record.result
+    if result is None:
+        return TaskVisualEvidenceResponse(task_id=task_id, status="idle")
+
+    context_path = result.artifacts.get("visual_context_path")
+    context = load_visual_context(context_path) if context_path else None
+    note_path = result.visual_enhanced_note_artifact_path or result.visual_note_artifact_path or result.artifacts.get("visual_enhanced_note_path") or result.artifacts.get("visual_note_path")
+    return TaskVisualEvidenceResponse(
+        task_id=task_id,
+        mode=str(context.get("mode") if context else "text"),
+        status=result.visual_note_status or (str(context.get("status")) if context else "idle"),
+        error_message=result.visual_note_error_message,
+        updated_at=result.visual_note_updated_at,
+        frame_count=result.visual_frame_count,
+        insert_count=int(context.get("insert_count") or 0) if context else 0,
+        visual_note_markdown=load_visual_note_markdown(note_path),
+        enhanced_note_markdown=load_visual_note_markdown(note_path),
+        context=context,
+    )
+
+
+def generate_task_visual_evidence(task_id: str, force: bool = False, mode: str | None = None) -> TaskVisualEvidenceResponse:
+    task_store: SqliteTaskRepository = app.state.task_repository
+    record = task_store.get_task(task_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Task not found.")
+    if record.status != TaskStatus.COMPLETED or record.result is None:
+        raise HTTPException(status_code=400, detail="仅已完成且有结果的任务可以生成图文笔记。")
+
+    requested_mode = normalize_visual_note_mode(mode or "frame_insert", default="frame_insert")
+    if requested_mode == "text":
+        requested_mode = "frame_insert"
+    existing_path = record.result.visual_enhanced_note_artifact_path or record.result.visual_note_artifact_path or record.result.artifacts.get("visual_enhanced_note_path") or record.result.artifacts.get("visual_note_path")
+    if record.result.visual_note_status == "generating" and not force:
+        return TaskVisualEvidenceResponse(
+            task_id=task_id,
+            mode=requested_mode,
+            status="generating",
+            error_message=None,
+            updated_at=record.result.visual_note_updated_at,
+            frame_count=record.result.visual_frame_count,
+        )
+    if existing_path and record.result.visual_note_status == "ready" and not force:
+        return get_task_visual_evidence(task_id)
+
+    generating_result = record.result.model_copy(
+        update={
+            "visual_note_status": "generating",
+            "visual_note_error_message": None,
+        }
+    )
+    task_store.save_result(task_id, generating_result)
+    worker = getattr(app.state, "task_worker", None)
+    if worker is None or not hasattr(worker, "submit_visual_evidence"):
+        raise HTTPException(status_code=503, detail="图文笔记后台队列暂不可用。")
+    worker.submit_visual_evidence(task_id, force=force, mode=requested_mode)
+    refreshed = task_store.get_task(task_id)
+    refreshed_result = refreshed.result if refreshed is not None and refreshed.result is not None else generating_result
+    return TaskVisualEvidenceResponse(
+        task_id=task_id,
+        mode=requested_mode,
+        status=refreshed_result.visual_note_status,
+        error_message=refreshed_result.visual_note_error_message,
+        updated_at=refreshed_result.visual_note_updated_at,
+        frame_count=refreshed_result.visual_frame_count,
     )

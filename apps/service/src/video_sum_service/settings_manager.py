@@ -11,6 +11,8 @@ from video_sum_infra.config import (
     DEFAULT_KNOWLEDGE_NOTE_USER_PROMPT_TEMPLATE,
     DEFAULT_SUMMARY_SYSTEM_PROMPT,
     DEFAULT_SUMMARY_USER_PROMPT_TEMPLATE,
+    DEFAULT_VISUAL_NOTE_SYSTEM_PROMPT,
+    DEFAULT_VISUAL_NOTE_USER_PROMPT_TEMPLATE,
     LEGACY_SUMMARY_SYSTEM_PROMPT,
     LEGACY_SUMMARY_USER_PROMPT_TEMPLATE,
     PREVIOUS_DEFAULT_SUMMARY_SYSTEM_PROMPT,
@@ -24,6 +26,7 @@ SECRET_SETTINGS_FIELDS = {
     "siliconflow_asr_api_key",
     "llm_api_key",
     "knowledge_llm_api_key",
+    "visual_evidence_api_key",
 }
 MASKED_SECRET_PLACEHOLDER = "******"
 
@@ -60,6 +63,17 @@ class SettingsUpdatePayload(BaseModel):
     summary_mode: str | None = None
     llm_enabled: bool | None = None
     auto_generate_mindmap: bool | None = None
+    visual_note_mode: str | None = None
+    visual_evidence_enabled: bool | None = None
+    visual_evidence_use_llm: bool | None = None
+    visual_evidence_base_url: str | None = None
+    visual_evidence_model: str | None = None
+    visual_evidence_api_key: str | None = None
+    visual_evidence_max_frames: int | None = None
+    visual_evidence_frame_interval_seconds: int | None = None
+    visual_evidence_frame_width: int | None = None
+    visual_evidence_timeout_seconds: int | None = None
+    visual_evidence_retry_count: int | None = None
     llm_provider: str | None = None
     llm_base_url: str | None = None
     llm_model: str | None = None
@@ -76,6 +90,8 @@ class SettingsUpdatePayload(BaseModel):
     summary_user_prompt_template: str | None = None
     knowledge_note_system_prompt: str | None = None
     knowledge_note_user_prompt_template: str | None = None
+    visual_note_system_prompt: str | None = None
+    visual_note_user_prompt_template: str | None = None
     summary_chunk_target_chars: int | None = None
     summary_chunk_overlap_segments: int | None = None
     task_concurrency: int | None = None
@@ -115,6 +131,10 @@ class SettingsManager:
                 stored["knowledge_note_system_prompt"] = DEFAULT_KNOWLEDGE_NOTE_SYSTEM_PROMPT
             if "knowledge_note_user_prompt_template" not in stored:
                 stored["knowledge_note_user_prompt_template"] = DEFAULT_KNOWLEDGE_NOTE_USER_PROMPT_TEMPLATE
+            if "visual_note_system_prompt" not in stored:
+                stored["visual_note_system_prompt"] = DEFAULT_VISUAL_NOTE_SYSTEM_PROMPT
+            if "visual_note_user_prompt_template" not in stored:
+                stored["visual_note_user_prompt_template"] = DEFAULT_VISUAL_NOTE_USER_PROMPT_TEMPLATE
             migrated = False
             candidate = ServiceSettings.model_validate({**self._base_settings.model_dump(), **stored})
             if "task_concurrency" not in stored:

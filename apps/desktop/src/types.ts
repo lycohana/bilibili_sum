@@ -15,6 +15,8 @@ export type ChapterGroupItem = {
 };
 
 export type TaskMindMapStatus = "idle" | "generating" | "ready" | "failed";
+export type TaskVisualEvidenceStatus = "idle" | "generating" | "ready" | "partial" | "failed" | "unsupported";
+export type VisualNoteMode = "text" | "frame_insert" | "vlm_integrated";
 
 export type MindMapNode = {
   id: string;
@@ -50,6 +52,12 @@ export type TaskResult = {
   mindmap_error_message?: string | null;
   mindmap_artifact_path?: string | null;
   mindmap_updated_at?: string | null;
+  visual_note_status?: TaskVisualEvidenceStatus;
+  visual_note_error_message?: string | null;
+  visual_note_artifact_path?: string | null;
+  visual_enhanced_note_artifact_path?: string | null;
+  visual_note_updated_at?: string | null;
+  visual_frame_count?: number;
 };
 
 export type VideoAssetSummary = {
@@ -153,6 +161,49 @@ export type TaskMindMapResponse = {
   error_message?: string | null;
   updated_at?: string | null;
   mindmap?: TaskMindMap | null;
+};
+
+export type VisualEvidenceFrame = {
+  frame_id: string;
+  timestamp_seconds: number;
+  timestamp?: string;
+  file_name: string;
+  image_path?: string;
+};
+
+export type VisualEvidenceObservation = {
+  frame_id: string;
+  timestamp_seconds: number;
+  caption: string;
+  ocr_text?: string;
+  scene?: string;
+  confidence?: number | null;
+};
+
+export type VisualEvidenceContext = {
+  schema_version?: number;
+  task_id?: string;
+  status?: TaskVisualEvidenceStatus | string;
+  source_kind?: string;
+  provider?: string;
+  model?: string;
+  frame_count?: number;
+  frames?: VisualEvidenceFrame[];
+  observations?: VisualEvidenceObservation[];
+  warnings?: string[];
+};
+
+export type TaskVisualEvidenceResponse = {
+  task_id: string;
+  mode: VisualNoteMode | string;
+  status: TaskVisualEvidenceStatus;
+  error_message?: string | null;
+  updated_at?: string | null;
+  frame_count: number;
+  insert_count: number;
+  visual_note_markdown: string;
+  enhanced_note_markdown: string;
+  context?: VisualEvidenceContext | null;
 };
 
 export type TaskMarkdownExportTarget = "markdown" | "obsidian";
@@ -260,6 +311,18 @@ export type ServiceSettings = {
   summary_mode: string;
   llm_enabled: boolean;
   auto_generate_mindmap: boolean;
+  visual_note_mode: VisualNoteMode;
+  visual_evidence_enabled: boolean;
+  visual_evidence_use_llm: boolean;
+  visual_evidence_base_url: string;
+  visual_evidence_model: string;
+  visual_evidence_api_key: string;
+  visual_evidence_api_key_configured?: boolean;
+  visual_evidence_max_frames: number;
+  visual_evidence_frame_interval_seconds: number;
+  visual_evidence_frame_width: number;
+  visual_evidence_timeout_seconds: number;
+  visual_evidence_retry_count: number;
   llm_provider: string;
   llm_api_key: string;
   llm_base_url: string;
@@ -277,6 +340,8 @@ export type ServiceSettings = {
   summary_user_prompt_template: string;
   knowledge_note_system_prompt: string;
   knowledge_note_user_prompt_template: string;
+  visual_note_system_prompt: string;
+  visual_note_user_prompt_template: string;
   summary_chunk_target_chars: number;
   summary_chunk_overlap_segments: number;
   task_concurrency: number;
@@ -289,6 +354,8 @@ export type ServiceSettings = {
   defaults?: {
     knowledge_note_system_prompt?: string;
     knowledge_note_user_prompt_template?: string;
+    visual_note_system_prompt?: string;
+    visual_note_user_prompt_template?: string;
   };
 };
 

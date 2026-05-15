@@ -8,6 +8,8 @@ import re
 import shutil
 import subprocess
 import time
+import base64
+import hashlib
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
@@ -23,13 +25,14 @@ from video_sum_core.errors import (
     UnsupportedInputError,
     VideoSumError,
 )
-from video_sum_core.models.tasks import InputType, MindMapNode, TaskMindMap, TaskResult
+from video_sum_core.models.tasks import InputType, MindMapNode, TaskInput, TaskMindMap, TaskResult
 from video_sum_core.pipeline.base import PipelineContext, PipelineEvent, PipelineEventReporter, PipelineRunner
 from video_sum_core.utils import ensure_directory, normalize_video_url, sanitize_filename
 from video_sum_infra.llm import normalize_openai_compatible_model_name
 from video_sum_infra.config import (
     DEFAULT_KNOWLEDGE_NOTE_SYSTEM_PROMPT,
     DEFAULT_KNOWLEDGE_NOTE_USER_PROMPT_TEMPLATE,
+    normalize_visual_note_mode,
 )
 from video_sum_infra.runtime import (
     ffmpeg_location,
@@ -175,6 +178,19 @@ class PipelineSettings:
     llm_api_key: str = ""
     llm_base_url: str = ""
     llm_model: str = ""
+    visual_evidence_enabled: bool = False
+    visual_note_mode: str = "text"
+    visual_evidence_use_llm: bool = True
+    visual_evidence_base_url: str = ""
+    visual_evidence_model: str = ""
+    visual_evidence_api_key: str = ""
+    visual_evidence_max_frames: int = 12
+    visual_evidence_frame_interval_seconds: int = 60
+    visual_evidence_frame_width: int = 960
+    visual_evidence_timeout_seconds: int = 120
+    visual_evidence_retry_count: int = 1
+    visual_note_system_prompt: str = ""
+    visual_note_user_prompt_template: str = ""
     summary_system_prompt: str = ""
     summary_user_prompt_template: str = ""
     knowledge_note_system_prompt: str = ""
@@ -2000,6 +2016,874 @@ P 数索引：
             encoding="utf-8",
         )
         return mindmap, mindmap_path
+
+    def build_and_export_visual_evidence(
+        self,
+        task_id: str,
+        task_input: TaskInput,
+        title: str,
+        result: TaskResult,
+        mode: str | None = None,
+        on_event: Callable[[PipelineEvent], None] | None = None,
+    ) -> tuple[dict[str, object], Path, Path]:
+        task_dir = ensure_directory(self._settings.tasks_dir / task_id)
+        visual_dir = ensure_directory(task_dir / "visual_evidence")
+        frames_dir = ensure_directory(visual_dir / "frames")
+        source_path, source_kind, warnings = self._prepare_visual_source(task_input, task_dir, title)
+        frame_index_path = visual_dir / "frame_index.json"
+        context_path = visual_dir / "visual_context.json"
+        note_path = visual_dir / "visual_note.md"
+        enhanced_note_path = visual_dir / "visual_enhanced_note.md"
+        keyframe_plan_path = visual_dir / "visual_keyframe_plan.json"
+        insert_plan_path = visual_dir / "visual_insert_plan.json"
+        mode = self._visual_note_mode(mode)
+
+        def report(stage: str, progress: int, message: str, payload: dict[str, object] | None = None) -> None:
+            if on_event is not None:
+                on_event(PipelineEvent(stage=stage, progress=progress, message=message, payload=payload or {}))
+
+        if mode == "text":
+            context = self._build_visual_context_payload(
+                task_id=task_id,
+                status="skipped",
+                source_kind="text",
+                frames=[],
+                observations=[],
+                warnings=["当前知识笔记形式为纯文本，未生成图文增强笔记。"],
+                note_path=note_path,
+                enhanced_note_path=enhanced_note_path,
+                frame_index_path=frame_index_path,
+                keyframe_plan_path=keyframe_plan_path,
+                insert_plan_path=insert_plan_path,
+                mode=mode,
+                insert_count=0,
+            )
+            self._write_json_atomic(context_path, context)
+            note_path.write_text("", encoding="utf-8")
+            enhanced_note_path.write_text("", encoding="utf-8")
+            self._write_json_atomic(keyframe_plan_path, {"schema_version": 1, "mode": mode, "keyframes": []})
+            self._write_json_atomic(insert_plan_path, {"schema_version": 1, "mode": mode, "insertions": []})
+            return context, enhanced_note_path, context_path
+
+        report("visual_keyinfo_planning", 24, "正在提取适合截图的关键信息点", {"mode": mode})
+        keyframe_plan = self._build_visual_keyframe_plan(title, result, mode)
+        self._write_json_atomic(keyframe_plan_path, keyframe_plan)
+        keyframes = [item for item in keyframe_plan.get("keyframes", []) if isinstance(item, dict)]
+        report("visual_source_preparing", 34, "正在准备图文笔记的视频画面来源", {"mode": mode, "keyframe_count": len(keyframes)})
+
+        if source_path is None:
+            context = self._build_visual_context_payload(
+                task_id=task_id,
+                status="unsupported",
+                source_kind=source_kind,
+                frames=[],
+                observations=[],
+                warnings=warnings,
+                note_path=note_path,
+                enhanced_note_path=enhanced_note_path,
+                frame_index_path=frame_index_path,
+                keyframe_plan_path=keyframe_plan_path,
+                insert_plan_path=insert_plan_path,
+                mode=mode,
+                insert_count=0,
+            )
+            self._write_json_atomic(context_path, context)
+            note_path.write_text("", encoding="utf-8")
+            enhanced_note_path.write_text("", encoding="utf-8")
+            self._write_json_atomic(insert_plan_path, {"schema_version": 1, "mode": mode, "insertions": []})
+            return context, enhanced_note_path, context_path
+
+        timestamps = self._visual_timestamps_from_keyframe_plan(keyframe_plan, result)
+        report("visual_frame_extracting", 48, "正在按关键信息点抽取对应画面", {"mode": mode, "timestamp_count": len(timestamps)})
+        frames, extract_warnings = self._extract_visual_frames(source_path, timestamps, frames_dir)
+        warnings.extend(extract_warnings)
+        self._attach_visual_keyframe_plan(frames, keyframes)
+        report("visual_frame_extracted", 58, "关键画面抽取完成，正在整理图片索引", {"mode": mode, "frame_count": len(frames)})
+        observations: list[dict[str, object]] = []
+        if frames and mode == "vlm_integrated" and self._visual_llm_available():
+            try:
+                report("visual_frame_analyzing", 70, "正在调用 VLM 解析画面内容", {"mode": mode, "frame_count": len(frames)})
+                observations = self._describe_visual_frames(frames, title, result)
+            except Exception as exc:
+                logger.warning("visual frame description failed task_id=%s error=%s", task_id, exc)
+                warnings.append(f"视觉模型描述失败：{exc}")
+        elif frames:
+            observations = [
+                {
+                    "frame_id": str(frame["frame_id"]),
+                    "timestamp_seconds": float(frame["timestamp_seconds"]),
+                    "caption": str(frame.get("planned_caption") or frame.get("planned_concept") or "关键画面截图"),
+                    "ocr_text": "",
+                    "semantic_summary": str(frame.get("planned_reason") or ""),
+                    "suggested_anchor": str(frame.get("anchor_heading") or ""),
+                    "note_explanation": str(frame.get("planned_note_hint") or frame.get("planned_reason") or ""),
+                    "scene": "unknown",
+                    "confidence": None,
+                }
+                for frame in frames
+            ]
+        else:
+            warnings.append("未能抽取到可用关键帧。")
+
+        public_frames = [self._public_visual_frame(frame) for frame in frames]
+        frame_index = {
+            "schema_version": 1,
+            "task_id": task_id,
+            "source_kind": source_kind,
+            "source_media_name": source_path.name,
+            "frames_dir": "frames",
+            "frames": public_frames,
+        }
+        self._write_json_atomic(frame_index_path, frame_index)
+
+        note_markdown = self._render_visual_note_markdown(observations)
+        note_path.write_text(note_markdown, encoding="utf-8")
+        report("visual_insert_planning", 82, "正在规划图片插入到笔记正文的位置", {"mode": mode})
+        insert_plan = self._build_visual_insert_plan(result, public_frames, observations, mode)
+        report("visual_note_composing", 92, "正在整合图文笔记正文", {"mode": mode, "insert_count": len(insert_plan.get("insertions", [])) if isinstance(insert_plan.get("insertions"), list) else 0})
+        enhanced_note_markdown = self._compose_visual_enhanced_note(
+            title=title,
+            result=result,
+            observations=observations,
+            insert_plan=insert_plan,
+            mode=mode,
+        )
+        enhanced_note_path.write_text(enhanced_note_markdown, encoding="utf-8")
+        self._write_json_atomic(insert_plan_path, insert_plan)
+        status = "ready" if enhanced_note_markdown.strip() and insert_plan.get("insertions") else "partial" if frames else "failed"
+        context = self._build_visual_context_payload(
+            task_id=task_id,
+            status=status,
+            source_kind=source_kind,
+            frames=public_frames,
+            observations=observations,
+            warnings=warnings,
+            note_path=note_path,
+            enhanced_note_path=enhanced_note_path,
+            frame_index_path=frame_index_path,
+            keyframe_plan_path=keyframe_plan_path,
+            insert_plan_path=insert_plan_path,
+            mode=mode,
+            insert_count=len(insert_plan.get("insertions", [])) if isinstance(insert_plan.get("insertions"), list) else 0,
+        )
+        self._write_json_atomic(context_path, context)
+        return context, enhanced_note_path, context_path
+
+    def _visual_note_mode(self, mode_override: str | None = None) -> str:
+        return normalize_visual_note_mode(mode_override or self._settings.visual_note_mode or "text")
+
+    def _build_visual_keyframe_plan(self, title: str, result: TaskResult, mode: str) -> dict[str, object]:
+        fallback = self._build_visual_keyframe_plan_locally(result, mode)
+        if not self._settings.llm_enabled or not self._settings.llm_api_key or not self._settings.llm_base_url or not self._settings.llm_model:
+            return fallback
+        try:
+            return self._build_visual_keyframe_plan_with_llm(title, result, mode)
+        except Exception as exc:
+            logger.warning("visual keyframe planning llm failed error=%s", exc)
+            return fallback
+
+    def _build_visual_keyframe_plan_locally(self, result: TaskResult, mode: str) -> dict[str, object]:
+        keyframes: list[dict[str, object]] = []
+        max_frames = max(1, min(int(self._settings.visual_evidence_max_frames or 12), 30))
+        for item in result.timeline or []:
+            if not isinstance(item, dict):
+                continue
+            try:
+                timestamp = float(item.get("start") or 0)
+            except (TypeError, ValueError):
+                timestamp = 0.0
+            title = str(item.get("title") or "").strip() or "关键章节"
+            summary = str(item.get("summary") or "").strip()
+            keyframes.append(
+                {
+                    "timestamp_seconds": max(0.0, timestamp),
+                    "anchor_heading": title,
+                    "concept": title,
+                    "reason": summary or "该时间点对应知识笔记中的关键段落，适合截图辅助理解。",
+                    "caption_hint": title,
+                    "note_hint": summary,
+                    "priority": max(0.1, 1.0 - len(keyframes) * 0.04),
+                    "mode": mode,
+                }
+            )
+            if len(keyframes) >= max_frames:
+                break
+        if not keyframes:
+            keyframes = [
+                {
+                    "timestamp_seconds": timestamp,
+                    "anchor_heading": "",
+                    "concept": f"关键画面 {index + 1}",
+                    "reason": "未找到章节时间线，按固定间隔抽取画面用于辅助复盘。",
+                    "caption_hint": "关键画面",
+                    "note_hint": "",
+                    "priority": max(0.1, 1.0 - index * 0.05),
+                    "mode": mode,
+                }
+                for index, timestamp in enumerate(self._choose_visual_timestamps(result))
+            ]
+        return {"schema_version": 1, "mode": mode, "planner": "local", "keyframes": keyframes[:max_frames]}
+
+    def _build_visual_keyframe_plan_with_llm(self, title: str, result: TaskResult, mode: str) -> dict[str, object]:
+        base_url = (self._settings.llm_base_url or "").rstrip("/")
+        max_frames = max(1, min(int(self._settings.visual_evidence_max_frames or 12), 30))
+        summary_payload = {
+            "overview": result.overview,
+            "keyPoints": result.key_points,
+            "chapters": result.timeline,
+            "chapterGroups": result.chapter_groups,
+        }
+        user_prompt = (
+            "请根据视频摘要和知识笔记，选择最值得截图辅助理解的关键画面。\n"
+            "目标链路是：先找知识点 -> 按时间点截图 -> 让 VLM 理解图片 -> 整合成图文笔记。\n"
+            "只返回 JSON 对象，格式：{\"keyframes\":[{\"timestamp_seconds\":数字,\"anchor_heading\":\"应插入到的笔记标题\","
+            "\"concept\":\"被图片支撑的知识点\",\"reason\":\"为什么需要截图\",\"caption_hint\":\"图片标题建议\","
+            "\"note_hint\":\"插入笔记时应补充的说明\",\"priority\":0到1}]}。\n"
+            f"最多选择 {max_frames} 张；不要平均抽帧，只选能解释界面、代码、图表、演示、对比或步骤的画面。\n"
+            f"视频标题：{title}\n模式：{mode}\n摘要 JSON：\n"
+            f"{_truncate_text(json.dumps(summary_payload, ensure_ascii=False), 9000)}\n\n"
+            f"知识笔记：\n{_truncate_text(result.knowledge_note_markdown or '', 12000)}"
+        )
+        payload = {
+            "model": self._settings.llm_model,
+            "messages": [
+                {"role": "system", "content": "你是视频学习笔记的信息架构师。你只输出合法 JSON。"},
+                {"role": "user", "content": user_prompt},
+            ],
+            "temperature": 0.1,
+            "response_format": {"type": "json_object"},
+            "enable_thinking": False,
+        }
+        parsed = self._request_llm_json(base_url=base_url, payload=payload, timeout=90, retry_count=1)
+        raw_items = parsed.get("keyframes")
+        keyframes: list[dict[str, object]] = []
+        if isinstance(raw_items, list):
+            for item in raw_items:
+                if not isinstance(item, dict):
+                    continue
+                try:
+                    timestamp = float(item.get("timestamp_seconds") or item.get("timestamp") or 0)
+                except (TypeError, ValueError):
+                    continue
+                if timestamp < 0:
+                    continue
+                try:
+                    priority = float(item.get("priority") if item.get("priority") is not None else 0.75)
+                except (TypeError, ValueError):
+                    priority = 0.75
+                keyframes.append(
+                    {
+                        "timestamp_seconds": timestamp,
+                        "anchor_heading": str(item.get("anchor_heading") or "").strip()[:160],
+                        "concept": str(item.get("concept") or item.get("caption_hint") or "关键画面").strip()[:160],
+                        "reason": str(item.get("reason") or "").strip()[:600],
+                        "caption_hint": str(item.get("caption_hint") or item.get("concept") or "关键画面").strip()[:180],
+                        "note_hint": str(item.get("note_hint") or item.get("reason") or "").strip()[:800],
+                        "priority": max(0.0, min(1.0, priority)),
+                        "mode": mode,
+                    }
+                )
+        if not keyframes:
+            return self._build_visual_keyframe_plan_locally(result, mode)
+        keyframes.sort(key=lambda item: float(item.get("priority") or 0), reverse=True)
+        return {"schema_version": 1, "mode": mode, "planner": "llm", "keyframes": keyframes[:max_frames]}
+
+    def _visual_timestamps_from_keyframe_plan(self, keyframe_plan: dict[str, object], result: TaskResult) -> list[float]:
+        min_interval = max(5, min(int(self._settings.visual_evidence_frame_interval_seconds or 60), 60))
+        timestamps: list[float] = []
+        for item in keyframe_plan.get("keyframes", []):
+            if not isinstance(item, dict):
+                continue
+            try:
+                timestamp = max(0.0, float(item.get("timestamp_seconds") or 0))
+            except (TypeError, ValueError):
+                continue
+            if any(abs(timestamp - existing) < min_interval for existing in timestamps):
+                continue
+            timestamps.append(timestamp)
+        return timestamps or self._choose_visual_timestamps(result)
+
+    def _attach_visual_keyframe_plan(self, frames: list[dict[str, object]], keyframes: list[dict[str, object]]) -> None:
+        for frame, planned in zip(frames, keyframes):
+            frame["anchor_heading"] = str(planned.get("anchor_heading") or "").strip()
+            frame["planned_concept"] = str(planned.get("concept") or "").strip()
+            frame["planned_reason"] = str(planned.get("reason") or "").strip()
+            frame["planned_caption"] = str(planned.get("caption_hint") or planned.get("concept") or "").strip()
+            frame["planned_note_hint"] = str(planned.get("note_hint") or planned.get("reason") or "").strip()
+            frame["selection_source"] = str(planned.get("planner") or "keyframe_plan")
+
+    def _prepare_visual_source(
+        self,
+        task_input: TaskInput,
+        task_dir: Path,
+        title: str,
+    ) -> tuple[Path | None, str, list[str]]:
+        warnings: list[str] = []
+        if task_input.input_type is InputType.VIDEO_FILE:
+            source_path = Path(str(task_input.source or "")).expanduser()
+            if source_path.exists() and source_path.is_file():
+                return source_path, "local_video", warnings
+            return None, "local_video", [f"本地视频文件不存在：{source_path}"]
+        if task_input.input_type is InputType.URL:
+            try:
+                video_path = self._download_video_for_visuals(
+                    task_input.source,
+                    task_dir / "visual_evidence",
+                    sanitize_filename(title or "video"),
+                )
+                return video_path, "url_video", warnings
+            except Exception as exc:
+                logger.warning("visual video download skipped source=%s error=%s", task_input.source, exc)
+                return None, "url_video", [f"低清视频源准备失败：{exc}"]
+        if task_input.input_type is InputType.AUDIO_FILE:
+            return None, "audio_file", ["音频任务没有可截图的视频画面。"]
+        return None, "transcript_text", ["纯转写任务没有可截图的视频画面。"]
+
+    def _download_video_for_visuals(self, url: str, output_dir: Path, safe_title: str) -> Path:
+        ensure_directory(output_dir)
+        output_template = str(output_dir / f"{safe_title}.visual.%(ext)s")
+        options = {
+            **self._base_ydl_options(),
+            "format": "worstvideo[height<=480][ext=mp4]/worstvideo[height<=480]/worst[height<=480]/worst",
+            "outtmpl": output_template,
+            "noplaylist": True,
+        }
+        ffmpeg_exe = ffmpeg_location()
+        if ffmpeg_exe is not None:
+            options["ffmpeg_location"] = str(ffmpeg_exe)
+        YoutubeDL, DownloadError = _get_ytdlp_classes()
+        try:
+            with YoutubeDL(options) as ydl:
+                ydl.download([url])
+        except DownloadError as exc:
+            self._raise_ydl_error(exc)
+        candidates = sorted(output_dir.glob(f"{safe_title}.visual.*"), key=lambda item: item.stat().st_mtime, reverse=True)
+        if not candidates:
+            raise VideoSumError("低清视频下载失败。")
+        return candidates[0]
+
+    def _choose_visual_timestamps(self, result: TaskResult) -> list[float]:
+        max_frames = max(1, min(int(self._settings.visual_evidence_max_frames or 12), 30))
+        min_interval = max(10, int(self._settings.visual_evidence_frame_interval_seconds or 60))
+        candidates: list[float] = []
+        for item in result.timeline or []:
+            if not isinstance(item, dict):
+                continue
+            start = item.get("start")
+            try:
+                timestamp = float(start) if start is not None else None
+            except (TypeError, ValueError):
+                timestamp = None
+            if timestamp is not None and timestamp >= 0:
+                candidates.append(timestamp)
+        if not candidates:
+            candidates = [float(index * min_interval) for index in range(max_frames)]
+        ordered: list[float] = []
+        for timestamp in sorted(set(round(item, 1) for item in candidates)):
+            if ordered and timestamp - ordered[-1] < min_interval:
+                continue
+            ordered.append(timestamp)
+            if len(ordered) >= max_frames:
+                break
+        if not ordered and candidates:
+            ordered = [max(0.0, float(candidates[0]))]
+        return ordered[:max_frames]
+
+    def _extract_visual_frames(
+        self,
+        source_path: Path,
+        timestamps: list[float],
+        frames_dir: Path,
+    ) -> tuple[list[dict[str, object]], list[str]]:
+        warnings: list[str] = []
+        ffmpeg_exe = ffmpeg_location()
+        if ffmpeg_exe is None:
+            return [], ["FFmpeg 不可用，已跳过截图证据。"]
+        frames: list[dict[str, object]] = []
+        seen_hashes: set[str] = set()
+        width = max(320, min(int(self._settings.visual_evidence_frame_width or 960), 1600))
+        for index, timestamp in enumerate(timestamps, start=1):
+            frame_id = f"f{index:04d}"
+            target = frames_dir / f"{frame_id}.jpg"
+            command = [
+                str(ffmpeg_exe),
+                "-y",
+                "-ss",
+                f"{max(0.0, float(timestamp)):.3f}",
+                "-i",
+                str(source_path),
+                "-frames:v",
+                "1",
+                "-vf",
+                f"scale='min({width},iw)':-2",
+                "-q:v",
+                "3",
+                str(target),
+            ]
+            try:
+                result = subprocess.run(
+                    command,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=45,
+                    check=False,
+                    **_windows_hidden_subprocess_kwargs(),
+                )
+            except (OSError, subprocess.SubprocessError) as exc:
+                warnings.append(f"{self._format_seconds(timestamp)} 截图失败：{exc}")
+                continue
+            if result.returncode != 0 or not target.exists():
+                warnings.append(f"{self._format_seconds(timestamp)} 截图失败。")
+                continue
+            digest = self._sha256_file(target)
+            if digest in seen_hashes:
+                try:
+                    target.unlink()
+                except OSError:
+                    pass
+                continue
+            seen_hashes.add(digest)
+            frames.append(
+                {
+                    "frame_id": frame_id,
+                    "timestamp_seconds": float(timestamp),
+                    "timestamp": self._format_seconds(float(timestamp)),
+                    "file_name": target.name,
+                    "image_path": f"frames/{target.name}",
+                    "_absolute_path": str(target),
+                    "sha256": digest,
+                    "selected": True,
+                    "reason": "chapter_anchor",
+                }
+            )
+        return frames, warnings
+
+    def _visual_llm_available(self) -> bool:
+        if not self._settings.visual_evidence_use_llm:
+            return False
+        base_url, model, api_key = self._visual_llm_config()
+        return bool(base_url and model and api_key)
+
+    def _visual_llm_config(self) -> tuple[str, str, str]:
+        base_url = (self._settings.visual_evidence_base_url or self._settings.llm_base_url or "").rstrip("/")
+        model = self._settings.visual_evidence_model or self._settings.llm_model
+        api_key = self._settings.visual_evidence_api_key or self._settings.llm_api_key
+        return base_url, model, api_key
+
+    def _describe_visual_frames(
+        self,
+        frames: list[dict[str, object]],
+        title: str,
+        result: TaskResult,
+    ) -> list[dict[str, object]]:
+        base_url, model, api_key = self._visual_llm_config()
+        observations: list[dict[str, object]] = []
+        timeline_hint = "\n".join(
+            f"- {self._format_seconds(float(item.get('start') or 0))} {str(item.get('title') or '').strip()}：{str(item.get('summary') or '').strip()}"
+            for item in (result.timeline or [])[:20]
+            if isinstance(item, dict)
+        )
+        headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+        timeout = max(15, int(self._settings.visual_evidence_timeout_seconds or 120))
+        retry_count = max(0, min(int(self._settings.visual_evidence_retry_count or 1), 3))
+        for frame in frames:
+            image_path = frame.get("_absolute_path")
+            if not image_path:
+                image_path = str(frame.get("image_path") or "")
+            image_file = Path(str(image_path))
+            if not image_file.exists():
+                # frame_index stores paths relative to the visual directory.
+                continue
+            image_data = base64.b64encode(image_file.read_bytes()).decode("ascii")
+            prompt = (
+                "请只基于截图可见内容输出 JSON。不要猜测画面外信息。"
+                "字段：visual_type, caption, ocr_text, semantic_summary, importance, should_insert, "
+                "suggested_anchor, note_explanation, scene, confidence。"
+                f"\n视频标题：{title}\n时间点：{frame.get('timestamp')}\n章节线索：\n{timeline_hint}"
+            )
+            payload = {
+                "model": normalize_openai_compatible_model_name(model),
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": prompt},
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:image/jpeg;base64,{image_data}",
+                                    "detail": "low",
+                                },
+                            },
+                        ],
+                    }
+                ],
+                "response_format": {"type": "json_object"},
+                "enable_thinking": False,
+            }
+            last_error: Exception | None = None
+            for attempt in range(retry_count + 1):
+                try:
+                    with httpx.Client(timeout=timeout, follow_redirects=True) as client:
+                        response = client.post(f"{base_url}/chat/completions", headers=headers, json=payload)
+                    response.raise_for_status()
+                    body = response.json()
+                    choices = body.get("choices") if isinstance(body, dict) else None
+                    content = ""
+                    if isinstance(choices, list) and choices:
+                        message = choices[0].get("message") if isinstance(choices[0], dict) else None
+                        if isinstance(message, dict):
+                            content = str(message.get("content") or "")
+                    parsed = json.loads(_extract_json_object_text(content))
+                    observations.append(
+                        {
+                            "frame_id": str(frame["frame_id"]),
+                            "timestamp_seconds": float(frame["timestamp_seconds"]),
+                            "visual_type": str(parsed.get("visual_type") or parsed.get("scene") or "unknown").strip()[:64],
+                            "caption": str(parsed.get("caption") or "关键画面截图").strip()[:240],
+                            "ocr_text": str(parsed.get("ocr_text") or "").strip()[:600],
+                            "semantic_summary": str(parsed.get("semantic_summary") or parsed.get("caption") or "").strip()[:600],
+                            "importance": parsed.get("importance"),
+                            "should_insert": parsed.get("should_insert", True),
+                            "suggested_anchor": str(parsed.get("suggested_anchor") or "").strip()[:120],
+                            "note_explanation": str(parsed.get("note_explanation") or parsed.get("semantic_summary") or parsed.get("caption") or "").strip()[:500],
+                            "scene": str(parsed.get("scene") or "unknown").strip()[:64],
+                            "confidence": parsed.get("confidence"),
+                        }
+                    )
+                    break
+                except Exception as exc:
+                    last_error = exc
+                    if attempt >= retry_count:
+                        logger.warning("visual frame llm request failed frame_id=%s error=%s", frame.get("frame_id"), exc)
+                    else:
+                        time.sleep(min(4.0, 1.2 * (attempt + 1)))
+            if last_error and not any(item.get("frame_id") == frame.get("frame_id") for item in observations):
+                observations.append(
+                    {
+                        "frame_id": str(frame["frame_id"]),
+                        "timestamp_seconds": float(frame["timestamp_seconds"]),
+                        "visual_type": "unknown",
+                        "caption": "关键画面截图",
+                        "ocr_text": "",
+                        "semantic_summary": "",
+                        "importance": None,
+                        "should_insert": True,
+                        "suggested_anchor": "",
+                        "note_explanation": "这是对应时间点的关键画面，可辅助回看本段内容。",
+                        "scene": "unknown",
+                        "confidence": None,
+                    }
+                )
+        return observations
+
+    def _build_visual_insert_plan(
+        self,
+        result: TaskResult,
+        frames: list[dict[str, object]],
+        observations: list[dict[str, object]],
+        mode: str,
+    ) -> dict[str, object]:
+        observations_by_id = {str(item.get("frame_id") or ""): item for item in observations}
+        max_insertions = max(1, min(int(self._settings.visual_evidence_max_frames or 12), 30))
+        insertions: list[dict[str, object]] = []
+        for frame in frames:
+            frame_id = str(frame.get("frame_id") or "")
+            observation = observations_by_id.get(frame_id, {})
+            if mode == "vlm_integrated" and observation:
+                should_insert = bool(observation.get("should_insert", True))
+                try:
+                    importance = float(observation.get("importance") if observation.get("importance") is not None else 0.75)
+                except (TypeError, ValueError):
+                    importance = 0.75
+                if not should_insert and importance < 0.72:
+                    continue
+            chapter = self._nearest_visual_chapter(result, float(frame.get("timestamp_seconds") or 0))
+            timestamp = str(frame.get("timestamp") or self._format_seconds(float(frame.get("timestamp_seconds") or 0)))
+            anchor_heading = str(
+                observation.get("suggested_anchor")
+                or frame.get("anchor_heading")
+                or chapter.get("title")
+                or ""
+            ).strip()
+            caption = str(
+                observation.get("caption")
+                or frame.get("planned_caption")
+                or frame.get("planned_concept")
+                or chapter.get("title")
+                or "关键画面"
+            ).strip()
+            explanation = str(
+                observation.get("note_explanation")
+                or observation.get("semantic_summary")
+                or frame.get("planned_note_hint")
+                or frame.get("planned_reason")
+                or chapter.get("summary")
+                or "这张截图对应当前段落的关键讲解画面，适合复盘时对照查看。"
+            ).strip()
+            insertions.append(
+                {
+                    "frame_id": frame_id,
+                    "timestamp_seconds": float(frame.get("timestamp_seconds") or 0),
+                    "anchor_heading": anchor_heading,
+                    "chapter_title": str(chapter.get("title") or "").strip(),
+                    "markdown_image": f"visual://{frame_id}",
+                    "alt": f"{timestamp} {caption}",
+                    "caption": caption,
+                    "explanation": explanation[:500],
+                    "concept": str(frame.get("planned_concept") or "").strip(),
+                    "selection_reason": str(frame.get("planned_reason") or "").strip(),
+                    "mode": mode,
+                }
+            )
+            if len(insertions) >= max_insertions:
+                break
+        return {"schema_version": 1, "mode": mode, "insertions": insertions}
+
+    def _nearest_visual_chapter(self, result: TaskResult, timestamp: float) -> dict[str, object]:
+        chapters = [item for item in (result.timeline or []) if isinstance(item, dict)]
+        if not chapters:
+            return {}
+        best = chapters[0]
+        best_delta = float("inf")
+        for chapter in chapters:
+            try:
+                start = float(chapter.get("start") or 0)
+            except (TypeError, ValueError):
+                start = 0.0
+            delta = abs(timestamp - start)
+            if delta < best_delta:
+                best = chapter
+                best_delta = delta
+        return best
+
+    def _compose_visual_enhanced_note(
+        self,
+        *,
+        title: str,
+        result: TaskResult,
+        observations: list[dict[str, object]],
+        insert_plan: dict[str, object],
+        mode: str,
+    ) -> str:
+        base_note = str(result.knowledge_note_markdown or "").strip()
+        if not base_note:
+            return ""
+        if mode == "vlm_integrated" and observations and self._visual_llm_available():
+            try:
+                model_note = self._compose_visual_note_with_llm(title, base_note, observations, insert_plan)
+                if self._visual_note_preserves_text_subject(model_note):
+                    return model_note
+                logger.warning("visual enhanced note llm composition rejected because text subject was not preserved")
+            except Exception as exc:
+                logger.warning("visual enhanced note llm composition failed error=%s", exc)
+        return self._compose_visual_note_locally(base_note, insert_plan)
+
+    def _visual_note_preserves_text_subject(self, markdown: str) -> bool:
+        text = str(markdown or "").strip()
+        if "visual://" not in text:
+            return False
+        image_count = len(re.findall(r"!\[[^\]]*\]\(visual://[^)]+\)", text))
+        if image_count <= 0:
+            return False
+        text_without_images = re.sub(r"!\[[^\]]*\]\(visual://[^)]+\)", "", text)
+        text_chars = len(re.sub(r"\s+", "", text_without_images))
+        return text_chars >= max(180, image_count * 80)
+
+    def _compose_visual_note_with_llm(
+        self,
+        title: str,
+        knowledge_note_markdown: str,
+        observations: list[dict[str, object]],
+        insert_plan: dict[str, object] | None = None,
+    ) -> str:
+        base_url, model, api_key = self._visual_llm_config()
+        system_prompt = self._settings.visual_note_system_prompt.strip() or (
+            "你是一名擅长整理图文学习笔记的中文编辑。只输出 Markdown 正文。"
+            "文本永远是主体，图片只作为贴近段落的补充材料，不要把笔记改写成图片清单或截图画廊。"
+        )
+        payload_observations = []
+        for item in observations:
+            frame_id = str(item.get("frame_id") or "")
+            if not frame_id:
+                continue
+            payload_observations.append(
+                {
+                    **{key: value for key, value in item.items() if not str(key).startswith("_")},
+                    "markdown_image": f"visual://{frame_id}",
+                }
+            )
+        user_template = self._settings.visual_note_user_prompt_template.strip() or (
+            "请把关键图片自然插入原始知识笔记，图片链接使用 observations 中的 markdown_image。\n"
+            "要求：保留原始知识笔记的文字主体和层级；不要把图片集中放到末尾；不要新增独立的图片合集章节。"
+            "每张图只能作为某个知识点后的辅助说明，图片前后必须仍然以文字解释为主。"
+            "每张图后写 1-2 句简短说明，说明图片如何补充当前文字，不要复述整段画面。\n"
+            "标题：{title}\n原始知识笔记：\n{knowledge_note_markdown}\n视觉解析 JSON：\n{visual_observations_json}"
+        )
+        if insert_plan:
+            insertions_by_id = {
+                str(item.get("frame_id") or ""): item
+                for item in insert_plan.get("insertions", [])
+                if isinstance(item, dict)
+            }
+            for item in payload_observations:
+                plan_item = insertions_by_id.get(str(item.get("frame_id") or ""))
+                if plan_item:
+                    item["insert_plan"] = plan_item
+        visual_observations_json = json.dumps(payload_observations, ensure_ascii=False, indent=2)
+        try:
+            user_prompt = user_template.format(
+                title=title,
+                knowledge_note_markdown=knowledge_note_markdown,
+                visual_observations_json=visual_observations_json,
+            )
+        except (KeyError, IndexError, ValueError) as exc:
+            logger.warning("visual note prompt template format failed error=%s", exc)
+            user_prompt = (
+                f"{user_template}\n\n"
+                f"标题：{title}\n"
+                f"原始知识笔记：\n{knowledge_note_markdown}\n\n"
+                f"视觉解析 JSON：\n{visual_observations_json}"
+            )
+        payload = {
+            "model": normalize_openai_compatible_model_name(model),
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            "temperature": 0.2,
+            "enable_thinking": False,
+        }
+        headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+        timeout = max(15, int(self._settings.visual_evidence_timeout_seconds or 120))
+        with httpx.Client(timeout=timeout, follow_redirects=True) as client:
+            response = client.post(f"{base_url}/chat/completions", headers=headers, json=payload)
+        response.raise_for_status()
+        body = response.json()
+        choices = body.get("choices") if isinstance(body, dict) else None
+        if not isinstance(choices, list) or not choices:
+            raise VideoSumError("图文笔记模型没有返回内容。")
+        message = choices[0].get("message") if isinstance(choices[0], dict) else None
+        content = str(message.get("content") if isinstance(message, dict) else "").strip()
+        if not content:
+            raise VideoSumError("图文笔记模型返回空内容。")
+        return content
+
+    def _compose_visual_note_locally(self, knowledge_note_markdown: str, insert_plan: dict[str, object]) -> str:
+        insertions = [item for item in insert_plan.get("insertions", []) if isinstance(item, dict)]
+        if not insertions:
+            return knowledge_note_markdown
+        lines = knowledge_note_markdown.splitlines()
+        output: list[str] = []
+        insertion_index = 0
+        inserted = 0
+        for line in lines:
+            output.append(line)
+            stripped = line.strip()
+            if insertion_index >= len(insertions):
+                continue
+            current = insertions[insertion_index]
+            anchor = str(current.get("anchor_heading") or current.get("chapter_title") or "").strip()
+            should_insert_here = False
+            if stripped.startswith("#") and anchor:
+                heading = re.sub(r"^#+\s*", "", stripped).strip()
+                should_insert_here = anchor in heading or heading in anchor
+            if not should_insert_here and stripped and not stripped.startswith("#") and inserted < len(insertions):
+                should_insert_here = len(output) > 3 and inserted == 0
+            if should_insert_here:
+                output.extend(self._format_visual_insertion_markdown(current))
+                insertion_index += 1
+                inserted += 1
+        while insertion_index < len(insertions):
+            output.extend(self._format_visual_insertion_markdown(insertions[insertion_index]))
+            insertion_index += 1
+        return "\n".join(output).strip()
+
+    def _format_visual_insertion_markdown(self, insertion: dict[str, object]) -> list[str]:
+        image = str(insertion.get("markdown_image") or "").strip()
+        alt = str(insertion.get("alt") or insertion.get("caption") or "关键画面").strip()
+        explanation = str(insertion.get("explanation") or "").strip()
+        if not image:
+            return []
+        lines = ["", f"![{alt}]({image})"]
+        if explanation:
+            lines.extend(["", f"> {explanation}"])
+        lines.append("")
+        return lines
+
+    def _render_visual_note_markdown(self, observations: list[dict[str, object]]) -> str:
+        if not observations:
+            return ""
+        sections = ["## 图文笔记素材"]
+        for item in observations:
+            timestamp = self._format_seconds(float(item.get("timestamp_seconds") or 0))
+            frame_id = str(item.get("frame_id") or "")
+            caption = str(item.get("caption") or "关键画面截图").strip()
+            ocr_text = str(item.get("ocr_text") or "").strip()
+            image_name = f"{frame_id}.jpg" if frame_id else ""
+            sections.append("")
+            sections.append(f"### {timestamp} {caption}")
+            if image_name:
+                sections.append(f"![{timestamp} {caption}](frames/{image_name})")
+            if ocr_text:
+                sections.append("")
+                sections.append(f"- 画面文字：{ocr_text}")
+        return "\n".join(sections).strip()
+
+    def _public_visual_frame(self, frame: dict[str, object]) -> dict[str, object]:
+        return {key: value for key, value in frame.items() if not str(key).startswith("_")}
+
+    def _build_visual_context_payload(
+        self,
+        *,
+        task_id: str,
+        status: str,
+        source_kind: str,
+        frames: list[dict[str, object]],
+        observations: list[dict[str, object]],
+        warnings: list[str],
+        note_path: Path,
+        enhanced_note_path: Path,
+        frame_index_path: Path,
+        keyframe_plan_path: Path,
+        insert_plan_path: Path,
+        mode: str,
+        insert_count: int,
+    ) -> dict[str, object]:
+        return {
+            "schema_version": 1,
+            "task_id": task_id,
+            "status": status,
+            "source_kind": source_kind,
+            "provider": "openai_compatible" if self._visual_llm_available() else "none",
+            "model": self._visual_llm_config()[1] if self._visual_llm_available() else "",
+            "visual_note_path": note_path.name,
+            "visual_enhanced_note_path": enhanced_note_path.name,
+            "frame_index_path": frame_index_path.name,
+            "visual_keyframe_plan_path": keyframe_plan_path.name,
+            "visual_insert_plan_path": insert_plan_path.name,
+            "frame_count": len(observations),
+            "insert_count": insert_count,
+            "mode": mode,
+            "frames": frames,
+            "observations": observations,
+            "warnings": warnings,
+        }
+
+    def _write_json_atomic(self, path: Path, payload: dict[str, object]) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = path.with_suffix(path.suffix + ".tmp")
+        tmp_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        tmp_path.replace(path)
+
+    def _sha256_file(self, path: Path) -> str:
+        digest = hashlib.sha256()
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
 
     def _build_mindmap_messages(
         self,
