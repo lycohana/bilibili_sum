@@ -61,6 +61,13 @@ def local_appdata_dir() -> Path:
     local_appdata = os.environ.get("LOCALAPPDATA")
     if local_appdata:
         return Path(local_appdata)
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support"
+    if os.name != "nt":
+        xdg_data_home = os.environ.get("XDG_DATA_HOME")
+        if xdg_data_home:
+            return Path(xdg_data_home)
+        return Path.home() / ".local" / "share"
     return Path.home() / "AppData" / "Local"
 
 
@@ -174,26 +181,36 @@ def bundled_runtime_seed_metadata() -> dict[str, object]:
 
 
 def runtime_python_candidates(runtime_dir: Path) -> list[Path]:
-    """返回 Python 解释器候选路径列表。
-    
-    优先查找根目录的 python.exe（可重定位的解释器），
-    其次才是 Scripts 目录的 venv 启动器（可能硬编码了原始路径）。
-    """
+    """Return possible managed runtime Python interpreters for each platform."""
     return [
-        runtime_dir / "python.exe",           # 优先：根目录的可重定位解释器
-        runtime_dir / "Scripts" / "python.exe",  # 次选：venv 启动器（可能硬编码路径）
+        runtime_dir / "python.exe",
+        runtime_dir / "Scripts" / "python.exe",
+        runtime_dir / "bin" / "python",
+        runtime_dir / "bin" / "python3",
+        runtime_dir / "python",
     ]
 
 
 def runtime_scripts_dir(runtime_dir: Path) -> Path:
-    scripts_dir = runtime_dir / "Scripts"
-    if scripts_dir.exists():
-        return scripts_dir
+    candidates = [runtime_dir / "Scripts", runtime_dir / "bin"]
+    for scripts_dir in candidates:
+        if scripts_dir.exists():
+            return scripts_dir
     return runtime_dir
 
 
 def runtime_site_packages_dir(runtime_channel: str) -> Path:
-    return managed_runtime_dir(runtime_channel) / "Lib" / "site-packages"
+    runtime_dir = managed_runtime_dir(runtime_channel)
+    legacy_dir = runtime_dir / "Lib" / "site-packages"
+    if legacy_dir.exists():
+        return legacy_dir
+    lib_dir = runtime_dir / "lib"
+    if lib_dir.exists():
+        versioned_dirs = sorted(lib_dir.glob("python*/site-packages"))
+        if versioned_dirs:
+            return versioned_dirs[-1]
+    version = f"python{sys.version_info.major}.{sys.version_info.minor}"
+    return lib_dir / version / "site-packages"
 
 
 def runtime_stdlib_dir(runtime_channel: str) -> Path:
@@ -223,11 +240,11 @@ def runtime_library_dirs(runtime_channel: str) -> list[Path]:
         candidates.append(portable_dlls_dir)
     candidates.append(runtime_scripts_dir(runtime_dir))
 
-    torch_lib_dir = runtime_dir / "Lib" / "site-packages" / "torch" / "lib"
+    torch_lib_dir = runtime_site_packages_dir(runtime_channel) / "torch" / "lib"
     if torch_lib_dir.exists():
         candidates.append(torch_lib_dir)
 
-    nvidia_root = runtime_dir / "Lib" / "site-packages" / "nvidia"
+    nvidia_root = runtime_site_packages_dir(runtime_channel) / "nvidia"
     if nvidia_root.exists():
         for bin_dir in sorted(nvidia_root.rglob("bin")):
             if bin_dir.is_dir():
@@ -285,19 +302,21 @@ def runtime_python_executable(runtime_channel: str) -> Path | None:
 
 def ffmpeg_location() -> Path | None:
     """返回 ffmpeg 可执行文件的路径（不是目录）。"""
+    executable_name = "ffmpeg.exe" if os.name == "nt" else "ffmpeg"
+
     # 1. 环境变量指定的目录
     env_dir = os.environ.get("VIDEO_SUM_FFMPEG_DIR")
     if env_dir:
         candidate = Path(env_dir)
         if candidate.exists():
-            ffmpeg_exe = candidate / "ffmpeg.exe"
+            ffmpeg_exe = candidate / executable_name
             if ffmpeg_exe.exists():
                 return ffmpeg_exe
 
     # 2. 打包后的 bin 目录
     bundled_dir = bundled_bin_dir()
     if bundled_dir.exists():
-        ffmpeg_exe = bundled_dir / "ffmpeg.exe"
+        ffmpeg_exe = bundled_dir / executable_name
         if ffmpeg_exe.exists():
             return ffmpeg_exe
 
@@ -352,7 +371,7 @@ def activate_runtime_pythonpath(runtime_channel: str) -> None:
         is_managed_runtime_path = inside_runtime_root and (
             entry_path.name in {"stdlib", "DLLs"}
             or entry_path.parent == resolved_runtime_root
-            or (entry_path.name == "site-packages" and entry_path.parent.name == "Lib")
+            or entry_path.name == "site-packages"
         )
         if not is_managed_runtime_path:
             filtered.append(entry)

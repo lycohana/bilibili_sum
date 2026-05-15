@@ -73,8 +73,20 @@ export class AuthRequiredError extends Error {
   }
 }
 
+async function withDesktopAuth(options?: RequestInit): Promise<RequestInit | undefined> {
+  const token = await window.desktop?.backend?.getAccessToken?.();
+  if (!token) {
+    return options;
+  }
+  const headers = new Headers(options?.headers);
+  if (!headers.has("Authorization")) {
+    headers.set("Authorization", `Bearer ${token}`);
+  }
+  return { ...options, headers };
+}
+
 async function fetchJson<T>(url: string, options?: RequestInit): Promise<T> {
-  const response = await fetch(url, options);
+  const response = await fetch(url, await withDesktopAuth(options));
   if (!response.ok) {
     const text = await response.text();
     let detail = text || `Request failed: ${response.status}`;
@@ -437,12 +449,12 @@ export const api = {
     },
     options?: { signal?: AbortSignal },
   ) {
-    const response = await fetch("/api/v1/knowledge/ask/stream", {
+    const response = await fetch("/api/v1/knowledge/ask/stream", await withDesktopAuth({
       method: "POST",
       headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
       body: JSON.stringify(payload),
       signal: options?.signal,
-    });
+    }));
     if (!response.ok) {
       const text = await response.text();
       throw new Error(text || `Request failed: ${response.status}`);

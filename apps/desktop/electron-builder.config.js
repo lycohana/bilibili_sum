@@ -1,3 +1,19 @@
+const extraResources = [
+  {
+    from: "../../dist/BiliSum",
+    to: "backend/BiliSum"
+  },
+  process.platform === "darwin"
+    ? {
+        from: "../../apps/desktop/build/icon.icns",
+        to: "icon.icns"
+      }
+    : {
+        from: "../../apps/desktop/build/icon.ico",
+        to: "icon.ico"
+      }
+];
+
 module.exports = {
   appId: "com.bilisum.desktop",
   productName: "BiliSum",
@@ -9,16 +25,19 @@ module.exports = {
     "dist-electron/**/*",
     "announcement.md"
   ],
-  extraResources: [
-    {
-      "from": "../../dist/BiliSum",
-      "to": "backend/BiliSum"
-    },
-    {
-      "from": "../../apps/desktop/build/icon.ico",
-      "to": "icon.ico"
-    }
-  ],
+  extraResources,
+  mac: {
+    target: ["dmg"],
+    icon: "../../apps/desktop/build/icon.icns",
+    category: "public.app-category.productivity",
+    hardenedRuntime: false,
+    gatekeeperAssess: false,
+    identity: null
+  },
+  dmg: {
+    sign: false,
+    artifactName: "${productName}-${version}-${os}-${arch}.${ext}"
+  },
   win: {
     "target": [
       {

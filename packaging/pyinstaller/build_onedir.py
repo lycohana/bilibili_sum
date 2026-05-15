@@ -15,9 +15,35 @@ BUILD_ROOT = ROOT / "build" / "pyinstaller"
 BUILD_VENV_DIR = BUILD_ROOT / "build-venv"
 RUNTIME_DIR = BUILD_ROOT / "runtime" / "base"
 BIN_DIR = BUILD_ROOT / "bin"
-PROJECT_FFMPEG_DIR = ROOT / "tools" / "ffmpeg" / "win-x64"
 SPEC_PATH = ROOT / "packaging" / "pyinstaller" / "bilisum.spec"
 VERSION_FILE = ROOT / "VERSION"
+IS_WINDOWS = sys.platform == "win32"
+PROJECT_FFMPEG_DIR = ROOT / "tools" / "ffmpeg" / ("win-x64" if IS_WINDOWS else "macos")
+
+
+def executable_name(name: str) -> str:
+    return f"{name}.exe" if IS_WINDOWS else name
+
+
+def venv_python_candidates(venv_dir: Path) -> list[Path]:
+    return [
+        venv_dir / "Scripts" / "python.exe",
+        venv_dir / "python.exe",
+        venv_dir / "bin" / "python",
+        venv_dir / "bin" / "python3",
+        venv_dir / "python",
+    ]
+
+
+def site_packages_dir(python_exe: Path) -> Path:
+    result = subprocess.run(
+        [str(python_exe), "-c", "import sysconfig; print(sysconfig.get_path('purelib'))"],
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    return Path(result.stdout.strip())
 
 
 def run(command: list[str], cwd: Path | None = None) -> None:
@@ -45,31 +71,23 @@ def ensure_python_version() -> None:
 
 
 def runtime_python() -> Path:
-    candidates = [
-        RUNTIME_DIR / "Scripts" / "python.exe",
-        RUNTIME_DIR / "python.exe",
-    ]
-    for candidate in candidates:
+    for candidate in venv_python_candidates(RUNTIME_DIR):
         if candidate.exists():
             return candidate
-    raise FileNotFoundError("Managed runtime python.exe was not created.")
+    raise FileNotFoundError("Managed runtime python executable was not created.")
 
 
 def build_python() -> Path:
-    candidates = [
-        BUILD_VENV_DIR / "Scripts" / "python.exe",
-        BUILD_VENV_DIR / "python.exe",
-    ]
-    for candidate in candidates:
+    for candidate in venv_python_candidates(BUILD_VENV_DIR):
         if candidate.exists():
             return candidate
-    raise FileNotFoundError("Build virtualenv python.exe was not created.")
+    raise FileNotFoundError("Build virtualenv python executable was not created.")
 
 
 def create_build_venv() -> None:
     if BUILD_VENV_DIR.exists():
         remove_tree(BUILD_VENV_DIR)
-    builder = venv.EnvBuilder(with_pip=True, clear=True)
+    builder = venv.EnvBuilder(with_pip=True, clear=True, symlinks=False)
     builder.create(BUILD_VENV_DIR)
 
 
@@ -78,7 +96,7 @@ def create_runtime_seed() -> None:
         remove_tree(RUNTIME_DIR)
     RUNTIME_DIR.parent.mkdir(parents=True, exist_ok=True)
 
-    builder = venv.EnvBuilder(with_pip=True, clear=True)
+    builder = venv.EnvBuilder(with_pip=True, clear=True, symlinks=False)
     builder.create(RUNTIME_DIR)
     python_exe = runtime_python()
     run([str(python_exe), "-m", "pip", "install", "--upgrade", "pip", "setuptools", "wheel"])
@@ -96,8 +114,9 @@ def create_runtime_seed() -> None:
     # 清理运行时环境中不必要的包，减小打包体积
     cleanup_runtime_site_packages(python_exe)
     # 清理 direct_url.json 元数据，避免生产环境路径无效
-    cleanup_direct_url_metadata(RUNTIME_DIR / "Lib" / "site-packages")
-    make_portable_python_runtime(RUNTIME_DIR)
+    cleanup_direct_url_metadata(site_packages_dir(python_exe))
+    if IS_WINDOWS:
+        make_portable_python_runtime(RUNTIME_DIR)
     write_runtime_seed_metadata(RUNTIME_DIR)
 
 
@@ -185,7 +204,7 @@ def write_runtime_seed_metadata(runtime_dir: Path) -> None:
     version = VERSION_FILE.read_text(encoding="utf-8").strip() if VERSION_FILE.exists() else "0.0.0"
     payload = {
         "runtimeChannel": "base",
-        "runtimeLayout": "portable-cpython",
+        "runtimeLayout": "portable-cpython" if IS_WINDOWS else "venv",
         "appVersion": version,
         "pythonVersion": f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
     }
@@ -225,7 +244,7 @@ def cleanup_direct_url_metadata(site_packages: Path) -> None:
 
 def cleanup_runtime_site_packages(python_exe: Path) -> None:
     """删除运行时环境中不必要的包，减小打包体积。"""
-    site_packages = RUNTIME_DIR / "Lib" / "site-packages"
+    site_packages = site_packages_dir(python_exe)
     if not site_packages.exists():
         return
 
@@ -294,7 +313,7 @@ def copy_ffmpeg_binaries() -> None:
             "or a usable VIDEO_SUM_FFMPEG_DIR / system ffmpeg installation."
         )
 
-    for name in ("ffmpeg.exe", "ffprobe.exe"):
+    for name in (executable_name("ffmpeg"), executable_name("ffprobe")):
         source = source_dir / name
         if source.exists():
             shutil.copy2(source, BIN_DIR / name)
@@ -349,14 +368,14 @@ def resolve_ffmpeg_source_dir() -> Path | None:
 def ffmpeg_dir_candidates(ffmpeg_executable: Path) -> list[Path]:
     candidates = [ffmpeg_executable.parent]
     path_text = str(ffmpeg_executable).lower()
-    if "chocolatey\\bin\\ffmpeg.exe" in path_text:
+    if IS_WINDOWS and "chocolatey\\bin\\ffmpeg.exe" in path_text:
         candidates.insert(0, ffmpeg_executable.parent.parent / "lib" / "ffmpeg" / "tools" / "ffmpeg" / "bin")
     return [candidate.resolve() for candidate in candidates]
 
 
 def ffmpeg_dir_is_usable(directory: Path) -> bool:
-    ffmpeg_executable = directory / "ffmpeg.exe"
-    ffprobe_executable = directory / "ffprobe.exe"
+    ffmpeg_executable = directory / executable_name("ffmpeg")
+    ffprobe_executable = directory / executable_name("ffprobe")
     if not ffmpeg_executable.exists() or not ffprobe_executable.exists():
         return False
     return executable_runs(ffmpeg_executable) and executable_runs(ffprobe_executable)
@@ -404,7 +423,7 @@ def cleanup_build_site_packages(python_exe: Path) -> None:
     注意：这不会减小最终安装包体积（因为 PyInstaller 只收集依赖的模块），
     但可以减少警告和避免意外收集。
     """
-    site_packages = BUILD_VENV_DIR / "Lib" / "site-packages"
+    site_packages = site_packages_dir(python_exe)
     if not site_packages.exists():
         return
 

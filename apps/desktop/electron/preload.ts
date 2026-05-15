@@ -123,6 +123,7 @@ const desktop = {
     start: () => ipcRenderer.invoke("desktop:backend:start") as Promise<DesktopBackendStatus>,
     stop: () => ipcRenderer.invoke("desktop:backend:stop") as Promise<DesktopBackendStatus>,
     status: () => ipcRenderer.invoke("desktop:backend:status") as Promise<DesktopBackendStatus>,
+    getAccessToken: () => ipcRenderer.invoke("desktop:backend:get-access-token") as Promise<string>,
     onStatus: (listener: (status: DesktopBackendStatus) => void) => {
       const wrapped = (_event: unknown, payload: DesktopBackendStatus) => listener(payload);
       ipcRenderer.on("desktop:backend:status-changed", wrapped);

@@ -1002,9 +1002,9 @@ class RealPipelineRunner(PipelineRunner):
         env.setdefault("PYTHONIOENCODING", "utf-8")
         env.setdefault("PYTHONUTF8", "1")
         runtime_paths = [str(path) for path in runtime_library_dirs(self._settings.runtime_channel)]
-        ffmpeg_dir = ffmpeg_location()
-        if ffmpeg_dir is not None:
-            runtime_paths.append(str(ffmpeg_dir))
+        ffmpeg_exe = ffmpeg_location()
+        if ffmpeg_exe is not None:
+            runtime_paths.append(str(ffmpeg_exe.parent))
         env["VIDEO_SUM_DLL_PATHS"] = os.pathsep.join(runtime_paths)
         merged_path: list[str] = []
         for entry in [*runtime_paths, *(env.get("PATH", "").split(os.pathsep))]:

@@ -89,6 +89,7 @@ type DesktopBridge = {
     start(): Promise<DesktopBackendStatus>;
     stop(): Promise<DesktopBackendStatus>;
     status(): Promise<DesktopBackendStatus>;
+    getAccessToken(): Promise<string>;
     onStatus(listener: (status: DesktopBackendStatus) => void): () => void;
   };
   clipboard: {

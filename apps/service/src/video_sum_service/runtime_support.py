@@ -111,9 +111,9 @@ def runtime_subprocess_env(runtime_channel: str) -> dict[str, str]:
     env["PYTHONUTF8"] = "1"
 
     path_entries = [str(path) for path in runtime_library_dirs(runtime_channel)]
-    ffmpeg_dir = ffmpeg_location()
-    if ffmpeg_dir is not None:
-        path_entries.append(str(ffmpeg_dir))
+    ffmpeg_exe = ffmpeg_location()
+    if ffmpeg_exe is not None:
+        path_entries.append(str(ffmpeg_exe.parent))
 
     current_path = env.get("PATH", "")
     inherited_entries: list[str] = []
@@ -532,10 +532,16 @@ def sync_all_runtime_channels() -> dict[str, object]:
 
 def sync_runtime_base(target_dir: Path, base_dir: Path, runtime_channel: str) -> None:
     target_metadata = read_runtime_metadata(target_dir)
-    copy_runtime_item(base_dir / "stdlib", target_dir / "stdlib")
-    copy_runtime_item(base_dir / "DLLs", target_dir / "DLLs")
-    sync_runtime_lib(target_dir / "Lib", base_dir / "Lib")
-    sync_runtime_scripts(target_dir / "Scripts", base_dir / "Scripts")
+    for item in base_dir.iterdir():
+        if item.name == "video_sum_runtime.json":
+            continue
+        if item.name in {"Lib", "lib"}:
+            sync_runtime_lib(target_dir / item.name, item)
+            continue
+        if item.name in {"Scripts", "bin"}:
+            sync_runtime_scripts(target_dir / item.name, item)
+            continue
+        copy_runtime_item(item, target_dir / item.name)
 
     base_metadata = read_runtime_metadata(base_dir)
     (target_dir / "video_sum_runtime.json").write_text(
@@ -570,6 +576,9 @@ def sync_runtime_lib(target_lib_dir: Path, base_lib_dir: Path) -> None:
     for item in base_lib_dir.iterdir():
         if item.name == "site-packages":
             sync_runtime_site_packages(target_lib_dir / "site-packages", item)
+            continue
+        if item.is_dir() and (item / "site-packages").exists():
+            sync_runtime_lib(target_lib_dir / item.name, item)
             continue
         copy_runtime_item(item, target_lib_dir / item.name)
 

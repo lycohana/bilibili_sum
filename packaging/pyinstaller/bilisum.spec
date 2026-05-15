@@ -1,6 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 from pathlib import Path
 import os
+import sys
 
 from PyInstaller.utils.hooks import collect_submodules, copy_metadata
 
@@ -8,7 +9,7 @@ from PyInstaller.utils.hooks import collect_submodules, copy_metadata
 ROOT = Path.cwd().resolve()
 BUILD_ROOT = ROOT / "build" / "pyinstaller"
 WEB_STATIC_DIR = ROOT / "apps" / "web" / "static"
-ICON_PATH = ROOT / "apps" / "desktop" / "build" / "icon.ico"
+ICON_PATH = ROOT / "apps" / "desktop" / "build" / ("icon.ico" if sys.platform == "win32" else "icon.icns")
 RUNTIME_SEED_DIR = BUILD_ROOT / "runtime" / "base"
 BIN_DIR = BUILD_ROOT / "bin"
 

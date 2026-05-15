@@ -11,6 +11,9 @@
     "npx:test": "node packages/npx/bin/bilisum.js --version && cd packages/npx && npm pack --dry-run",
     "package:win": "npm --prefix apps/desktop run package:win",
     "package:win-notfront": "npm --prefix apps/desktop run package:win-notfront",
-    "build:win": "npm --prefix apps/desktop run package:win"
+    "package:mac": "npm --prefix apps/desktop run package:mac",
+    "package:mac-notfront": "npm --prefix apps/desktop run package:mac-notfront",
+    "build:win": "npm --prefix apps/desktop run package:win",
+    "build:mac": "npm --prefix apps/desktop run package:mac"
   }
 }

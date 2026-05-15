@@ -17,7 +17,9 @@
     "build:electron": "tsc -p tsconfig.electron.json",
     "build": "npm run typecheck && npm run build:renderer && npm run build:electron",
     "package:win": "powershell -ExecutionPolicy Bypass -File ../../packaging/desktop/build_windows.ps1",
-    "package:win-notfront": "powershell -ExecutionPolicy Bypass -File ../../packaging/desktop/build_windows.ps1 -SkipPrebuild"
+    "package:win-notfront": "powershell -ExecutionPolicy Bypass -File ../../packaging/desktop/build_windows.ps1 -SkipPrebuild",
+    "package:mac": "bash ../../packaging/desktop/build_macos.sh",
+    "package:mac-notfront": "bash ../../packaging/desktop/build_macos.sh --skip-prebuild"
   },
   "dependencies": {
     "@xyflow/react": "^12.10.2",
@@ -68,6 +70,20 @@
         "to": "icon.ico"
       }
     ],
+    "mac": {
+      "target": [
+        "dmg"
+      ],
+      "icon": "../../apps/desktop/build/icon.icns",
+      "category": "public.app-category.productivity",
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false,
+      "identity": null
+    },
+    "dmg": {
+      "sign": false,
+      "artifactName": "${productName}-${version}-${os}-${arch}.${ext}"
+    },
     "win": {
       "target": [
         {

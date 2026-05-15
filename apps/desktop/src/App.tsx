@@ -94,8 +94,15 @@ export function App() {
     let disposed = false;
     async function checkAuth() {
       if (window.desktop) {
-        setAuthenticated(true);
-        setAuthChecked(true);
+        try {
+          await api.createAuthSession(await window.desktop.backend.getAccessToken());
+        } catch {
+          // Auth headers are still attached to desktop fetches; session setup mainly supports EventSource.
+        }
+        if (!disposed) {
+          setAuthenticated(true);
+          setAuthChecked(true);
+        }
         return;
       }
       try {

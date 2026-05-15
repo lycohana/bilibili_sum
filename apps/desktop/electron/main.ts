@@ -130,9 +130,10 @@ const repoRoot = path.resolve(__dirname, "../../..");
 const rendererUrl = process.env.BILISUM_RENDERER_URL ?? process.env.BRIEFVID_RENDERER_URL ?? "http://127.0.0.1:5173";
 const backendUrl = "http://127.0.0.1:3838";
 const updaterConfigPath = path.join(process.resourcesPath, "app-update.yml");
+const iconFileName = process.platform === "darwin" ? "icon.icns" : "icon.ico";
 const iconPath = isDev
-  ? path.resolve(repoRoot, "apps/desktop/build/icon.ico")
-  : path.join(process.resourcesPath, "icon.ico");
+  ? path.resolve(repoRoot, "apps/desktop/build", iconFileName)
+  : path.join(process.resourcesPath, iconFileName);
 const preferencesPath = path.join(app.getPath("userData"), "desktop-preferences.json");
 const accessTokenPath = path.join(app.getPath("userData"), "access-token.json");
 const legacyUserDataPath = path.join(app.getPath("appData"), LEGACY_PRODUCT_NAME);
@@ -176,11 +177,17 @@ let downloadedUpdateVersion: string | null = null;
 let installRequestedAfterDownload = false;
 
 function getLocalAppDataDir() {
-  return process.env.LOCALAPPDATA || path.join(process.env.USERPROFILE || app.getPath("home"), "AppData", "Local");
+  if (process.platform === "win32") {
+    return process.env.LOCALAPPDATA || path.join(process.env.USERPROFILE || app.getPath("home"), "AppData", "Local");
+  }
+  if (process.platform === "darwin") {
+    return app.getPath("appData");
+  }
+  return process.env.XDG_DATA_HOME || path.join(app.getPath("home"), ".local", "share");
 }
 
 function currentLocalDataRoot() {
-  return path.join(getLocalAppDataDir(), APP_SLUG);
+  return process.env.VIDEO_SUM_APP_DATA_ROOT || path.join(getLocalAppDataDir(), APP_SLUG);
 }
 
 function legacyLocalDataRoot() {
@@ -227,24 +234,25 @@ function getServiceLogPath() {
   return path.join(currentLocalDataRoot(), "logs", "service.log");
 }
 
-function loadOrCreateDesktopAccessToken() {
-  const envToken = String(process.env.VIDEO_SUM_ACCESS_TOKEN || "").trim();
-  if (envToken) {
-    return envToken;
-  }
+function readAccessTokenFile(tokenPath: string, keys: string[]): string {
   try {
-    if (fs.existsSync(accessTokenPath)) {
-      const payload = JSON.parse(fs.readFileSync(accessTokenPath, "utf-8")) as { accessToken?: string; access_token?: string };
-      const existing = String(payload.accessToken || payload.access_token || "").trim();
-      if (existing) {
-        return existing;
+    if (!fs.existsSync(tokenPath)) {
+      return "";
+    }
+    const payload = JSON.parse(fs.readFileSync(tokenPath, "utf-8")) as Record<string, unknown>;
+    for (const key of keys) {
+      const token = String(payload[key] || "").trim();
+      if (token) {
+        return token;
       }
     }
   } catch (error) {
-    console.warn("[Auth] Failed to read desktop access token:", error);
+    console.warn(`[Auth] Failed to read access token file ${tokenPath}:`, error);
   }
+  return "";
+}
 
-  const token = crypto.randomBytes(32).toString("base64url");
+function writeDesktopAccessToken(token: string) {
   try {
     fs.mkdirSync(path.dirname(accessTokenPath), { recursive: true });
     fs.writeFileSync(
@@ -255,6 +263,43 @@ function loadOrCreateDesktopAccessToken() {
   } catch (error) {
     console.warn("[Auth] Failed to persist desktop access token:", error);
   }
+}
+
+function writeServiceAccessToken(tokenPath: string, token: string) {
+  try {
+    fs.mkdirSync(path.dirname(tokenPath), { recursive: true });
+    fs.writeFileSync(
+      tokenPath,
+      JSON.stringify({ access_token: token, created_at: new Date().toISOString() }, null, 2),
+      "utf-8",
+    );
+  } catch (error) {
+    console.warn(`[Auth] Failed to persist service access token ${tokenPath}:`, error);
+  }
+}
+
+function loadOrCreateDesktopAccessToken() {
+  const envToken = String(process.env.VIDEO_SUM_ACCESS_TOKEN || "").trim();
+  if (envToken) {
+    return envToken;
+  }
+
+  const serviceTokenPath = path.join(currentLocalDataRoot(), "data", "auth.json");
+  const serviceToken = readAccessTokenFile(serviceTokenPath, ["access_token", "accessToken"]);
+  if (serviceToken) {
+    writeDesktopAccessToken(serviceToken);
+    return serviceToken;
+  }
+
+  const existingDesktopToken = readAccessTokenFile(accessTokenPath, ["accessToken", "access_token"]);
+  if (existingDesktopToken) {
+    writeServiceAccessToken(serviceTokenPath, existingDesktopToken);
+    return existingDesktopToken;
+  }
+
+  const token = crypto.randomBytes(32).toString("base64url");
+  writeDesktopAccessToken(token);
+  writeServiceAccessToken(serviceTokenPath, token);
   return token;
 }
 
@@ -1361,6 +1406,7 @@ function getDevPythonPathEntries() {
 }
 
 function resolvePackagedBackend(): { command: string; args: string[]; cwd: string } {
+  const executableName = process.platform === "win32" ? "BiliSum.exe" : "BiliSum";
   const candidateRoots = [
     path.join(process.resourcesPath, "backend", "BiliSum"),
     path.join(path.dirname(process.execPath), "resources", "backend", "BiliSum"),
@@ -1368,8 +1414,15 @@ function resolvePackagedBackend(): { command: string; args: string[]; cwd: strin
   ];
 
   for (const backendRoot of candidateRoots) {
-    const command = path.join(backendRoot, "BiliSum.exe");
+    const command = path.join(backendRoot, executableName);
     if (fs.existsSync(command) && fs.existsSync(backendRoot)) {
+      if (process.platform !== "win32") {
+        try {
+          fs.chmodSync(command, 0o755);
+        } catch (error) {
+          console.warn("[Backend] Failed to mark packaged backend executable:", error);
+        }
+      }
       return {
         command,
         args: [],
@@ -1380,19 +1433,23 @@ function resolvePackagedBackend(): { command: string; args: string[]; cwd: strin
 
   throw new Error(
     [
-      "未找到内置后端文件 BiliSum.exe。",
-      "请确认安装目录下存在 resources\\backend\\BiliSum\\BiliSum.exe。",
+      `未找到内置后端文件 ${executableName}。`,
+      `请确认安装目录下存在 ${path.join("resources", "backend", "BiliSum", executableName)}。`,
       `当前 resourcesPath: ${process.resourcesPath}`,
     ].join(" "),
   );
 }
 
 function resolvePackagedWebStaticRoot(): string {
-  const candidateRoots = [
-    path.join(process.resourcesPath, "backend", "BiliSum", "_internal", "web", "static"),
-    path.join(path.dirname(process.execPath), "resources", "backend", "BiliSum", "_internal", "web", "static"),
-    path.join(path.dirname(app.getAppPath()), "backend", "BiliSum", "_internal", "web", "static"),
+  const backendRoots = [
+    path.join(process.resourcesPath, "backend", "BiliSum"),
+    path.join(path.dirname(process.execPath), "resources", "backend", "BiliSum"),
+    path.join(path.dirname(app.getAppPath()), "backend", "BiliSum"),
   ];
+  const candidateRoots = backendRoots.flatMap((backendRoot) => [
+    path.join(backendRoot, "_internal", "web", "static"),
+    path.join(backendRoot, "web", "static"),
+  ]);
 
   for (const staticRoot of candidateRoots) {
     if (fs.existsSync(path.join(staticRoot, "index.html"))) {
@@ -1676,6 +1733,7 @@ async function startBackend(): Promise<BackendStatus> {
       VIDEO_SUM_HOST: "127.0.0.1",
       VIDEO_SUM_PORT: "3838",
       VIDEO_SUM_ACCESS_TOKEN: getDesktopAccessToken(),
+      VIDEO_SUM_APP_DATA_ROOT: currentLocalDataRoot(),
       ...(isDev
         ? {
             PYTHONPATH: [
@@ -2306,6 +2364,7 @@ function registerIpcHandlers() {
   ipcMain.handle("desktop:backend:start", async () => startBackend());
   ipcMain.handle("desktop:backend:stop", async () => stopBackend());
   ipcMain.handle("desktop:backend:status", () => backendStatus);
+  ipcMain.handle("desktop:backend:get-access-token", () => getDesktopAccessToken());
   ipcMain.handle("desktop:clipboard:write-image", (_event, dataUrl: string) => {
     const image = nativeImage.createFromDataURL(dataUrl);
     if (image.isEmpty()) {
