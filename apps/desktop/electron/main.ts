@@ -2,6 +2,7 @@ import { ChildProcess, spawn, SpawnOptions } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import { createServer, IncomingMessage, Server, ServerResponse } from "node:http";
+import net from "node:net";
 import path from "node:path";
 import process from "node:process";
 import { Readable } from "node:stream";
@@ -134,6 +135,9 @@ const iconFileName = process.platform === "darwin" ? "icon.icns" : "icon.ico";
 const iconPath = isDev
   ? path.resolve(repoRoot, "apps/desktop/build", iconFileName)
   : path.join(process.resourcesPath, iconFileName);
+const fallbackIconPath = process.platform === "darwin"
+  ? path.join(process.resourcesPath, "app.asar.unpacked", "build", iconFileName)
+  : iconPath;
 const preferencesPath = path.join(app.getPath("userData"), "desktop-preferences.json");
 const accessTokenPath = path.join(app.getPath("userData"), "access-token.json");
 const legacyUserDataPath = path.join(app.getPath("appData"), LEGACY_PRODUCT_NAME);
@@ -176,6 +180,7 @@ let checkForUpdatesPromise: Promise<UpdateInfo> | null = null;
 let downloadUpdatePromise: Promise<UpdateInfo> | null = null;
 let downloadedUpdateVersion: string | null = null;
 let installRequestedAfterDownload = false;
+let quitAfterBackendStop = false;
 
 function getLocalAppDataDir() {
   if (process.platform === "win32") {
@@ -1312,7 +1317,7 @@ async function waitForBackendReady(timeoutMs = 60_000): Promise<boolean> {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     try {
-      const response = await fetch(`${backendUrl}/health`);
+      const response = await fetch(`${backendUrl}/health`, { headers: withBackendAuthHeaders() });
       if (response.ok) {
         updateBackendStatus({ ready: true, lastError: "" });
         return true;
@@ -1330,7 +1335,10 @@ async function probeBackendReady(timeoutMs = 300, updateStatus = true): Promise<
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const response = await fetch(`${backendUrl}/health`, { signal: controller.signal });
+    const response = await fetch(`${backendUrl}/health`, {
+      headers: withBackendAuthHeaders(),
+      signal: controller.signal,
+    });
     if (response.ok) {
       if (updateStatus) {
         updateBackendStatus({ ready: true, lastError: "" });
@@ -1343,6 +1351,25 @@ async function probeBackendReady(timeoutMs = 300, updateStatus = true): Promise<
     clearTimeout(timeout);
   }
   return false;
+}
+
+async function probeBackendPortBusy(timeoutMs = 300): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = net.createConnection({ host: "127.0.0.1", port: 3838 });
+    const timer = setTimeout(() => {
+      socket.destroy();
+      resolve(false);
+    }, timeoutMs);
+    socket.once("connect", () => {
+      clearTimeout(timer);
+      socket.destroy();
+      resolve(true);
+    });
+    socket.once("error", () => {
+      clearTimeout(timer);
+      resolve(false);
+    });
+  });
 }
 
 function resolveDevPython(): { command: string; args: string[]; cwd: string; forceHidden?: boolean } {
@@ -1691,8 +1718,7 @@ async function startBackend(): Promise<BackendStatus> {
     return { ...backendStatus, ready };
   }
 
-  const existingReady = isDev ? await probeBackendReady(300) : false;
-  if (existingReady) {
+  if (isDev && await probeBackendReady(300)) {
     updateBackendStatus({
       running: true,
       ready: true,
@@ -1700,6 +1726,17 @@ async function startBackend(): Promise<BackendStatus> {
       lastError: "",
     });
     return { ...backendStatus, running: true, ready: true, pid: null, lastError: "" };
+  }
+  if (!isDev && await probeBackendPortBusy(300)) {
+    const message = "BiliSum 服务端口已被占用，请退出旧版 BiliSum 后重试。";
+    updateBackendStatus({
+      running: false,
+      ready: false,
+      pid: null,
+      lastError: message,
+    });
+    loadSplash(message);
+    return backendStatus;
   }
 
   let target: { command: string; args: string[]; cwd: string; forceHidden?: boolean };
@@ -1909,8 +1946,13 @@ async function loadApplication() {
 }
 
 function getTrayImage() {
-  const image = nativeImage.createFromPath(iconPath);
-  return image.isEmpty() ? nativeImage.createFromPath(iconPath) : image;
+  for (const candidate of [iconPath, fallbackIconPath]) {
+    const image = nativeImage.createFromPath(candidate);
+    if (!image.isEmpty()) {
+      return image;
+    }
+  }
+  return nativeImage.createEmpty();
 }
 
 function setAutoLaunch(enabled: boolean): boolean {
@@ -2500,7 +2542,16 @@ app.whenReady().then(async () => {
   });
 });
 
-app.on("before-quit", () => {
+app.on("before-quit", (event) => {
+  if (backendProcess && !quitAfterBackendStop) {
+    event.preventDefault();
+    quitAfterBackendStop = true;
+    void stopBackend().finally(() => {
+      forceQuit = true;
+      app.quit();
+    });
+    return;
+  }
   forceQuit = true;
   frontendStaticServer?.close();
   if (backendProcess && !backendProcess.killed) {

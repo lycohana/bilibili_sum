@@ -519,6 +519,8 @@ def test_ensure_runtime_channel_syncs_base_preserves_cuda(
     (gpu_dir / "vcruntime140.dll").write_text("gpu-vcruntime", encoding="utf-8")
     (base_dir / "python312._pth").write_text("base-pth", encoding="utf-8")
     (gpu_dir / "python312._pth").write_text("gpu-pth", encoding="utf-8")
+    (base_dir / "pyvenv.cfg").write_text("base-venv", encoding="utf-8")
+    (gpu_dir / "pyvenv.cfg").write_text("old-venv", encoding="utf-8")
     (base_stdlib / "filecmp.py").write_text("base-stdlib", encoding="utf-8")
     (gpu_stdlib / "filecmp.py").write_text("old-stdlib", encoding="utf-8")
     (base_dlls / "_sqlite3.pyd").write_text("base-dll", encoding="utf-8")
@@ -603,14 +605,15 @@ def test_ensure_runtime_channel_syncs_base_preserves_cuda(
     metadata = runtime_support.read_runtime_metadata(gpu_dir)
 
     assert result == gpu_dir
-    assert (gpu_dir / "python.exe").read_text(encoding="utf-8") == "gpu-python"
-    assert (gpu_dir / "pythonw.exe").read_text(encoding="utf-8") == "gpu-pythonw"
-    assert (gpu_dir / "python3.dll").read_text(encoding="utf-8") == "gpu-python3-dll"
-    assert (gpu_dir / "python312.dll").read_text(encoding="utf-8") == "gpu-python312-dll"
-    assert (gpu_dir / "vcruntime140.dll").read_text(encoding="utf-8") == "gpu-vcruntime"
-    assert (gpu_dir / "python312._pth").read_text(encoding="utf-8") == "gpu-pth"
-    assert (gpu_stdlib / "filecmp.py").read_text(encoding="utf-8") == "old-stdlib"
-    assert (gpu_dlls / "_sqlite3.pyd").read_text(encoding="utf-8") == "old-dll"
+    assert (gpu_dir / "python.exe").read_text(encoding="utf-8") == "base-python"
+    assert (gpu_dir / "pythonw.exe").read_text(encoding="utf-8") == "base-pythonw"
+    assert (gpu_dir / "python3.dll").read_text(encoding="utf-8") == "base-python3-dll"
+    assert (gpu_dir / "python312.dll").read_text(encoding="utf-8") == "base-python312-dll"
+    assert (gpu_dir / "vcruntime140.dll").read_text(encoding="utf-8") == "base-vcruntime"
+    assert (gpu_dir / "python312._pth").read_text(encoding="utf-8") == "base-pth"
+    assert not (gpu_dir / "pyvenv.cfg").exists()
+    assert (gpu_stdlib / "filecmp.py").read_text(encoding="utf-8") == "base-stdlib"
+    assert (gpu_dlls / "_sqlite3.pyd").read_text(encoding="utf-8") == "base-dll"
     assert (gpu_site_packages / "torch" / "cuda_marker.txt").exists()
     assert not (gpu_site_packages / "torch" / "cpu_marker.txt").exists()
     assert (gpu_site_packages / "nvidia_cublas_cu12-0.9.0.dist-info").exists()
@@ -661,6 +664,7 @@ def test_ensure_runtime_channel_syncs_base_preserves_macos_runtime(
     (gpu_lib / "libpython3.12.dylib").write_text("gpu-libpython", encoding="utf-8")
     (base_dir / "pythonpath.pth").write_text("base-pythonpath", encoding="utf-8")
     (gpu_dir / "pythonpath.pth").write_text("gpu-pythonpath", encoding="utf-8")
+    (gpu_dir / "pyvenv.cfg").write_text("old-venv", encoding="utf-8")
     (base_stdlib / "filecmp.py").write_text("base-stdlib", encoding="utf-8")
     (gpu_stdlib / "filecmp.py").write_text("gpu-stdlib", encoding="utf-8")
     (base_site_packages / "video_sum_service").mkdir()
@@ -720,9 +724,10 @@ def test_ensure_runtime_channel_syncs_base_preserves_macos_runtime(
 
     assert result == gpu_dir
     assert (gpu_bin / "python").read_text(encoding="utf-8") == "gpu-python"
-    assert (gpu_lib / "libpython3.12.dylib").read_text(encoding="utf-8") == "gpu-libpython"
-    assert (gpu_dir / "pythonpath.pth").read_text(encoding="utf-8") == "gpu-pythonpath"
-    assert (gpu_stdlib / "filecmp.py").read_text(encoding="utf-8") == "gpu-stdlib"
+    assert (gpu_lib / "libpython3.12.dylib").read_text(encoding="utf-8") == "base-libpython"
+    assert (gpu_dir / "pythonpath.pth").read_text(encoding="utf-8") == "base-pythonpath"
+    assert not (gpu_dir / "pyvenv.cfg").exists()
+    assert (gpu_stdlib / "filecmp.py").read_text(encoding="utf-8") == "base-stdlib"
     assert (
         (gpu_site_packages / "video_sum_service" / "__init__.py").read_text(encoding="utf-8")
         == "version = 'new'"

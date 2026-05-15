@@ -25,6 +25,20 @@ repo_root="$(cd "$script_dir/../.." && pwd)"
 desktop_dir="$repo_root/apps/desktop"
 web_static_validation_script="$repo_root/scripts/validate_web_static_assets.js"
 
+machine_arch="$(uname -m)"
+case "$machine_arch" in
+  arm64)
+    electron_builder_arch="--arm64"
+    ;;
+  x86_64)
+    electron_builder_arch="--x64"
+    ;;
+  *)
+    echo "Unsupported macOS build architecture: $machine_arch" >&2
+    exit 1
+    ;;
+esac
+
 uv python install 3.12
 python312="$(uv python find --managed-python 3.12 | tr -d '\r')"
 if [[ -z "$python312" ]]; then
@@ -124,4 +138,4 @@ node "$web_static_validation_script"
 npm run build:electron
 
 export CSC_IDENTITY_AUTO_DISCOVERY=false
-npx electron-builder --config electron-builder.config.js --mac --publish=never
+npx electron-builder --config electron-builder.config.js --mac "$electron_builder_arch" --publish=never

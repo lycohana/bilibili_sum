@@ -67,7 +67,9 @@ _RUNTIME_EXTENSION_PACKAGE_KEYS: set[str] = {
     "chromadb",
     "sentence_transformers",
 }
-_RUNTIME_ROOT_APP_DIRS: frozenset[str] = frozenset({"Lib", "lib", "Scripts", "bin"})
+_RUNTIME_ROOT_APP_DIRS: frozenset[str] = frozenset({"Lib", "lib", "Scripts", "bin", "DLLs", "stdlib"})
+_RUNTIME_ROOT_APP_FILES: frozenset[str] = frozenset({"pythonpath.pth"})
+_RUNTIME_ROOT_STALE_FILES: frozenset[str] = frozenset({"pyvenv.cfg"})
 
 
 def _split_env_urls(raw_value: str | None) -> list[str]:
@@ -539,7 +541,7 @@ def sync_runtime_base(target_dir: Path, base_dir: Path, runtime_channel: str) ->
     for item in base_dir.iterdir():
         if item.name == "video_sum_runtime.json":
             continue
-        if item.name not in _RUNTIME_ROOT_APP_DIRS:
+        if not runtime_root_item_should_sync(item):
             continue
         if item.name in {"Lib", "lib"}:
             sync_runtime_lib(target_dir / item.name, item)
@@ -548,6 +550,8 @@ def sync_runtime_base(target_dir: Path, base_dir: Path, runtime_channel: str) ->
             sync_runtime_scripts(target_dir / item.name, item)
             continue
         copy_runtime_item(item, target_dir / item.name)
+
+    remove_stale_runtime_root_items(target_dir, base_dir)
 
     base_metadata = read_runtime_metadata(base_dir)
     (target_dir / "video_sum_runtime.json").write_text(
@@ -574,6 +578,27 @@ def runtime_metadata_matches_base(target_metadata: dict[str, object], base_metad
     )
 
 
+def runtime_root_item_should_sync(item: Path) -> bool:
+    name = item.name
+    lower_name = name.lower()
+    if name in _RUNTIME_ROOT_APP_DIRS or name in _RUNTIME_ROOT_APP_FILES:
+        return True
+    if lower_name in {"python.exe", "pythonw.exe", "python3.dll"}:
+        return True
+    if lower_name.startswith("python") and (lower_name.endswith(".dll") or lower_name.endswith("._pth")):
+        return True
+    if lower_name.startswith("vcruntime") and lower_name.endswith(".dll"):
+        return True
+    return False
+
+
+def remove_stale_runtime_root_items(target_dir: Path, base_dir: Path) -> None:
+    for name in _RUNTIME_ROOT_STALE_FILES:
+        target = target_dir / name
+        if target.exists():
+            target.unlink()
+
+
 def sync_runtime_scripts(target_scripts_dir: Path, base_scripts_dir: Path) -> None:
     if not base_scripts_dir.exists():
         return
@@ -593,6 +618,8 @@ def sync_runtime_lib(target_lib_dir: Path, base_lib_dir: Path) -> None:
             continue
         if item.is_dir() and (item / "site-packages").exists():
             sync_runtime_lib(target_lib_dir / item.name, item)
+            continue
+        copy_runtime_item(item, target_lib_dir / item.name)
 
 
 def sync_runtime_site_packages(

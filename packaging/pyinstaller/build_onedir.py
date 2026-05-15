@@ -423,6 +423,103 @@ def copy_ffmpeg_binaries() -> None:
         source = source_dir / name
         if source.exists():
             shutil.copy2(source, BIN_DIR / name)
+    copy_macos_ffmpeg_libraries(source_dir)
+
+
+def copy_macos_ffmpeg_libraries(source_dir: Path) -> None:
+    if not IS_MACOS:
+        return
+    required_libraries = resolve_macos_ffmpeg_libraries(
+        [source_dir / executable_name("ffmpeg"), source_dir / executable_name("ffprobe")]
+    )
+    if not required_libraries:
+        return
+    lib_dir = BIN_DIR / "lib"
+    lib_dir.mkdir(parents=True, exist_ok=True)
+    for library in required_libraries:
+        shutil.copy2(library, lib_dir / library.name)
+    for executable in (BIN_DIR / executable_name("ffmpeg"), BIN_DIR / executable_name("ffprobe")):
+        rewrite_macos_binary_library_paths(executable, lib_dir, "@executable_path/lib")
+    for library in lib_dir.glob("*.dylib"):
+        run(["install_name_tool", "-id", f"@rpath/{library.name}", str(library)])
+        rewrite_macos_binary_library_paths(library, lib_dir, "@loader_path")
+
+
+def resolve_macos_ffmpeg_libraries(seed_binaries: list[Path]) -> list[Path]:
+    resolved: list[Path] = []
+    queue = [binary for binary in seed_binaries if binary.exists()]
+    seen: set[Path] = set()
+    while queue:
+        binary = queue.pop(0).resolve()
+        if binary in seen:
+            continue
+        seen.add(binary)
+        for library in macos_linked_libraries(binary):
+            if library in resolved:
+                continue
+            resolved.append(library)
+            queue.append(library)
+    return resolved
+
+
+def macos_linked_libraries(binary: Path) -> list[Path]:
+    result = subprocess.run(
+        ["otool", "-L", str(binary)],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    libraries: list[Path] = []
+    for raw_line in result.stdout.splitlines()[1:]:
+        library_ref = raw_line.strip().split(" ", 1)[0]
+        if not library_ref.startswith(("/opt/homebrew/", "/usr/local/")):
+            continue
+        library = Path(library_ref)
+        if library.exists():
+            libraries.append(library.resolve())
+    return libraries
+
+
+def rewrite_macos_binary_library_paths(binary: Path, lib_dir: Path, rpath: str) -> None:
+    if not binary.exists():
+        return
+    add_macos_rpath(binary, rpath)
+    for library in macos_linked_libraries(binary):
+        bundled_library = lib_dir / library.name
+        if bundled_library.exists():
+            run(["install_name_tool", "-change", str(library), f"@rpath/{library.name}", str(binary)])
+
+
+def add_macos_rpath(binary: Path, rpath: str) -> None:
+    if rpath in macos_rpaths(binary):
+        return
+    run(["install_name_tool", "-add_rpath", rpath, str(binary)])
+
+
+def macos_rpaths(binary: Path) -> set[str]:
+    result = subprocess.run(
+        ["otool", "-l", str(binary)],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    rpaths: set[str] = set()
+    lines = result.stdout.splitlines()
+    for index, line in enumerate(lines):
+        if line.strip() != "cmd LC_RPATH":
+            continue
+        for detail in lines[index + 1 : index + 6]:
+            detail = detail.strip()
+            if detail.startswith("path "):
+                rpaths.add(detail.split(" ", 2)[1])
+                break
+    return rpaths
 
 
 def resolve_ffmpeg_source_dir() -> Path | None:
