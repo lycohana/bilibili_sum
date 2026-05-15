@@ -30,7 +30,7 @@ from video_sum_infra.llm import (
     ANTHROPIC_API_VERSION,
     anthropic_messages_url,
     build_anthropic_messages_payload,
-    extract_text_from_content_blocks,
+    extract_llm_message_content,
     is_anthropic_llm,
     normalize_openai_compatible_model_name,
     openai_chat_completions_url,
@@ -1589,16 +1589,7 @@ class RealPipelineRunner(PipelineRunner):
     def _extract_llm_response_content(self, response_json: object) -> str:
         if not isinstance(response_json, dict):
             raise VideoSumError("LLM returned an unexpected response payload.")
-        content = extract_text_from_content_blocks(response_json.get("content"))
-        if content:
-            return content
-        try:
-            message = response_json["choices"][0]["message"]
-        except (KeyError, IndexError, TypeError) as exc:
-            raise VideoSumError("LLM returned no readable message content.") from exc
-        if not isinstance(message, dict):
-            raise VideoSumError("LLM returned no readable message content.")
-        content = extract_text_from_content_blocks(message.get("content"))
+        content = extract_llm_message_content(response_json)
         if content:
             return content
         raise VideoSumError("LLM returned no readable message content.")
@@ -1672,6 +1663,7 @@ class RealPipelineRunner(PipelineRunner):
             "messages": messages,
             "response_format": {"type": "json_object"},
             "enable_thinking": False,
+            "chat_template_kwargs": {"enable_thinking": False},
         }
 
     def _build_aggregate_series_summary_payload(
@@ -1687,6 +1679,7 @@ class RealPipelineRunner(PipelineRunner):
             "messages": messages,
             "response_format": {"type": "json_object"},
             "enable_thinking": False,
+            "chat_template_kwargs": {"enable_thinking": False},
         }
 
     def _build_aggregate_series_summary_messages(
@@ -1988,6 +1981,7 @@ P 数索引：
             "messages": messages,
             "response_format": {"type": "json_object"},
             "enable_thinking": False,
+            "chat_template_kwargs": {"enable_thinking": False},
         }
 
     def _generate_knowledge_note_with_llm(
@@ -2151,6 +2145,7 @@ P 数索引：
             "messages": messages,
             "response_format": {"type": "json_object"},
             "enable_thinking": False,
+            "chat_template_kwargs": {"enable_thinking": False},
         }
 
     def _generate_mindmap_with_llm(

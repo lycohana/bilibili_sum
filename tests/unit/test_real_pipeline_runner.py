@@ -617,6 +617,63 @@ def test_llm_json_request_normalizes_mimo_model(monkeypatch: pytest.MonkeyPatch,
     assert calls[0]["json"]["model"] == "mimo-v2.5-pro"
 
 
+def test_llm_json_request_accepts_choice_text_response(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    runner = RealPipelineRunner(
+        PipelineSettings(
+            tasks_dir=tmp_path,
+            llm_enabled=True,
+            llm_api_key="test-key",
+            llm_base_url="https://api.example.com/v1",
+            llm_model="test-model",
+        )
+    )
+
+    class FakeResponse:
+        status_code = 200
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, object]:
+            return {"choices": [{"text": '{"overview":"ok from text"}'}]}
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def __enter__(self) -> "FakeClient":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def post(self, url: str, headers: dict[str, str], json: dict[str, object]) -> FakeResponse:
+            return FakeResponse()
+
+    monkeypatch.setattr("video_sum_core.pipeline.real.httpx.Client", FakeClient)
+
+    result = runner._request_llm_json(
+        base_url="https://api.example.com/v1",
+        payload={"model": "test-model", "messages": []},
+    )
+
+    assert result["overview"] == "ok from text"
+
+
+def test_llm_summary_payload_disables_thinking_in_chat_template(tmp_path: Path) -> None:
+    runner = RealPipelineRunner(PipelineSettings(tasks_dir=tmp_path, llm_model="test-model"))
+
+    payload = runner._build_llm_summary_payload(
+        title="标题",
+        transcript_excerpt="[00:00] 内容",
+        segments_excerpt='[{"start":0,"text":"内容"}]',
+    )
+
+    assert payload["response_format"] == {"type": "json_object"}
+    assert payload["enable_thinking"] is False
+    assert payload["chat_template_kwargs"] == {"enable_thinking": False}
+
+
 def test_llm_json_request_accepts_anthropic_messages_response(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     runner = RealPipelineRunner(
         PipelineSettings(
