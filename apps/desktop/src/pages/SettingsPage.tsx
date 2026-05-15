@@ -91,6 +91,11 @@ function isMaskedApiKey(value: string | undefined | null) {
   return String(value || "").trim() === MASKED_API_KEY;
 }
 
+function hasUsableApiKey(value: string | undefined | null, configured: boolean | undefined) {
+  const trimmed = String(value || "").trim();
+  return Boolean(configured || (trimmed && !isMaskedApiKey(trimmed)));
+}
+
 function maskConfiguredApiKeys(settings: ServiceSettings | null): ServiceSettings | null {
   if (!settings) {
     return settings;
@@ -131,6 +136,7 @@ const SETTINGS_SEARCH_ITEMS: SettingsSearchItem[] = [
   { category: "knowledge", targetKey: "knowledge_enabled", title: "启用知识库", description: "开启知识库索引和问答能力。", keywords: ["知识库", "knowledge", "rag", "索引", "问答"] },
   { category: "knowledge", targetKey: "knowledge_dependencies", title: "知识库依赖", description: "安装和检查知识库扩展依赖。", keywords: ["依赖", "安装", "runtime", "faiss", "向量"] },
   { category: "knowledge", targetKey: "knowledge_llm_mode", title: "知识库 LLM 来源", description: "跟随主 LLM 或使用独立配置。", keywords: ["知识库", "llm", "来源", "独立配置"] },
+  { category: "knowledge", targetKey: "knowledge_llm_provider", title: "知识库 LLM 提供商", description: "独立知识库 LLM 服务类型。", keywords: ["知识库", "provider", "openai", "anthropic", "提供商"] },
   { category: "knowledge", targetKey: "knowledge_llm_base_url", title: "知识库 API Base URL", description: "独立知识库 LLM API 地址。", keywords: ["知识库", "base url", "api", "openai"] },
   { category: "knowledge", targetKey: "knowledge_llm_api_key", title: "知识库 API Key", description: "独立知识库 LLM API 密钥。", keywords: ["知识库", "key", "apikey", "密钥"] },
   { category: "knowledge", targetKey: "knowledge_llm_model", title: "知识库模型名称", description: "独立知识库 LLM 模型名。", keywords: ["知识库", "model", "模型", "问答"] },
@@ -496,11 +502,13 @@ export function SettingsPage({
       .filter((item): item is SettingsSearchItem & { categoryLabel: string } => Boolean(item))
       .slice(0, 8)
     : [];
-  const llmReady = Boolean(form?.llm_enabled && form?.llm_api_key_configured);
+  const llmApiKeyReady = hasUsableApiKey(form?.llm_api_key, form?.llm_api_key_configured);
+  const knowledgeLlmApiKeyReady = hasUsableApiKey(form?.knowledge_llm_api_key, form?.knowledge_llm_api_key_configured);
+  const llmReady = Boolean(form?.llm_enabled && llmApiKeyReady);
   const knowledgeLlmUsesCustom = String(form?.knowledge_llm_mode || "same_as_main").trim().toLowerCase() === "custom";
   const knowledgeLlmReady = knowledgeLlmUsesCustom
-    ? Boolean(form?.knowledge_llm_enabled && String(form?.knowledge_llm_base_url || "").trim() && String(form?.knowledge_llm_model || "").trim())
-    : Boolean(form?.llm_enabled && String(form?.llm_base_url || "").trim() && String(form?.llm_model || "").trim());
+    ? Boolean(form?.knowledge_llm_enabled && knowledgeLlmApiKeyReady && String(form?.knowledge_llm_base_url || "").trim() && String(form?.knowledge_llm_model || "").trim())
+    : Boolean(form?.llm_enabled && llmApiKeyReady && String(form?.llm_base_url || "").trim() && String(form?.llm_model || "").trim());
   const autoMindMapReady = Boolean(form?.auto_generate_mindmap);
   const currentVersion = desktop.version || snapshot.systemInfo?.application?.version || "-";
   const asrReady =
@@ -867,6 +875,7 @@ export function SettingsPage({
       const response = await api.testLlmConnection({
         llm_test_scope: "knowledge",
         llm_enabled: form.knowledge_llm_enabled,
+        llm_provider: form.knowledge_llm_provider,
         llm_base_url: form.knowledge_llm_base_url,
         llm_model: form.knowledge_llm_model,
         ...(form.knowledge_llm_api_key.trim() && !isMaskedApiKey(form.knowledge_llm_api_key) ? { llm_api_key: form.knowledge_llm_api_key } : {}),
@@ -966,6 +975,9 @@ export function SettingsPage({
         if (!String(form.knowledge_llm_base_url || "").trim()) {
           return { category: "knowledge", targetKey: "knowledge_llm_base_url" };
         }
+        if (!hasUsableApiKey(form.knowledge_llm_api_key, form.knowledge_llm_api_key_configured)) {
+          return { category: "knowledge", targetKey: "knowledge_llm_api_key" };
+        }
         if (!String(form.knowledge_llm_model || "").trim()) {
           return { category: "knowledge", targetKey: "knowledge_llm_model" };
         }
@@ -977,6 +989,9 @@ export function SettingsPage({
       if (!String(form.llm_base_url || "").trim()) {
         return { category: "generation", targetKey: "llm_base_url" };
       }
+      if (!hasUsableApiKey(form.llm_api_key, form.llm_api_key_configured)) {
+        return { category: "generation", targetKey: "llm_api_key" };
+      }
       if (!String(form.llm_model || "").trim()) {
         return { category: "generation", targetKey: "llm_model" };
       }
@@ -986,7 +1001,7 @@ export function SettingsPage({
       if (!String(form.llm_base_url || "").trim()) {
         return { category: "generation", targetKey: "llm_base_url" };
       }
-      if (!form.llm_api_key_configured && !String(form.llm_api_key || "").trim()) {
+      if (!hasUsableApiKey(form.llm_api_key, form.llm_api_key_configured)) {
         return { category: "generation", targetKey: "llm_api_key" };
       }
       if (!String(form.llm_model || "").trim()) {
@@ -1890,10 +1905,27 @@ export function SettingsPage({
                     {form.knowledge_llm_enabled ? (
                       <>
                         <label
+                          className={`settings-input-group settings-focus-target ${activeFocusTarget === "knowledge_llm_provider" ? "is-highlighted" : ""}`}
+                          ref={registerFocusTarget("knowledge_llm_provider") as (node: HTMLLabelElement | null) => void}
+                        >
+                          <span className="settings-input-label">LLM 提供商</span>
+                          <select
+                            className="settings-select-field"
+                            value={form.knowledge_llm_provider || "openai-compatible"}
+                            disabled={!form.knowledge_enabled}
+                            onChange={(e) => updateForm({ ...form, knowledge_llm_provider: e.target.value })}
+                          >
+                            <option value="openai-compatible">OpenAI Compatible</option>
+                            <option value="openai">OpenAI</option>
+                            <option value="anthropic">Anthropic</option>
+                            <option value="custom">自定义</option>
+                          </select>
+                        </label>
+                        <label
                           className={`settings-input-group settings-focus-target ${activeFocusTarget === "knowledge_llm_base_url" ? "is-highlighted" : ""}`}
                           ref={registerFocusTarget("knowledge_llm_base_url") as (node: HTMLLabelElement | null) => void}
                         >
-                          <span className="settings-input-label">知识库 API Base URL</span>
+                          <span className="settings-input-label">API Base URL</span>
                           <input
                             className="settings-input-field"
                             value={form.knowledge_llm_base_url}
@@ -1901,12 +1933,13 @@ export function SettingsPage({
                             onChange={(e) => updateForm({ ...form, knowledge_llm_base_url: e.target.value })}
                             placeholder="https://api.openai.com/v1"
                           />
+                          <span className="settings-input-caption">知识库问答与自动打标 LLM API 的基础 URL 地址。</span>
                         </label>
                         <label
                           className={`settings-input-group settings-focus-target ${activeFocusTarget === "knowledge_llm_api_key" ? "is-highlighted" : ""}`}
                           ref={registerFocusTarget("knowledge_llm_api_key") as (node: HTMLLabelElement | null) => void}
                         >
-                          <span className="settings-input-label">知识库 API Key</span>
+                          <span className="settings-input-label">API Key</span>
                           <input
                             className="settings-input-field"
                             type="password"
@@ -1916,25 +1949,27 @@ export function SettingsPage({
                             onChange={(e) => updateForm({ ...form, knowledge_llm_api_key: e.target.value })}
                             placeholder="sk-..."
                           />
+                          <span className="settings-input-caption">知识库 LLM 服务的 API 密钥。</span>
                         </label>
                         <label
                           className={`settings-input-group settings-focus-target ${activeFocusTarget === "knowledge_llm_model" ? "is-highlighted" : ""}`}
                           ref={registerFocusTarget("knowledge_llm_model") as (node: HTMLLabelElement | null) => void}
                         >
-                          <span className="settings-input-label">知识库模型名称</span>
+                          <span className="settings-input-label">模型名称</span>
                           <input
                             className="settings-input-field"
                             value={form.knowledge_llm_model}
                             disabled={!form.knowledge_enabled}
                             onChange={(e) => updateForm({ ...form, knowledge_llm_model: e.target.value })}
-                            placeholder="gpt-4o-mini / qwen-plus"
+                            placeholder="gpt-4o-mini / claude-3-haiku"
                           />
+                          <span className="settings-input-caption">要用于知识库问答和自动打标的 LLM 模型名称。</span>
                         </label>
                         <div className="settings-inline-actions">
                           <button className="secondary-button" type="button" disabled={llmTestBusy || !form.knowledge_enabled} onClick={() => void testKnowledgeLlmConnection()}>
                             {llmTestBusy ? "测试中..." : "测试知识库 LLM"}
                           </button>
-                          <span className="settings-input-caption">使用当前独立知识库配置发起一次临时测试，不会保存设置。</span>
+                          <span className="settings-input-caption">使用当前表单中的 Base URL、API Key 和模型名临时请求一次，并校验是否能返回合法 JSON，不会保存设置。</span>
                         </div>
                       </>
                     ) : null}
@@ -1942,7 +1977,7 @@ export function SettingsPage({
                 ) : (
                   <div className={`settings-inline-alert ${knowledgeLlmReady ? "success" : "warning"}`}>
                     <strong>{knowledgeLlmReady ? "知识库当前跟随主 LLM" : "知识库当前跟随主 LLM，但主 LLM 还未补全"}</strong>
-                    <span>{knowledgeLlmReady ? "自动打标和问答会直接复用主 LLM 配置。" : "请先启用主 LLM，并补全 Base URL 与模型名，或切换为独立配置。"}</span>
+                    <span>{knowledgeLlmReady ? "自动打标和问答会直接复用主 LLM 配置。" : "请先启用主 LLM，并补全 API Key、Base URL 与模型名，或切换为独立配置。"}</span>
                   </div>
                 )}
               </div>

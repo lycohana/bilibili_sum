@@ -67,6 +67,7 @@ class SettingsUpdatePayload(BaseModel):
     llm_test_scope: Literal["main", "knowledge"] | None = None
     knowledge_llm_mode: str | None = None
     knowledge_llm_enabled: bool | None = None
+    knowledge_llm_provider: str | None = None
     knowledge_llm_base_url: str | None = None
     knowledge_llm_model: str | None = None
     knowledge_llm_api_key: str | None = None

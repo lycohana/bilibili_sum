@@ -35,14 +35,15 @@ class KnowledgeLlmStreamEvent:
 
 def resolve_knowledge_llm_settings(settings: ServiceSettings) -> tuple[bool, str, str, str, str]:
     mode = str(getattr(settings, "knowledge_llm_mode", "same_as_main") or "same_as_main").strip().lower()
-    provider = str(getattr(settings, "llm_provider", "openai-compatible") or "openai-compatible").strip()
     if mode == "custom":
+        provider = str(getattr(settings, "knowledge_llm_provider", "openai-compatible") or "openai-compatible").strip()
         enabled = bool(getattr(settings, "knowledge_llm_enabled", False))
         base_url = str(getattr(settings, "knowledge_llm_base_url", "") or "").strip().rstrip("/")
         model = str(getattr(settings, "knowledge_llm_model", "") or "").strip()
         api_key = str(getattr(settings, "knowledge_llm_api_key", "") or "").strip()
         return enabled, base_url, model, api_key, provider
 
+    provider = str(getattr(settings, "llm_provider", "openai-compatible") or "openai-compatible").strip()
     enabled = bool(getattr(settings, "llm_enabled", False))
     base_url = str(getattr(settings, "llm_base_url", "") or "").strip().rstrip("/")
     model = str(getattr(settings, "llm_model", "") or "").strip()
@@ -51,16 +52,16 @@ def resolve_knowledge_llm_settings(settings: ServiceSettings) -> tuple[bool, str
 
 
 def knowledge_llm_available(settings: ServiceSettings) -> bool:
-    enabled, base_url, model, _api_key, _provider = resolve_knowledge_llm_settings(settings)
-    return bool(enabled and base_url and model)
+    enabled, base_url, model, api_key, _provider = resolve_knowledge_llm_settings(settings)
+    return bool(enabled and base_url and api_key and model)
 
 
 def ensure_knowledge_llm_settings(settings: ServiceSettings) -> tuple[str, str, str, str]:
     enabled, base_url, model, api_key, provider = resolve_knowledge_llm_settings(settings)
     if not enabled:
         raise HTTPException(status_code=400, detail="知识库问答和自动打标需要先启用知识库 LLM。")
-    if not base_url or not model:
-        raise HTTPException(status_code=400, detail="知识库问答和自动打标需要先填写知识库 LLM 的地址和模型名。")
+    if not base_url or not api_key or not model:
+        raise HTTPException(status_code=400, detail="知识库问答和自动打标需要先填写知识库 LLM 的 API Key、地址和模型名。")
     return base_url, model, api_key, provider
 
 

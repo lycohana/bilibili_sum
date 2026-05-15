@@ -55,6 +55,7 @@ def _knowledge_settings_signature(settings) -> tuple[object, ...]:
         str(settings.llm_api_key or ""),
         str(getattr(settings, "knowledge_llm_mode", "same_as_main") or "same_as_main"),
         bool(getattr(settings, "knowledge_llm_enabled", False)),
+        str(getattr(settings, "knowledge_llm_provider", "openai-compatible") or "openai-compatible"),
         str(getattr(settings, "knowledge_llm_base_url", "") or ""),
         str(getattr(settings, "knowledge_llm_model", "") or ""),
         str(getattr(settings, "knowledge_llm_api_key", "") or ""),

@@ -230,6 +230,36 @@ export function renderSettingsView(state) {
             ${renderTextarea("summary_user_prompt_template", "用户提示词模板", settings.summary_user_prompt_template || "", 6)}
           </section>
 
+          <!-- 知识库 LLM -->
+          <section class="settings-subsection">
+            <h3>知识库 LLM</h3>
+            <label class="toggle-row">
+              <span>启用知识库</span>
+              <input id="knowledge_enabled" type="checkbox" ${settings.knowledge_enabled ? "checked" : ""} />
+            </label>
+            ${renderSelect("knowledge_index_auto_rebuild", "自动维护知识库索引", settings.knowledge_index_auto_rebuild || "disabled", [
+              { value: "disabled", label: "关闭自动维护" },
+              { value: "on_task_completed", label: "视频生成结束后更新索引" }
+            ])}
+            ${renderSelect("knowledge_llm_mode", "知识库 LLM 来源", settings.knowledge_llm_mode || "same_as_main", [
+              { value: "same_as_main", label: "跟随主 LLM" },
+              { value: "custom", label: "使用独立配置" }
+            ])}
+            <label class="toggle-row">
+              <span>启用独立知识库 LLM</span>
+              <input id="knowledge_llm_enabled" type="checkbox" ${settings.knowledge_llm_enabled ? "checked" : ""} />
+            </label>
+            ${renderSelect("knowledge_llm_provider", "LLM 提供商", settings.knowledge_llm_provider || "openai-compatible", [
+              { value: "openai-compatible", label: "OpenAI Compatible" },
+              { value: "openai", label: "OpenAI" },
+              { value: "anthropic", label: "Anthropic" },
+              { value: "custom", label: "自定义" }
+            ])}
+            ${renderInput("knowledge_llm_base_url", "API Base URL", settings.knowledge_llm_base_url || "", "text", "https://api.openai.com/v1")}
+            ${renderInput("knowledge_llm_model", "模型名称", settings.knowledge_llm_model || "", "text", "gpt-4o-mini / claude-3-haiku")}
+            ${renderInput("knowledge_llm_api_key", "API Key", settings.knowledge_llm_api_key || "", "password", "sk-...", "current-password")}
+          </section>
+
           <!-- 保存按钮 -->
           <section class="settings-subsection settings-actions-section">
             <div class="settings-actions">

@@ -958,6 +958,7 @@ def serialize_settings(
         "llm_api_key_configured": bool(current_settings.llm_api_key),
         "knowledge_llm_mode": current_settings.knowledge_llm_mode,
         "knowledge_llm_enabled": current_settings.knowledge_llm_enabled,
+        "knowledge_llm_provider": current_settings.knowledge_llm_provider,
         "knowledge_llm_base_url": current_settings.knowledge_llm_base_url,
         "knowledge_llm_model": current_settings.knowledge_llm_model,
         "knowledge_llm_api_key": "",

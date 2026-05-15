@@ -108,7 +108,7 @@ def build_effective_llm_test_settings(payload: SettingsUpdatePayload | None = No
         current_dump = {
             **current_dump,
             "llm_enabled": current_settings.knowledge_llm_enabled,
-            "llm_provider": current_settings.llm_provider,
+            "llm_provider": current_settings.knowledge_llm_provider,
             "llm_base_url": current_settings.knowledge_llm_base_url,
             "llm_api_key": current_settings.knowledge_llm_api_key,
             "llm_model": current_settings.knowledge_llm_model,

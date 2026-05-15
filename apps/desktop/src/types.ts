@@ -267,6 +267,7 @@ export type ServiceSettings = {
   llm_api_key_configured?: boolean;
   knowledge_llm_mode: string;
   knowledge_llm_enabled: boolean;
+  knowledge_llm_provider: string;
   knowledge_llm_api_key: string;
   knowledge_llm_base_url: string;
   knowledge_llm_model: string;

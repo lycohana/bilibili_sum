@@ -353,6 +353,7 @@ class ServiceSettings(BaseSettings):
     llm_model: str = ""
     knowledge_llm_mode: str = "same_as_main"
     knowledge_llm_enabled: bool = False
+    knowledge_llm_provider: str = "openai-compatible"
     knowledge_llm_api_key: str = ""
     knowledge_llm_base_url: str = ""
     knowledge_llm_model: str = ""

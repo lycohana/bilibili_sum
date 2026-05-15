@@ -7,7 +7,14 @@ from video_sum_infra.config import ServiceSettings
 from video_sum_service.app import app
 from video_sum_service.context import settings_manager
 from video_sum_service.knowledge.index_service import KnowledgeIndexService
-from video_sum_service.knowledge.local_llm import KnowledgeLlmStreamEvent, _extract_stream_delta, _extract_stream_reasoning_delta, chat_knowledge_llm
+from video_sum_service.knowledge.local_llm import (
+    KnowledgeLlmStreamEvent,
+    _extract_stream_delta,
+    _extract_stream_reasoning_delta,
+    chat_knowledge_llm,
+    ensure_knowledge_llm_settings,
+    knowledge_llm_available,
+)
 from video_sum_service.knowledge.rag_service import (
     KNOWLEDGE_QA_SYSTEM_PROMPT,
     KnowledgeAgent,
@@ -580,6 +587,7 @@ def test_chat_knowledge_llm_returns_clear_timeout_error(monkeypatch) -> None:
         knowledge_llm_mode="custom",
         knowledge_llm_enabled=True,
         knowledge_llm_base_url="https://api.example.com/v1",
+        knowledge_llm_api_key="test-key",
         knowledge_llm_model="remote-model",
     )
 
@@ -612,6 +620,7 @@ def test_chat_knowledge_llm_normalizes_mimo_model(monkeypatch) -> None:
         knowledge_llm_mode="custom",
         knowledge_llm_enabled=True,
         knowledge_llm_base_url="https://api.example.com/v1",
+        knowledge_llm_api_key="test-key",
         knowledge_llm_model="MiMo-V2.5-Pro",
     )
     calls: list[dict[str, object]] = []
@@ -645,11 +654,32 @@ def test_chat_knowledge_llm_normalizes_mimo_model(monkeypatch) -> None:
     assert calls[0]["json"]["model"] == "mimo-v2.5-pro"
 
 
-def test_chat_knowledge_llm_accepts_anthropic_messages_response(monkeypatch) -> None:
-    settings = ServiceSettings(
-        llm_provider="anthropic",
+def test_knowledge_llm_availability_requires_api_key() -> None:
+    missing_key = ServiceSettings(
         knowledge_llm_mode="custom",
         knowledge_llm_enabled=True,
+        knowledge_llm_base_url="https://api.example.com/v1",
+        knowledge_llm_model="remote-model",
+    )
+    ready = missing_key.model_copy(update={"knowledge_llm_api_key": "test-key"})
+
+    assert knowledge_llm_available(missing_key) is False
+    assert knowledge_llm_available(ready) is True
+    try:
+        ensure_knowledge_llm_settings(missing_key)
+    except HTTPException as exc:
+        assert exc.status_code == 400
+        assert "API Key" in str(exc.detail)
+    else:
+        raise AssertionError("expected HTTPException")
+
+
+def test_chat_knowledge_llm_accepts_anthropic_messages_response(monkeypatch) -> None:
+    settings = ServiceSettings(
+        llm_provider="openai-compatible",
+        knowledge_llm_mode="custom",
+        knowledge_llm_enabled=True,
+        knowledge_llm_provider="anthropic",
         knowledge_llm_base_url="https://api.anthropic.com/v1",
         knowledge_llm_api_key="test-key",
         knowledge_llm_model="claude-3-5-haiku-latest",

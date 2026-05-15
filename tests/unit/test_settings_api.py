@@ -1035,6 +1035,60 @@ def test_knowledge_llm_connection_uses_unsaved_api_key_when_present(monkeypatch,
     assert calls[0]["json"]["model"] == "knowledge-new-model"
 
 
+def test_knowledge_llm_connection_uses_custom_provider(monkeypatch, tmp_path: Path) -> None:
+    current = ServiceSettings(
+        data_dir=tmp_path / "data",
+        cache_dir=tmp_path / "cache",
+        tasks_dir=tmp_path / "tasks",
+        runtime_channel="base",
+        llm_enabled=True,
+        llm_provider="openai-compatible",
+        llm_base_url="https://main.example/v1",
+        llm_api_key="main-key",
+        llm_model="main-model",
+        knowledge_llm_mode="custom",
+        knowledge_llm_enabled=True,
+        knowledge_llm_provider="anthropic",
+        knowledge_llm_base_url="https://api.anthropic.com/v1",
+        knowledge_llm_api_key="knowledge-key",
+        knowledge_llm_model="claude-3-5-haiku-latest",
+    )
+    settings_manager._settings = current
+
+    calls: list[dict[str, object]] = []
+
+    class FakeResponse:
+        status_code = 200
+        text = '{"content":[{"type":"text","text":"{\\"ok\\":true,\\"message\\":\\"test\\"}"}]}'
+
+        def json(self) -> dict[str, object]:
+            return {"content": [{"type": "text", "text": '{"ok":true,"message":"test"}'}]}
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def __enter__(self) -> "FakeClient":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def post(self, url: str, headers: dict[str, str], json: dict[str, object]) -> FakeResponse:
+            calls.append({"url": url, "headers": headers, "json": json})
+            return FakeResponse()
+
+    monkeypatch.setattr(service_app.httpx, "Client", FakeClient)
+
+    response = probe_llm_connection(SettingsUpdatePayload(llm_test_scope="knowledge"))
+
+    assert response["ok"] is True
+    assert calls[0]["url"] == "https://api.anthropic.com/v1/messages"
+    assert calls[0]["headers"]["x-api-key"] == "knowledge-key"
+    assert calls[0]["headers"]["anthropic-version"]
+    assert calls[0]["json"]["model"] == "claude-3-5-haiku-latest"
+
+
 def test_llm_connection_normalizes_mimo_model_and_requests_json_mode(monkeypatch, tmp_path: Path) -> None:
     current = ServiceSettings(
         data_dir=tmp_path / "data",
