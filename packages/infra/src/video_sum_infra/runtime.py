@@ -58,11 +58,11 @@ def bundled_bin_dir() -> Path:
 
 
 def local_appdata_dir() -> Path:
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support"
     local_appdata = os.environ.get("LOCALAPPDATA")
     if local_appdata:
         return Path(local_appdata)
-    if sys.platform == "darwin":
-        return Path.home() / "Library" / "Application Support"
     if os.name != "nt":
         xdg_data_home = os.environ.get("XDG_DATA_HOME")
         if xdg_data_home:
@@ -219,13 +219,41 @@ def runtime_stdlib_dir(runtime_channel: str) -> Path:
 
 def runtime_pythonpath_dirs(runtime_channel: str) -> list[Path]:
     runtime_dir = managed_runtime_dir(runtime_channel)
-    candidates = [
-        runtime_stdlib_dir(runtime_channel),
-        runtime_dir / "DLLs",
-        runtime_site_packages_dir(runtime_channel),
-        runtime_dir,
-    ]
-    return [candidate for candidate in candidates if candidate.exists()]
+    candidates: list[Path] = []
+    pythonpath_file = runtime_dir / "pythonpath.pth"
+    if pythonpath_file.exists():
+        try:
+            for raw_line in pythonpath_file.read_text(encoding="utf-8").splitlines():
+                line = raw_line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                entry = Path(line)
+                candidates.append(entry if entry.is_absolute() else runtime_dir / entry)
+        except OSError:
+            pass
+    candidates.extend(
+        [
+            runtime_stdlib_dir(runtime_channel),
+            runtime_dir / "DLLs",
+            runtime_site_packages_dir(runtime_channel),
+            runtime_dir,
+        ]
+    )
+    unique_dirs: list[Path] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        if not candidate.exists():
+            continue
+        try:
+            resolved = candidate.resolve()
+        except OSError:
+            resolved = candidate
+        key = str(resolved).lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        unique_dirs.append(resolved)
+    return unique_dirs
 
 
 def runtime_library_dirs(runtime_channel: str) -> list[Path]:
@@ -238,6 +266,9 @@ def runtime_library_dirs(runtime_channel: str) -> list[Path]:
     portable_dlls_dir = runtime_dir / "DLLs"
     if portable_dlls_dir.exists():
         candidates.append(portable_dlls_dir)
+    runtime_lib_dir = runtime_dir / "lib"
+    if runtime_lib_dir.exists():
+        candidates.append(runtime_lib_dir)
     candidates.append(runtime_scripts_dir(runtime_dir))
 
     torch_lib_dir = runtime_site_packages_dir(runtime_channel) / "torch" / "lib"
@@ -302,27 +333,36 @@ def runtime_python_executable(runtime_channel: str) -> Path | None:
 
 def ffmpeg_location() -> Path | None:
     """返回 ffmpeg 可执行文件的路径（不是目录）。"""
-    executable_name = "ffmpeg.exe" if os.name == "nt" else "ffmpeg"
+    ffmpeg_name = "ffmpeg.exe" if os.name == "nt" else "ffmpeg"
+    ffprobe_name = "ffprobe.exe" if os.name == "nt" else "ffprobe"
+
+    def usable_ffmpeg_from_dir(directory: Path) -> Path | None:
+        ffmpeg_exe = directory / ffmpeg_name
+        ffprobe_exe = directory / ffprobe_name
+        if ffmpeg_exe.exists() and ffprobe_exe.exists():
+            return ffmpeg_exe
+        return None
 
     # 1. 环境变量指定的目录
     env_dir = os.environ.get("VIDEO_SUM_FFMPEG_DIR")
     if env_dir:
         candidate = Path(env_dir)
         if candidate.exists():
-            ffmpeg_exe = candidate / executable_name
-            if ffmpeg_exe.exists():
+            ffmpeg_exe = usable_ffmpeg_from_dir(candidate)
+            if ffmpeg_exe is not None:
                 return ffmpeg_exe
 
     # 2. 打包后的 bin 目录
     bundled_dir = bundled_bin_dir()
     if bundled_dir.exists():
-        ffmpeg_exe = bundled_dir / executable_name
-        if ffmpeg_exe.exists():
+        ffmpeg_exe = usable_ffmpeg_from_dir(bundled_dir)
+        if ffmpeg_exe is not None:
             return ffmpeg_exe
 
     # 3. 系统 PATH 中的 ffmpeg
     ffmpeg_path = shutil.which("ffmpeg")
-    if ffmpeg_path:
+    ffprobe_path = shutil.which("ffprobe")
+    if ffmpeg_path and ffprobe_path and Path(ffmpeg_path).resolve().parent == Path(ffprobe_path).resolve().parent:
         return Path(ffmpeg_path).resolve()
 
     return None

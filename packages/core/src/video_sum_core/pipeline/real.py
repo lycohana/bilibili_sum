@@ -35,6 +35,7 @@ from video_sum_infra.runtime import (
     ffmpeg_location,
     runtime_library_dirs,
     runtime_python_executable,
+    runtime_pythonpath_dirs,
     sanitized_subprocess_dll_search,
 )
 
@@ -999,8 +1000,13 @@ class RealPipelineRunner(PipelineRunner):
             command.extend(["--duration", str(duration)])
 
         env = os.environ.copy()
-        env.setdefault("PYTHONIOENCODING", "utf-8")
-        env.setdefault("PYTHONUTF8", "1")
+        for key in ("PYTHONHOME", "PYTHONPATH", "PYTHONEXECUTABLE", "__PYVENV_LAUNCHER__"):
+            env.pop(key, None)
+        env["PYTHONIOENCODING"] = "utf-8"
+        env["PYTHONUTF8"] = "1"
+        pythonpath_entries = [str(path) for path in runtime_pythonpath_dirs(self._settings.runtime_channel)]
+        if pythonpath_entries:
+            env["PYTHONPATH"] = os.pathsep.join(pythonpath_entries)
         runtime_paths = [str(path) for path in runtime_library_dirs(self._settings.runtime_channel)]
         ffmpeg_exe = ffmpeg_location()
         if ffmpeg_exe is not None:

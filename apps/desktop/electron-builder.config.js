@@ -24,7 +24,8 @@ module.exports = {
   ],
   extraResources,
   mac: {
-    target: ["dmg"],
+    target: ["dmg", "zip"],
+    artifactName: "${productName}-${version}-${os}-${arch}.${ext}",
     icon: "../../apps/desktop/build/icon.icns",
     category: "public.app-category.productivity",
     hardenedRuntime: false,

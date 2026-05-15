@@ -25,9 +25,10 @@ repo_root="$(cd "$script_dir/../.." && pwd)"
 desktop_dir="$repo_root/apps/desktop"
 web_static_validation_script="$repo_root/scripts/validate_web_static_assets.js"
 
-python312="$(uv python find 3.12 | tr -d '\r')"
+uv python install 3.12
+python312="$(uv python find --managed-python 3.12 | tr -d '\r')"
 if [[ -z "$python312" ]]; then
-  echo "No Python 3.12 interpreter was found via uv." >&2
+  echo "No uv-managed Python 3.12 interpreter was found." >&2
   exit 1
 fi
 
@@ -76,6 +77,38 @@ if [[ "$skip_prebuild" -eq 0 ]]; then
     exit 1
   fi
   chmod +x "$backend_executable"
+  for executable in \
+    "$repo_root/dist/BiliSum/_internal/runtime/base/bin/python" \
+    "$repo_root/dist/BiliSum/_internal/runtime/base/bin/python3" \
+    "$repo_root/dist/BiliSum/_internal/bin/ffmpeg" \
+    "$repo_root/dist/BiliSum/_internal/bin/ffprobe"; do
+    if [[ -f "$executable" && ! -x "$executable" ]]; then
+      echo "Packaged executable is missing execute permission: $executable" >&2
+      exit 1
+    fi
+  done
+
+  runtime_seed="$repo_root/build/pyinstaller/runtime/base"
+  runtime_probe_root="$(mktemp -d)"
+  trap 'rm -rf "$runtime_probe_root"; popd >/dev/null' EXIT
+  cp -R "$runtime_seed" "$runtime_probe_root/base"
+  runtime_probe_python="$runtime_probe_root/base/bin/python"
+  if [[ ! -x "$runtime_probe_python" ]]; then
+    runtime_probe_python="$runtime_probe_root/base/bin/python3"
+  fi
+  if [[ ! -x "$runtime_probe_python" ]]; then
+    echo "Relocated managed runtime Python was not found under $runtime_probe_root/base/bin" >&2
+    exit 1
+  fi
+  runtime_probe_pythonpath="$(
+    cd "$runtime_probe_root/base"
+    while IFS= read -r entry; do
+      [[ -z "$entry" || "$entry" == \#* ]] && continue
+      printf '%s:' "$runtime_probe_root/base/$entry"
+    done < pythonpath.pth
+  )"
+  env -u PYTHONHOME -u PYTHONEXECUTABLE -u __PYVENV_LAUNCHER__ PYTHONPATH="${runtime_probe_pythonpath%:}" \
+    "$runtime_probe_python" -c "import encodings, sqlite3, ssl, sys, video_sum_core; print(sys.executable)"
 else
   echo "SkipPrebuild enabled: reusing existing renderer and backend artifacts."
 fi
@@ -91,4 +124,4 @@ node "$web_static_validation_script"
 npm run build:electron
 
 export CSC_IDENTITY_AUTO_DISCOVERY=false
-npx electron-builder --config electron-builder.config.js --mac dmg --publish=never
+npx electron-builder --config electron-builder.config.js --mac --publish=never

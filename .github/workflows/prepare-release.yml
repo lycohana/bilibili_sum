@@ -213,6 +213,7 @@ jobs:
           set -euo pipefail
           asset_dir="$GITHUB_WORKSPACE/dist/release-assets-macos"
           dmg_pattern="BiliSum-${RELEASE_VERSION}-*mac*.dmg"
+          zip_pattern="BiliSum-${RELEASE_VERSION}-*mac*.zip"
 
           if [[ ! -d "$GITHUB_WORKSPACE/dist" ]]; then
             echo "Build output directory not found: $GITHUB_WORKSPACE/dist" >&2
@@ -228,8 +229,22 @@ jobs:
             find "$GITHUB_WORKSPACE/dist" -maxdepth 4 -type f -print
             exit 1
           fi
+          zip_path="$(find "$GITHUB_WORKSPACE/dist" -type f -name "$zip_pattern" -print -quit)"
+          if [[ -z "$zip_path" ]]; then
+            echo "No macOS ZIP matching $zip_pattern was found under $GITHUB_WORKSPACE/dist" >&2
+            find "$GITHUB_WORKSPACE/dist" -maxdepth 4 -type f -print
+            exit 1
+          fi
+          latest_mac_yml="$(find "$GITHUB_WORKSPACE/dist" -type f -name "latest-mac.yml" -print -quit)"
+          if [[ -z "$latest_mac_yml" ]]; then
+            echo "No latest-mac.yml was found under $GITHUB_WORKSPACE/dist" >&2
+            find "$GITHUB_WORKSPACE/dist" -maxdepth 4 -type f -print
+            exit 1
+          fi
 
           cp "$dmg_path" "$asset_dir/"
+          cp "$zip_path" "$asset_dir/"
+          cp "$latest_mac_yml" "$asset_dir/"
           echo "Collected macOS release assets:"
           ls -lh "$asset_dir"
 
@@ -237,7 +252,10 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: release-assets-macos-${{ needs.detect-release.outputs.next_version }}
-          path: dist/release-assets-macos/BiliSum-*.dmg
+          path: |
+            dist/release-assets-macos/BiliSum-*.dmg
+            dist/release-assets-macos/BiliSum-*.zip
+            dist/release-assets-macos/latest-mac.yml
           if-no-files-found: error
 
   create-release-tag:
@@ -351,7 +369,9 @@ jobs:
             dist/release-assets/BiliSum-*-Setup.exe
             dist/release-assets/BiliSum-*-Setup.exe.blockmap
             dist/release-assets/BiliSum-*.dmg
+            dist/release-assets/BiliSum-*.zip
             dist/release-assets/latest.yml
+            dist/release-assets/latest-mac.yml
 
   publish-docker-image:
     needs:

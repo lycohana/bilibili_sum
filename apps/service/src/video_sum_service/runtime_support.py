@@ -31,6 +31,7 @@ from video_sum_infra.runtime import (
     runtime_library_dirs,
     runtime_python_candidates,
     runtime_python_executable,
+    runtime_pythonpath_dirs,
     sanitized_subprocess_dll_search,
     write_runtime_metadata,
 )
@@ -66,7 +67,8 @@ _RUNTIME_EXTENSION_PACKAGE_KEYS: set[str] = {
     "chromadb",
     "sentence_transformers",
 }
-_RUNTIME_ROOT_APP_DIRS: frozenset[str] = frozenset({"Lib", "lib", "Scripts", "bin"})
+_RUNTIME_ROOT_APP_DIRS: frozenset[str] = frozenset({"Lib", "lib", "Scripts", "bin", "stdlib"})
+_RUNTIME_ROOT_SYNC_FILES: frozenset[str] = frozenset({"pyvenv.cfg", "pythonpath.pth"})
 
 
 def _split_env_urls(raw_value: str | None) -> list[str]:
@@ -112,6 +114,9 @@ def runtime_subprocess_env(runtime_channel: str) -> dict[str, str]:
     env["PYTHONUTF8"] = "1"
 
     path_entries = [str(path) for path in runtime_library_dirs(runtime_channel)]
+    pythonpath_entries = [str(path) for path in runtime_pythonpath_dirs(runtime_channel)]
+    if pythonpath_entries:
+        env["PYTHONPATH"] = os.pathsep.join(pythonpath_entries)
     ffmpeg_exe = ffmpeg_location()
     if ffmpeg_exe is not None:
         path_entries.append(str(ffmpeg_exe.parent))
@@ -427,10 +432,7 @@ def ensure_runtime_channel(runtime_channel: str) -> Path | None:
     base_metadata = read_runtime_metadata(base_dir)
     target_metadata = read_runtime_metadata(target_dir)
     target_ready = runtime_python_executable(runtime_channel) is not None
-    target_matches_base = (
-        target_metadata.get("appVersion") == base_metadata.get("appVersion")
-        and target_metadata.get("runtimeLayout") == base_metadata.get("runtimeLayout")
-    )
+    target_matches_base = runtime_metadata_matches_base(target_metadata, base_metadata)
     if target_ready and target_matches_base:
         return target_dir
 
@@ -455,6 +457,7 @@ def inspect_runtime_channels() -> dict[str, object]:
     base_metadata = read_runtime_metadata(base_dir)
     base_app_version = str(base_metadata.get("appVersion") or "")
     base_layout = str(base_metadata.get("runtimeLayout") or "")
+    base_python_version = str(base_metadata.get("pythonVersion") or "")
     channels: list[dict[str, object]] = []
 
     for runtime_channel in sorted(discovered, key=lambda item: (item != "base", item)):
@@ -469,10 +472,7 @@ def inspect_runtime_channels() -> dict[str, object]:
             exists
             and runtime_channel != "base"
             and ready
-            and (
-                (base_app_version and app_version != base_app_version)
-                or (base_layout and layout != base_layout)
-            )
+            and not runtime_metadata_matches_base(metadata, base_metadata)
         )
         channels.append(
             {
@@ -485,6 +485,8 @@ def inspect_runtime_channels() -> dict[str, object]:
                 "runtimeLayout": layout,
                 "targetAppVersion": base_app_version,
                 "targetRuntimeLayout": base_layout,
+                "pythonVersion": str(metadata.get("pythonVersion") or ""),
+                "targetPythonVersion": base_python_version,
                 "needsUpdate": needs_update,
                 "cudaVariant": str(metadata.get("cudaVariant") or ""),
                 "localAsrInstalled": bool(metadata.get("localAsrInstalled")),
@@ -495,6 +497,7 @@ def inspect_runtime_channels() -> dict[str, object]:
     return {
         "baseAppVersion": base_app_version,
         "baseRuntimeLayout": base_layout,
+        "basePythonVersion": base_python_version,
         "pipIndexes": pip_index_options(),
         "channels": channels,
     }
@@ -537,7 +540,7 @@ def sync_runtime_base(target_dir: Path, base_dir: Path, runtime_channel: str) ->
     for item in base_dir.iterdir():
         if item.name == "video_sum_runtime.json":
             continue
-        if item.name not in _RUNTIME_ROOT_APP_DIRS:
+        if item.name not in _RUNTIME_ROOT_APP_DIRS and not should_sync_runtime_root_item(item):
             continue
         if item.name in {"Lib", "lib"}:
             sync_runtime_lib(target_dir / item.name, item)
@@ -564,12 +567,37 @@ def sync_runtime_base(target_dir: Path, base_dir: Path, runtime_channel: str) ->
     )
 
 
+def runtime_metadata_matches_base(target_metadata: dict[str, object], base_metadata: dict[str, object]) -> bool:
+    return (
+        target_metadata.get("appVersion") == base_metadata.get("appVersion")
+        and target_metadata.get("runtimeLayout") == base_metadata.get("runtimeLayout")
+        and target_metadata.get("pythonVersion") == base_metadata.get("pythonVersion")
+    )
+
+
+def should_sync_runtime_root_item(item: Path) -> bool:
+    if item.name in _RUNTIME_ROOT_SYNC_FILES:
+        return True
+    if not item.is_file():
+        return False
+    lower_name = item.name.lower()
+    return (
+        lower_name == "python"
+        or lower_name == "python.exe"
+        or lower_name.startswith("python")
+        or lower_name.startswith("libpython")
+    )
+
+
 def sync_runtime_scripts(target_scripts_dir: Path, base_scripts_dir: Path) -> None:
     if not base_scripts_dir.exists():
         return
     target_scripts_dir.mkdir(parents=True, exist_ok=True)
     for pattern in ("video-sum-service*", "video-sum-transcribe-worker*"):
         for item in base_scripts_dir.glob(pattern):
+            copy_runtime_item(item, target_scripts_dir / item.name)
+    for item in base_scripts_dir.glob("python*"):
+        if item.is_file():
             copy_runtime_item(item, target_scripts_dir / item.name)
 
 

@@ -149,6 +149,7 @@ let frontendStaticServer: Server | null = null;
 let frontendStaticUrl = "";
 let applicationLoadPromise: Promise<void> | null = null;
 let applicationLoadedTarget = "";
+let backendStoppingPromise: Promise<void> | null = null;
 let splashShownAt = 0;
 let forceQuit = false;
 let preferences: DesktopPreferences = loadPreferences();
@@ -1325,13 +1326,15 @@ async function waitForBackendReady(timeoutMs = 60_000): Promise<boolean> {
   return false;
 }
 
-async function probeBackendReady(timeoutMs = 300): Promise<boolean> {
+async function probeBackendReady(timeoutMs = 300, updateStatus = true): Promise<boolean> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const response = await fetch(`${backendUrl}/health`, { signal: controller.signal });
     if (response.ok) {
-      updateBackendStatus({ ready: true, lastError: "" });
+      if (updateStatus) {
+        updateBackendStatus({ ready: true, lastError: "" });
+      }
       return true;
     }
   } catch {
@@ -1688,7 +1691,7 @@ async function startBackend(): Promise<BackendStatus> {
     return { ...backendStatus, ready };
   }
 
-  const existingReady = await probeBackendReady(300);
+  const existingReady = isDev ? await probeBackendReady(300) : false;
   if (existingReady) {
     updateBackendStatus({
       running: true,
@@ -1824,6 +1827,22 @@ async function stopBackend(): Promise<BackendStatus> {
   }
   const current = backendProcess;
   backendProcess = null;
+  backendStoppingPromise = new Promise((resolve) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      if (backendStoppingPromise) {
+        backendStoppingPromise = null;
+      }
+      resolve();
+    };
+    current.once("exit", finish);
+    current.once("error", finish);
+    setTimeout(finish, 5_000);
+  });
   current.kill();
   updateBackendStatus({
     running: false,
@@ -1834,6 +1853,7 @@ async function stopBackend(): Promise<BackendStatus> {
   if (!isDev) {
     loadSplash("BiliSum 服务已停止。");
   }
+  await backendStoppingPromise;
   return backendStatus;
 }
 
@@ -2326,7 +2346,7 @@ function downloadUpdate(): Promise<UpdateInfo> {
   return downloadUpdatePromise;
 }
 
-function installAndRestart(): void {
+async function installAndRestart(): Promise<void> {
   if (isDev || !canUseAutoUpdater()) {
     return;
   }
@@ -2336,9 +2356,24 @@ function installAndRestart(): void {
   }
   installRequestedAfterDownload = false;
   updateUpdateStatus({ status: "installing", errorMessage: null });
-  setTimeout(() => {
-    autoUpdater.quitAndInstall();
-  }, 200);
+  try {
+    if (backendProcess) {
+      await stopBackend();
+    } else if (backendStoppingPromise) {
+      await backendStoppingPromise;
+    } else {
+      const portStillBusy = await probeBackendReady(300, false);
+      if (portStillBusy) {
+        throw new Error("后端端口仍被占用，无法安全安装更新。请退出旧版 BiliSum 后重试。");
+      }
+    }
+    setTimeout(() => {
+      autoUpdater.quitAndInstall();
+    }, 200);
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : "安装更新前停止后端失败";
+    updateUpdateStatus({ status: "error", errorMessage });
+  }
 }
 
 function registerIpcHandlers() {
@@ -2468,6 +2503,9 @@ app.whenReady().then(async () => {
 app.on("before-quit", () => {
   forceQuit = true;
   frontendStaticServer?.close();
+  if (backendProcess && !backendProcess.killed) {
+    backendProcess.kill();
+  }
   // 清理 autoUpdater 监听器，防止在应用退出后仍触发
   autoUpdater.removeAllListeners();
 });
