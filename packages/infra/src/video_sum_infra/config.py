@@ -253,6 +253,9 @@ TRANSCRIPTION_PROVIDER_ALIASES = {
     "siliconflow": "siliconflow",
     "silicon-flow": "siliconflow",
     "silicon_flow": "siliconflow",
+    "multimodal": "multimodal",
+    "openai-multimodal": "multimodal",
+    "openai_multimodal": "multimodal",
 }
 
 KNOWLEDGE_LLM_MODE_ALIASES = {
@@ -338,6 +341,9 @@ class ServiceSettings(BaseSettings):
     siliconflow_asr_base_url: str = "https://api.siliconflow.cn/v1"
     siliconflow_asr_model: str = "TeleAI/TeleSpeechASR"
     siliconflow_asr_api_key: str = ""
+    multimodal_asr_base_url: str = ""
+    multimodal_asr_model: str = "mimo-v2-omni"
+    multimodal_asr_api_key: str = ""
     cuda_variant: str = "cu128"
     runtime_channel: str = "base"
     output_dir: str = ""

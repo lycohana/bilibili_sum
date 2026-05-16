@@ -228,9 +228,20 @@ def probe_asr_connection(payload: SettingsUpdatePayload | None = None) -> dict[s
         and current_settings.siliconflow_asr_api_key
     ):
         updates.pop("siliconflow_asr_api_key")
+    if (
+        "multimodal_asr_api_key" in updates
+        and is_blank_or_masked_secret(updates["multimodal_asr_api_key"])
+        and current_settings.multimodal_asr_api_key
+    ):
+        updates.pop("multimodal_asr_api_key")
     effective_settings = ServiceSettings.model_validate(
         {**current_settings.model_dump(mode="json"), **updates}
     )
+
+    provider = str(effective_settings.transcription_provider or "").strip().lower()
+
+    if provider == "multimodal":
+        return _probe_multimodal_asr(effective_settings)
 
     base_url = str(effective_settings.siliconflow_asr_base_url or "").strip().rstrip("/")
     api_key = str(effective_settings.siliconflow_asr_api_key or "").strip()
@@ -278,6 +289,87 @@ def probe_asr_connection(payload: SettingsUpdatePayload | None = None) -> dict[s
             f"ASR 连接测试成功：{model}"
             if transcript
             else f"ASR 连接测试成功：{model}（接口已响应，但测试音频未返回文本）"
+        ),
+        "model": model,
+        "baseUrl": base_url,
+        "responsePreview": transcript[:120],
+    }
+
+
+def _probe_multimodal_asr(settings: ServiceSettings) -> dict[str, object]:
+    import base64
+
+    base_url = str(settings.multimodal_asr_base_url or "").strip().rstrip("/")
+    api_key = str(settings.multimodal_asr_api_key or "").strip()
+    model = str(settings.multimodal_asr_model or "").strip()
+
+    if not base_url:
+        raise HTTPException(status_code=400, detail="请先填写多模态 ASR Base URL。")
+    if not model:
+        raise HTTPException(status_code=400, detail="请先填写多模态 ASR 模型名称。")
+
+    request_url = f"{base_url}/chat/completions"
+    audio_bytes = build_test_wav_bytes()
+    audio_b64 = base64.b64encode(audio_bytes).decode("utf-8")
+
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    payload = {
+        "model": model,
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "input_audio",
+                        "input_audio": {
+                            "data": f"data:audio/wav;base64,{audio_b64}",
+                        },
+                    },
+                    {
+                        "type": "text",
+                        "text": "请转录这段音频的全部文字内容，保持原文，不要修改",
+                    },
+                ],
+            }
+        ],
+        "max_completion_tokens": 1024,
+    }
+
+    try:
+        timeout = httpx.Timeout(connect=20.0, read=90.0, write=90.0, pool=20.0)
+        with httpx.Client(timeout=timeout) as client:
+            response = client.post(request_url, headers=headers, json=payload)
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail=f"多模态 ASR 连接失败：{exc}") from exc
+
+    if response.status_code in {401, 403}:
+        detail = extract_http_error_detail(response)
+        raise HTTPException(status_code=response.status_code, detail=f"多模态 ASR 测试失败：认证失败，{detail}")
+    if response.status_code >= 400:
+        detail = extract_http_error_detail(response)
+        raise HTTPException(status_code=response.status_code, detail=f"多模态 ASR 测试失败：{detail}")
+
+    try:
+        body = response.json()
+    except ValueError:
+        body = None
+
+    transcript = ""
+    if isinstance(body, dict):
+        choices = body.get("choices") or []
+        if choices:
+            message = choices[0].get("message") or {}
+            transcript = str(message.get("content") or "").strip()
+
+    return {
+        "ok": True,
+        "message": (
+            f"多模态 ASR 连接测试成功：{model}"
+            if transcript
+            else f"多模态 ASR 连接测试成功：{model}（接口已响应，但测试音频未返回文本）"
         ),
         "model": model,
         "baseUrl": base_url,
