@@ -882,6 +882,8 @@ def build_worker(
         "multimodal_asr_base_url": runtime_settings.multimodal_asr_base_url,
         "multimodal_asr_model": runtime_settings.multimodal_asr_model,
         "multimodal_asr_api_key": runtime_settings.multimodal_asr_api_key,
+        "multimodal_asr_chunk_duration_seconds": runtime_settings.multimodal_asr_chunk_duration_seconds,
+        "multimodal_asr_max_retries": runtime_settings.multimodal_asr_max_retries,
         "llm_enabled": runtime_settings.llm_enabled,
         "llm_provider": runtime_settings.llm_provider,
         "llm_api_key": runtime_settings.llm_api_key,

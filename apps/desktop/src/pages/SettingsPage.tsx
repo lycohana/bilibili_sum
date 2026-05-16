@@ -139,6 +139,8 @@ const SETTINGS_SEARCH_ITEMS: SettingsSearchItem[] = [
   { category: "transcription", targetKey: "multimodal_asr_base_url", title: "多模态 ASR Base URL", description: "多模态转写 API 地址。", keywords: ["multimodal", "多模态", "base url", "api"] },
   { category: "transcription", targetKey: "multimodal_asr_api_key", title: "多模态 ASR API Key", description: "多模态转写 API 密钥。", keywords: ["multimodal", "多模态", "key", "apikey", "api key", "密钥"] },
   { category: "transcription", targetKey: "multimodal_asr_model", title: "多模态 ASR 模型", description: "多模态转写模型名称。", keywords: ["multimodal", "多模态", "model", "模型", "mimo"] },
+  { category: "transcription", targetKey: "multimodal_asr_chunk_duration_seconds", title: "多模态切片时长（秒）", description: "长音频自动切片的每段秒数。", keywords: ["multimodal", "切片", "chunk", "分段", "秒"] },
+  { category: "transcription", targetKey: "multimodal_asr_max_retries", title: "多模态切片重试次数", description: "每段切片返回空时的重试上限。", keywords: ["multimodal", "重试", "retry", "次数"] },
   { category: "transcription", targetKey: "device_preference", title: "推理设备", description: "本地 ASR 使用 CPU 或 CUDA。", keywords: ["cuda", "gpu", "cpu", "设备"] },
   { category: "transcription", targetKey: "fixed_model", title: "Whisper 固定模型", description: "本地 Whisper 模型大小。", keywords: ["whisper", "tiny", "base", "small", "medium", "large"] },
   { category: "generation", targetKey: "llm_enabled", title: "启用 LLM 摘要", description: "打开或关闭大模型摘要。", keywords: ["llm", "摘要", "开启", "关闭"] },
@@ -2018,6 +2020,16 @@ export function SettingsPage({
                       <span className="settings-input-label">多模态 ASR 模型</span>
                       <input className="settings-input-field" value={form.multimodal_asr_model} onChange={(e) => updateForm({ ...form, multimodal_asr_model: e.target.value })} placeholder="mimo-v2-omni" />
                       <span className="settings-input-caption">使用支持音频输入的多模态模型进行语音转文字。</span>
+                    </label>
+                    <label className="settings-input-group" ref={registerFocusTarget("multimodal_asr_chunk_duration_seconds") as (node: HTMLLabelElement | null) => void}>
+                      <span className="settings-input-label">多模态切片时长（秒）</span>
+                      <input className="settings-input-field" type="number" min={30} max={600} value={form.multimodal_asr_chunk_duration_seconds ?? 180} onChange={(e) => updateForm({ ...form, multimodal_asr_chunk_duration_seconds: Number(e.target.value) })} />
+                      <span className="settings-input-caption">长音频自动切片时每段的秒数，默认 180 秒（3 分钟）。</span>
+                    </label>
+                    <label className="settings-input-group" ref={registerFocusTarget("multimodal_asr_max_retries") as (node: HTMLLabelElement | null) => void}>
+                      <span className="settings-input-label">多模态切片重试次数</span>
+                      <input className="settings-input-field" type="number" min={0} max={10} value={form.multimodal_asr_max_retries ?? 5} onChange={(e) => updateForm({ ...form, multimodal_asr_max_retries: Number(e.target.value) })} />
+                      <span className="settings-input-caption">每段切片返回空时最多重试几次，默认 5 次。</span>
                     </label>
                     <div className="settings-inline-actions">
                       <button

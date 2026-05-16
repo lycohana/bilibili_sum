@@ -307,6 +307,8 @@ export type ServiceSettings = {
   multimodal_asr_model: string;
   multimodal_asr_api_key: string;
   multimodal_asr_api_key_configured?: boolean;
+  multimodal_asr_chunk_duration_seconds: number;
+  multimodal_asr_max_retries: number;
   cuda_variant: string;
   runtime_channel: string;
   output_dir: string;

@@ -202,6 +202,10 @@ export function renderSettingsView(state) {
               ${renderInput("multimodal_asr_base_url", "多模态 ASR Base URL", settings.multimodal_asr_base_url || "", "text", "https://fufu.iqach.top/v1")}
               ${renderInput("multimodal_asr_model", "多模态 ASR 模型", settings.multimodal_asr_model || "mimo-v2-omni", "text", "mimo-v2-omni")}
               ${renderInput("multimodal_asr_api_key", "多模态 ASR API Key", settings.multimodal_asr_api_key || "", "password", "如有则填写", "current-password")}
+              ${renderInput("multimodal_asr_chunk_duration_seconds", "切片时长（秒）", settings.multimodal_asr_chunk_duration_seconds ?? 180, "number", "180")}
+              <span class="input-caption" style="margin-top:-4px;margin-bottom:12px;display:block;color:var(--text-secondary);">长音频自动切片的每段秒数，默认 180 秒。</span>
+              ${renderInput("multimodal_asr_max_retries", "切片重试次数", settings.multimodal_asr_max_retries ?? 5, "number", "5")}
+              <span class="input-caption" style="margin-top:-4px;margin-bottom:12px;display:block;color:var(--text-secondary);">每段切片返回空时最多重试几次，默认 5 次。</span>
             </div>
 
             ${renderInput("language", "语言", settings.language || "", "text", "zh")}

@@ -468,6 +468,8 @@ class ServiceSettings(BaseSettings):
     multimodal_asr_base_url: str = ""
     multimodal_asr_model: str = "mimo-v2-omni"
     multimodal_asr_api_key: str = ""
+    multimodal_asr_chunk_duration_seconds: int = 180
+    multimodal_asr_max_retries: int = 5
     cuda_variant: str = "cu128"
     runtime_channel: str = "base"
     output_dir: str = ""

@@ -464,6 +464,8 @@ async function handleSettingsSubmit(event) {
     multimodal_asr_base_url: readTrimmedValue("multimodal_asr_base_url", current.multimodal_asr_base_url || ""),
     multimodal_asr_model: readTrimmedValue("multimodal_asr_model", current.multimodal_asr_model || "mimo-v2-omni"),
     multimodal_asr_api_key: readValue("multimodal_asr_api_key", current.multimodal_asr_api_key || ""),
+    multimodal_asr_chunk_duration_seconds: readNumberValue("multimodal_asr_chunk_duration_seconds", current.multimodal_asr_chunk_duration_seconds ?? 180),
+    multimodal_asr_max_retries: readNumberValue("multimodal_asr_max_retries", current.multimodal_asr_max_retries ?? 5),
     cuda_variant: readValue("cuda_variant", current.cuda_variant || "cu128"),
     runtime_channel: readValue("runtime_channel", current.runtime_channel || "base"),
     output_dir: readTrimmedValue("output_dir", current.output_dir || ""),

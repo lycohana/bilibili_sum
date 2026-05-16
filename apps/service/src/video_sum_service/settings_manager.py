@@ -60,6 +60,8 @@ class SettingsUpdatePayload(BaseModel):
     multimodal_asr_base_url: str | None = None
     multimodal_asr_model: str | None = None
     multimodal_asr_api_key: str | None = None
+    multimodal_asr_chunk_duration_seconds: int | None = None
+    multimodal_asr_max_retries: int | None = None
     cuda_variant: str | None = None
     runtime_channel: str | None = None
     output_dir: str | None = None

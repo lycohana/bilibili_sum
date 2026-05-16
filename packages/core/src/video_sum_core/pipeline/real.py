@@ -187,6 +187,8 @@ class PipelineSettings:
     multimodal_asr_base_url: str = ""
     multimodal_asr_model: str = "mimo-v2-omni"
     multimodal_asr_api_key: str = ""
+    multimodal_asr_chunk_duration_seconds: int = 180
+    multimodal_asr_max_retries: int = 5
     llm_enabled: bool = False
     llm_provider: str = "openai-compatible"
     llm_api_key: str = ""
@@ -983,8 +985,8 @@ class RealPipelineRunner(PipelineRunner):
             {"provider": "multimodal", "model": model_name},
         )
 
-        # Audio chunking config: split into chunks of 3 minutes
-        CHUNK_DURATION_SECONDS = 180  # 3 minutes per chunk
+        # Audio chunking config
+        CHUNK_DURATION_SECONDS = max(30, int(self._settings.multimodal_asr_chunk_duration_seconds or 180))
         total_duration = float(duration or 0)
         ffmpeg_exe = ffmpeg_location()
         ffprobe_exe = None
@@ -1073,7 +1075,7 @@ class RealPipelineRunner(PipelineRunner):
                 "max_completion_tokens": 4096,
             }
 
-            max_retries = 5
+            max_retries = max(0, int(self._settings.multimodal_asr_max_retries or 5))
             for attempt in range(max_retries):
                 if attempt > 0:
                     wait_sec = 3 * (attempt + 1)
