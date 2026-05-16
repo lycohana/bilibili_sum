@@ -3043,10 +3043,6 @@ P 数索引：
             if isinstance(item, dict)
         )
         is_anthropic = provider == "anthropic"
-        if is_anthropic:
-            headers = {"x-api-key": api_key, "anthropic-version": "2023-06-01", "Content-Type": "application/json"}
-        else:
-            headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
         timeout = max(15, int(self._settings.visual_evidence_timeout_seconds or 120))
         retry_count = max(0, min(int(self._settings.visual_evidence_retry_count or 1), 3))
         for frame in frames:
@@ -3072,71 +3068,44 @@ P 数索引：
                 )
             except (KeyError, IndexError, ValueError):
                 prompt = f"{prompt}\n视频标题：{title}\n时间点：{frame.get('timestamp')}\n章节线索：\n{timeline_hint}"
+            payload: dict[str, object] = {
+                "model": model,
+                "max_tokens": 2048,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": prompt},
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:image/jpeg;base64,{image_data}",
+                                    "detail": "low",
+                                },
+                            },
+                        ],
+                    }
+                ],
+                "response_format": {"type": "json_object"},
+                "enable_thinking": False,
+            }
             if is_anthropic:
-                payload: dict[str, object] = {
-                    "model": model,
-                    "max_tokens": 2048,
-                    "messages": [
-                        {
-                            "role": "user",
-                            "content": [
-                                {"type": "text", "text": prompt},
-                                {
-                                    "type": "image",
-                                    "source": {
-                                        "type": "base64",
-                                        "media_type": "image/jpeg",
-                                        "data": image_data,
-                                    },
-                                },
-                            ],
-                        }
-                    ],
-                }
-                request_url = f"{base_url}/messages"
+                request_url = anthropic_messages_url(base_url)
+                headers = {"x-api-key": api_key, "anthropic-version": "2023-06-01", "Content-Type": "application/json"}
+                request_payload = build_anthropic_messages_payload(payload)
             else:
-                payload = {
-                    "model": normalize_openai_compatible_model_name(model),
-                    "messages": [
-                        {
-                            "role": "user",
-                            "content": [
-                                {"type": "text", "text": prompt},
-                                {
-                                    "type": "image_url",
-                                    "image_url": {
-                                        "url": f"data:image/jpeg;base64,{image_data}",
-                                        "detail": "low",
-                                    },
-                                },
-                            ],
-                        }
-                    ],
-                    "response_format": {"type": "json_object"},
-                    "enable_thinking": False,
-                }
                 request_url = f"{base_url}/chat/completions"
+                headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+                payload["model"] = normalize_openai_compatible_model_name(model)
+                request_payload = payload
             last_error: Exception | None = None
             for attempt in range(retry_count + 1):
                 try:
                     with httpx.Client(timeout=timeout, follow_redirects=True) as client:
-                        response = client.post(request_url, headers=headers, json=payload)
+                        response = client.post(request_url, headers=headers, json=request_payload)
                     response.raise_for_status()
                     body = response.json()
-                    content = ""
-                    if is_anthropic:
-                        anthropic_content = body.get("content") if isinstance(body, dict) else None
-                        if isinstance(anthropic_content, list):
-                            for block in anthropic_content:
-                                if isinstance(block, dict) and block.get("type") == "text":
-                                    content = str(block.get("text") or "")
-                                    break
-                    else:
-                        choices = body.get("choices") if isinstance(body, dict) else None
-                        if isinstance(choices, list) and choices:
-                            message = choices[0].get("message") if isinstance(choices[0], dict) else None
-                            if isinstance(message, dict):
-                                content = str(message.get("content") or "")
+                    content = extract_llm_message_content(body)
                     parsed = json.loads(_extract_json_object_text(content))
                     key_facts_raw = parsed.get("key_facts")
                     key_facts: list[str] = []
@@ -3354,49 +3323,30 @@ P 数索引：
                 f"原始知识笔记：\n{knowledge_note_markdown}\n\n"
                 f"视觉解析 JSON：\n{visual_observations_json}"
             )
+        openai_payload: dict[str, object] = {
+            "model": normalize_openai_compatible_model_name(model),
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            "temperature": 0.5,
+            "max_tokens": 65536,
+            "enable_thinking": True,
+        }
         if is_anthropic:
-            payload = {
-                "model": model,
-                "max_tokens": 65536,
-                "system": system_prompt,
-                "messages": [
-                    {"role": "user", "content": user_prompt},
-                ],
-                "temperature": 0.5,
-            }
             headers = {"x-api-key": api_key, "anthropic-version": "2023-06-01", "Content-Type": "application/json"}
-            request_url = f"{base_url}/messages"
+            request_url = anthropic_messages_url(base_url)
+            request_payload = build_anthropic_messages_payload(openai_payload)
         else:
-            payload = {
-                "model": normalize_openai_compatible_model_name(model),
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-                "temperature": 0.5,
-                "enable_thinking": True,
-            }
             headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
             request_url = f"{base_url}/chat/completions"
+            request_payload = openai_payload
         timeout = max(15, int(self._settings.visual_evidence_timeout_seconds or 120))
         with httpx.Client(timeout=timeout, follow_redirects=True) as client:
-            response = client.post(request_url, headers=headers, json=payload)
+            response = client.post(request_url, headers=headers, json=request_payload)
         response.raise_for_status()
         body = response.json()
-        content = ""
-        if is_anthropic:
-            anthropic_content = body.get("content") if isinstance(body, dict) else None
-            if isinstance(anthropic_content, list):
-                for block in anthropic_content:
-                    if isinstance(block, dict) and block.get("type") == "text":
-                        content = str(block.get("text") or "")
-                        break
-        else:
-            choices = body.get("choices") if isinstance(body, dict) else None
-            if not isinstance(choices, list) or not choices:
-                raise VideoSumError("图文笔记模型没有返回内容。")
-            message = choices[0].get("message") if isinstance(choices[0], dict) else None
-            content = str(message.get("content") if isinstance(message, dict) else "").strip()
+        content = extract_llm_message_content(body)
         if not content:
             raise VideoSumError("图文笔记模型返回空内容。")
         return content
