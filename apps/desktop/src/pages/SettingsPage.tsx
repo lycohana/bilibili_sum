@@ -1,4 +1,4 @@
-import { type FocusEvent, type FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import { type FocusEvent, type FormEvent, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import QRCode from "qrcode";
 
 import {
@@ -264,9 +264,33 @@ export function SettingsPage({
   const [taskListLoading, setTaskListLoading] = useState(false);
   const [taskListError, setTaskListError] = useState("");
   const [taskList, setTaskList] = useState<TaskSummary[]>([]);
+  const settingsNavRef = useRef<HTMLElement | null>(null);
   const focusTargetRefs = useRef<Record<string, HTMLElement | null>>({});
   const lastHandledExternalFocusNonce = useRef<number | null>(null);
   const silentModelCheckRunId = useRef(0);
+
+  useLayoutEffect(() => {
+    const node = settingsNavRef.current;
+    if (!node) {
+      return;
+    }
+
+    const updateStickyTop = () => {
+      const bottomGap = 24;
+      const topGap = 24;
+      const stickyTop = Math.min(topGap, window.innerHeight - node.offsetHeight - bottomGap);
+      node.style.setProperty("--settings-nav-sticky-top", `${Math.round(stickyTop)}px`);
+    };
+
+    updateStickyTop();
+    const observer = new ResizeObserver(updateStickyTop);
+    observer.observe(node);
+    window.addEventListener("resize", updateStickyTop);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", updateStickyTop);
+    };
+  }, []);
 
   useEffect(() => {
     if (isDirty) {
@@ -1297,7 +1321,7 @@ export function SettingsPage({
           { id: "settings-service-status", message: serviceStatus },
         ]}
       />
-      <aside className="settings-nav">
+      <aside className="settings-nav" ref={settingsNavRef}>
         <div className="settings-nav-header">
           <span className="settings-nav-label-small">BiliSum</span>
           <div className="settings-nav-brand-card">

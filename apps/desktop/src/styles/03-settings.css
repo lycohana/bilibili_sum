@@ -8,6 +8,8 @@
 }
 
 .settings-nav {
+  position: sticky;
+  top: var(--settings-nav-sticky-top, 24px);
   display: flex;
   flex-direction: column;
   gap: 18px;
@@ -1754,6 +1756,7 @@
   }
 
   .settings-nav {
+    position: static;
     border-right: 1px solid var(--settings-border);
     border-bottom: 1px solid var(--settings-border);
   }
