@@ -3107,7 +3107,7 @@ P 数索引：
             return False
         if hasattr(self._settings, "visual_multimodal_enabled") and not self._settings.visual_multimodal_enabled:
             return False
-        base_url, model, api_key = self._visual_llm_config()
+        _provider, base_url, model, api_key = self._visual_llm_config()
         return bool(base_url and model and api_key)
 
     def _visual_llm_config(self) -> tuple[str, str, str, str]:
