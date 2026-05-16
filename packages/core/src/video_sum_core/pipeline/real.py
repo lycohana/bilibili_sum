@@ -184,6 +184,8 @@ class PipelineSettings:
     siliconflow_asr_base_url: str = "https://api.siliconflow.cn/v1"
     siliconflow_asr_model: str = "TeleAI/TeleSpeechASR"
     siliconflow_asr_api_key: str = ""
+    siliconflow_asr_chunk_duration_seconds: int = 1800
+    siliconflow_asr_concurrency: int = 2
     multimodal_asr_base_url: str = ""
     multimodal_asr_model: str = "mimo-v2-omni"
     multimodal_asr_api_key: str = ""
@@ -897,6 +899,9 @@ class RealPipelineRunner(PipelineRunner):
         duration: float | None,
         emit: Callable[[str, int, str, dict[str, object] | None], None],
     ) -> tuple[str, list[dict[str, object]]]:
+        import subprocess
+        import tempfile
+
         base_url = (self._settings.siliconflow_asr_base_url or "").rstrip("/")
         model_name = (self._settings.siliconflow_asr_model or "").strip()
         api_key = (self._settings.siliconflow_asr_api_key or "").strip()
@@ -912,52 +917,133 @@ class RealPipelineRunner(PipelineRunner):
             f"正在连接语音识别服务 {model_name}",
             {"provider": "siliconflow", "model": model_name},
         )
-        emit(
-            "transcribing",
-            58,
-            "正在上传音频到硅基流动语音识别服务",
-            {"provider": "siliconflow", "audio_name": audio_path.name},
-        )
 
+        chunk_duration = max(60, int(self._settings.siliconflow_asr_chunk_duration_seconds or 1800))
+        concurrency = max(1, min(int(self._settings.siliconflow_asr_concurrency or 2), 8))
+        total_duration = float(duration or 0)
+
+        # Determine total duration via ffprobe if unknown
+        if total_duration <= 0:
+            try:
+                result = subprocess.run(
+                    ["ffprobe", "-v", "quiet", "-show_entries", "format=duration", "-of", "csv=p=0", str(audio_path)],
+                    capture_output=True, text=True, timeout=30,
+                )
+                total_duration = float(result.stdout.strip())
+            except Exception:
+                total_duration = 0
+
+        file_size = audio_path.stat().st_size
+        needs_chunking = total_duration > (chunk_duration * 1.1) or file_size > 500 * 1024 * 1024
+
+        if not needs_chunking:
+            emit("transcribing", 58, "正在上传音频到语音识别服务", {"provider": "siliconflow"})
+            transcript = self._siliconflow_transcribe_chunk(
+                audio_path, audio_path.name, model_name, api_key, request_url, 0, 1, emit,
+            )
+            if not transcript:
+                raise VideoSumError("SiliconFlow ASR returned empty transcript text.")
+            emit("transcribing", 78, "语音识别完成，正在整理文本", {"provider": "siliconflow"})
+            segments = self._build_fallback_segments_from_transcript(transcript, duration)
+            emit("transcribing", 84, f"转写完成，共 {len(segments)} 段", {"provider": "siliconflow"})
+            return self._render_transcript_from_segments(segments), segments
+
+        num_chunks = max(1, int(-(-total_duration // chunk_duration)))
+        emit("transcribing", 55, f"音频 {int(total_duration)}s，分 {num_chunks} 段并发识别", {"provider": "siliconflow", "chunks": num_chunks, "concurrency": concurrency})
+
+        chunk_jobs: list[tuple[int, float, Path]] = []
+        with tempfile.TemporaryDirectory() as tmpdir:
+            for i in range(num_chunks):
+                chunk_start = i * chunk_duration
+                chunk_path = Path(tmpdir) / f"sf_chunk_{i:03d}.mp3"
+                ffmpeg_cmd = [
+                    "ffmpeg", "-y", "-i", str(audio_path),
+                    "-ss", str(chunk_start), "-t", str(chunk_duration),
+                    "-acodec", "libmp3lame", "-ab", "64k", "-ar", "16000", "-ac", "1",
+                    str(chunk_path),
+                ]
+                subprocess.run(ffmpeg_cmd, capture_output=True, text=True, timeout=120)
+                if chunk_path.exists() and chunk_path.stat().st_size > 0:
+                    chunk_jobs.append((i, chunk_start, chunk_path))
+                else:
+                    logger.warning("siliconflow asr chunk %d/%d extraction failed", i + 1, num_chunks)
+
+            results: dict[int, str] = {}
+            with ThreadPoolExecutor(max_workers=concurrency) as pool:
+                futures = {
+                    pool.submit(
+                        self._siliconflow_transcribe_chunk,
+                        job[2], f"chunk_{job[0]:03d}.mp3", model_name, api_key, request_url,
+                        job[1], num_chunks, emit,
+                    ): job[0]
+                    for job in chunk_jobs
+                }
+                for future in as_completed(futures):
+                    chunk_idx = futures[future]
+                    try:
+                        results[chunk_idx] = future.result() or ""
+                    except Exception as exc:
+                        logger.warning("siliconflow asr chunk %d failed: %s", chunk_idx, exc)
+
+        if not results:
+            raise VideoSumError("SiliconFlow ASR returned empty transcript for all chunks.")
+
+        all_transcripts = [(k * chunk_duration, results[k]) for k in sorted(results) if results[k]]
+        full_transcript = "\n".join(text for _, text in all_transcripts)
+        emit("transcribing", 78, f"并发识别完成，{len(results)}/{len(chunk_jobs)} 段成功", {"provider": "siliconflow"})
+
+        segments: list[dict[str, object]] = []
+        for chunk_offset, chunk_text in all_transcripts:
+            chunk_segs = self._build_fallback_segments_from_transcript(chunk_text, chunk_duration)
+            for seg in chunk_segs:
+                segments.append({
+                    "start": round(seg["start"] + chunk_offset, 3),
+                    "end": round(seg["end"] + chunk_offset, 3),
+                    "text": seg["text"],
+                })
+        emit("transcribing", 84, f"转写完成，共 {len(segments)} 段", {"provider": "siliconflow"})
+        return self._render_transcript_from_segments(segments), segments
+
+    def _siliconflow_transcribe_chunk(
+        self,
+        chunk_path: Path,
+        file_name: str,
+        model_name: str,
+        api_key: str,
+        request_url: str,
+        chunk_offset: float,
+        total_chunks: int,
+        emit: Callable[[str, int, str, dict[str, object] | None], None],
+    ) -> str:
         headers = {"Authorization": f"Bearer {api_key}"}
         timeout = httpx.Timeout(connect=30.0, read=600.0, write=600.0, pool=30.0)
-        try:
-            with audio_path.open("rb") as audio_handle, httpx.Client(timeout=timeout) as client:
-                response = client.post(
-                    request_url,
-                    headers=headers,
-                    data={"model": model_name},
-                    files={"file": (audio_path.name, audio_handle, "audio/mpeg")},
-                )
-        except httpx.HTTPError as exc:
-            raise VideoSumError(f"SiliconFlow ASR request failed: {exc}") from exc
-
-        if response.status_code in {401, 403}:
-            detail = _extract_response_error_detail(response)
-            raise TranscriptionAuthenticationError(f"SiliconFlow ASR authentication failed: {detail}")
-        if response.status_code >= 400:
-            detail = _extract_response_error_detail(response)
-            raise VideoSumError(f"SiliconFlow ASR request failed: {detail}")
-
-        payload = response.json()
-        transcript = str(payload.get("text") or "").strip() if isinstance(payload, dict) else ""
-        if not transcript:
-            raise VideoSumError("SiliconFlow ASR returned empty transcript text.")
-
-        emit(
-            "transcribing",
-            78,
-            "云端语音识别完成，正在整理文本结构",
-            {"provider": "siliconflow", "transcript_chars": len(transcript)},
-        )
-        segments = self._build_fallback_segments_from_transcript(transcript, duration)
-        emit(
-            "transcribing",
-            84,
-            f"转写完成，共整理 {len(segments)} 段",
-            {"provider": "siliconflow", "segment_count": len(segments)},
-        )
-        return self._render_transcript_from_segments(segments), segments
+        max_retries = 3
+        for attempt in range(max_retries):
+            if attempt > 0:
+                time.sleep(3 * (attempt + 1))
+            try:
+                with chunk_path.open("rb") as f, httpx.Client(timeout=timeout) as client:
+                    response = client.post(
+                        request_url,
+                        headers=headers,
+                        data={"model": model_name},
+                        files={"file": (file_name, f, "audio/mpeg")},
+                    )
+                if response.status_code in {401, 403}:
+                    detail = _extract_response_error_detail(response)
+                    raise TranscriptionAuthenticationError(f"SiliconFlow ASR auth failed: {detail}")
+                if response.status_code >= 400:
+                    detail = _extract_response_error_detail(response)
+                    logger.warning("siliconflow asr chunk error (offset=%.0fs): %s", chunk_offset, detail)
+                    continue
+                payload = response.json()
+                text = str(payload.get("text") or "").strip() if isinstance(payload, dict) else ""
+                if text:
+                    return text
+                logger.warning("siliconflow asr chunk empty (offset=%.0fs, attempt=%d)", chunk_offset, attempt + 1)
+            except httpx.HTTPError as exc:
+                logger.warning("siliconflow asr chunk request failed (offset=%.0fs): %s", chunk_offset, exc)
+        return ""
 
     def _transcribe_with_multimodal(
         self,

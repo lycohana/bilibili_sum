@@ -465,6 +465,8 @@ class ServiceSettings(BaseSettings):
     siliconflow_asr_base_url: str = "https://api.siliconflow.cn/v1"
     siliconflow_asr_model: str = "TeleAI/TeleSpeechASR"
     siliconflow_asr_api_key: str = ""
+    siliconflow_asr_chunk_duration_seconds: int = 1800
+    siliconflow_asr_concurrency: int = 2
     multimodal_asr_base_url: str = ""
     multimodal_asr_model: str = "mimo-v2-omni"
     multimodal_asr_api_key: str = ""

@@ -879,6 +879,8 @@ def build_worker(
         "siliconflow_asr_base_url": runtime_settings.siliconflow_asr_base_url,
         "siliconflow_asr_model": runtime_settings.siliconflow_asr_model,
         "siliconflow_asr_api_key": runtime_settings.siliconflow_asr_api_key,
+        "siliconflow_asr_chunk_duration_seconds": runtime_settings.siliconflow_asr_chunk_duration_seconds,
+        "siliconflow_asr_concurrency": runtime_settings.siliconflow_asr_concurrency,
         "multimodal_asr_base_url": runtime_settings.multimodal_asr_base_url,
         "multimodal_asr_model": runtime_settings.multimodal_asr_model,
         "multimodal_asr_api_key": runtime_settings.multimodal_asr_api_key,

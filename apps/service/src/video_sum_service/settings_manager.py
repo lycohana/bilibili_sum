@@ -57,6 +57,8 @@ class SettingsUpdatePayload(BaseModel):
     siliconflow_asr_base_url: str | None = None
     siliconflow_asr_model: str | None = None
     siliconflow_asr_api_key: str | None = None
+    siliconflow_asr_chunk_duration_seconds: int | None = None
+    siliconflow_asr_concurrency: int | None = None
     multimodal_asr_base_url: str | None = None
     multimodal_asr_model: str | None = None
     multimodal_asr_api_key: str | None = None

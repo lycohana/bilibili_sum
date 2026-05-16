@@ -303,6 +303,8 @@ export type ServiceSettings = {
   siliconflow_asr_model: string;
   siliconflow_asr_api_key: string;
   siliconflow_asr_api_key_configured?: boolean;
+  siliconflow_asr_chunk_duration_seconds: number;
+  siliconflow_asr_concurrency: number;
   multimodal_asr_base_url: string;
   multimodal_asr_model: string;
   multimodal_asr_api_key: string;

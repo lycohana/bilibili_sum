@@ -194,6 +194,10 @@ export function renderSettingsView(state) {
               ${renderInput("siliconflow_asr_base_url", "SiliconFlow Base URL", settings.siliconflow_asr_base_url || "https://api.siliconflow.cn/v1", "text", "https://api.siliconflow.cn/v1")}
               ${renderInput("siliconflow_asr_model", "SiliconFlow ASR 模型", settings.siliconflow_asr_model || "TeleAI/TeleSpeechASR", "text", "TeleAI/TeleSpeechASR")}
               ${renderSiliconFlowApiKeyInput(settings.siliconflow_asr_api_key || "")}
+              ${renderInput("siliconflow_asr_chunk_duration_seconds", "切片时长（秒）", settings.siliconflow_asr_chunk_duration_seconds ?? 1800, "number", "1800")}
+              <span class="input-caption" style="margin-top:-4px;margin-bottom:12px;display:block;color:var(--text-secondary);">长音频按此时长切片，默认 1800 秒（30 分钟）。</span>
+              ${renderInput("siliconflow_asr_concurrency", "并发数", settings.siliconflow_asr_concurrency ?? 2, "number", "2")}
+              <span class="input-caption" style="margin-top:-4px;margin-bottom:12px;display:block;color:var(--text-secondary);">同时发送的转写请求数，默认 2。</span>
             </div>
 
             <div class="asr-config-group" data-provider="multimodal" ${transcriptionProvider === "multimodal" ? "" : "hidden"}>

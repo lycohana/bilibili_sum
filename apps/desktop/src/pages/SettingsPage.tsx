@@ -136,6 +136,8 @@ const SETTINGS_SEARCH_ITEMS: SettingsSearchItem[] = [
   { category: "transcription", targetKey: "siliconflow_asr_base_url", title: "SiliconFlow Base URL", description: "云端转写 API 地址。", keywords: ["siliconflow", "base url", "api", "硅基流动"] },
   { category: "transcription", targetKey: "siliconflow_asr_api_key", title: "SiliconFlow API Key", description: "云端转写 API 密钥。", keywords: ["key", "apikey", "api key", "密钥", "硅基流动"] },
   { category: "transcription", targetKey: "siliconflow_asr_model", title: "ASR 模型", description: "云端转写模型名称。", keywords: ["model", "模型", "teleai", "telespeechasr"] },
+  { category: "transcription", targetKey: "siliconflow_asr_chunk_duration_seconds", title: "硅基 ASR 切片时长（秒）", description: "长音频自动切片的每段秒数，默认 1800（30 分钟）。", keywords: ["siliconflow", "切片", "chunk", "分段", "秒"] },
+  { category: "transcription", targetKey: "siliconflow_asr_concurrency", title: "硅基 ASR 并发数", description: "同时发送的转写请求数。", keywords: ["siliconflow", "并发", "concurrency"] },
   { category: "transcription", targetKey: "multimodal_asr_base_url", title: "多模态 ASR Base URL", description: "多模态转写 API 地址。", keywords: ["multimodal", "多模态", "base url", "api"] },
   { category: "transcription", targetKey: "multimodal_asr_api_key", title: "多模态 ASR API Key", description: "多模态转写 API 密钥。", keywords: ["multimodal", "多模态", "key", "apikey", "api key", "密钥"] },
   { category: "transcription", targetKey: "multimodal_asr_model", title: "多模态 ASR 模型", description: "多模态转写模型名称。", keywords: ["multimodal", "多模态", "model", "模型", "mimo"] },
@@ -1984,6 +1986,16 @@ export function SettingsPage({
                       <span className="settings-input-label">语音转写 ASR 模型</span>
                       <input className="settings-input-field" value={form.siliconflow_asr_model} onChange={(e) => updateForm({ ...form, siliconflow_asr_model: e.target.value })} placeholder="TeleAI/TeleSpeechASR" />
                       <span className="settings-input-caption">推荐使用：TeleAI/TeleSpeechASR</span>
+                    </label>
+                    <label className="settings-input-group" ref={registerFocusTarget("siliconflow_asr_chunk_duration_seconds") as (node: HTMLLabelElement | null) => void}>
+                      <span className="settings-input-label">ASR 切片时长（秒）</span>
+                      <input className="settings-input-field" type="number" min={60} max={3600} value={form.siliconflow_asr_chunk_duration_seconds ?? 1800} onChange={(e) => updateForm({ ...form, siliconflow_asr_chunk_duration_seconds: Number(e.target.value) })} />
+                      <span className="settings-input-caption">长音频按此时长切片，默认 1800 秒（30 分钟）。API 单次最长 60 分钟。</span>
+                    </label>
+                    <label className="settings-input-group" ref={registerFocusTarget("siliconflow_asr_concurrency") as (node: HTMLLabelElement | null) => void}>
+                      <span className="settings-input-label">ASR 并发数</span>
+                      <input className="settings-input-field" type="number" min={1} max={8} value={form.siliconflow_asr_concurrency ?? 2} onChange={(e) => updateForm({ ...form, siliconflow_asr_concurrency: Number(e.target.value) })} />
+                      <span className="settings-input-caption">同时发送的转写请求数，默认 2。</span>
                     </label>
                     <div className="settings-inline-actions">
                       <button

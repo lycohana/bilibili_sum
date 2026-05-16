@@ -421,7 +421,7 @@ def test_transcribe_with_siliconflow_maps_auth_error(monkeypatch: pytest.MonkeyP
 
     monkeypatch.setattr("video_sum_core.pipeline.real.httpx.Client", FakeClient)
 
-    with pytest.raises(TranscriptionAuthenticationError, match="authentication failed"):
+    with pytest.raises(TranscriptionAuthenticationError, match="auth failed"):
         runner._transcribe_with_siliconflow(audio_path, 10.0, lambda *_args, **_kwargs: None)
 
 

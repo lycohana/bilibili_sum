@@ -461,6 +461,8 @@ async function handleSettingsSubmit(event) {
     siliconflow_asr_base_url: readTrimmedValue("siliconflow_asr_base_url", current.siliconflow_asr_base_url || ""),
     siliconflow_asr_model: readTrimmedValue("siliconflow_asr_model", current.siliconflow_asr_model || "TeleAI/TeleSpeechASR"),
     siliconflow_asr_api_key: readValue("siliconflow_asr_api_key", current.siliconflow_asr_api_key || ""),
+    siliconflow_asr_chunk_duration_seconds: readNumberValue("siliconflow_asr_chunk_duration_seconds", current.siliconflow_asr_chunk_duration_seconds ?? 1800),
+    siliconflow_asr_concurrency: readNumberValue("siliconflow_asr_concurrency", current.siliconflow_asr_concurrency ?? 2),
     multimodal_asr_base_url: readTrimmedValue("multimodal_asr_base_url", current.multimodal_asr_base_url || ""),
     multimodal_asr_model: readTrimmedValue("multimodal_asr_model", current.multimodal_asr_model || "mimo-v2-omni"),
     multimodal_asr_api_key: readValue("multimodal_asr_api_key", current.multimodal_asr_api_key || ""),
