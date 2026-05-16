@@ -1063,7 +1063,7 @@ def test_visual_vlm_integrated_mode_uses_observations(tmp_path: Path, monkeypatc
                 "timestamp_seconds": 42.0,
                 "caption": "模型解析的结构图",
                 "semantic_summary": "图中展示三层任务链。",
-                "note_explanation": "这张结构图说明任务链如何串联。",
+                "key_facts": ["这张结构图说明任务链如何串联。"],
                 "should_insert": True,
                 "importance": 0.9,
                 "suggested_anchor": "任务链",

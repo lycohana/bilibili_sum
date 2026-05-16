@@ -2478,7 +2478,7 @@ P 数索引：
                     "timestamp_seconds": float(frame["timestamp_seconds"]),
                     "caption": str(frame.get("planned_caption") or frame.get("planned_concept") or "关键画面信息"),
                     "ocr_text": "",
-                    "semantic_summary": str(frame.get("planned_reason") or ""),
+                    "semantic_summary": str(frame.get("planned_note_hint") or frame.get("planned_reason") or ""),
                     "key_facts": [],
                     "suggested_anchor": str(frame.get("anchor_heading") or ""),
                     "scene": "unknown",
