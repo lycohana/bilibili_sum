@@ -3434,8 +3434,9 @@ P 数索引：
             headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
             request_url = f"{base_url}/chat/completions"
             request_payload = openai_payload
-        timeout = max(15, int(self._settings.visual_evidence_timeout_seconds or 120))
-        with httpx.Client(timeout=timeout, follow_redirects=True) as client:
+        # Compose step processes the full knowledge note + all observations — can take a while.
+        compose_timeout = max(60, int(self._settings.visual_evidence_timeout_seconds or 300))
+        with httpx.Client(timeout=compose_timeout, follow_redirects=True) as client:
             response = client.post(request_url, headers=headers, json=request_payload)
         response.raise_for_status()
         body = response.json()
