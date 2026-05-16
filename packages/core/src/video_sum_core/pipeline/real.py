@@ -3369,8 +3369,9 @@ P 数索引：
         provider, base_url, model, api_key = self._visual_llm_config()
         is_anthropic = provider == "anthropic"
         system_prompt = self._settings.visual_note_system_prompt.strip() or (
-            "你是一名擅长基于视频截图深度整合知识的中文编辑。只输出 Markdown 正文。"
-            "以画面客观信息为线索重新组织文章，禁止使用「画面呈现」「该画面」「上图」等流水账句式。"
+            "你是一名擅长将截图与文字深度整合的中文技术编辑。只输出 Markdown 正文。"
+            "每张截图必须紧跟在它所属的知识段落后面，绝对禁止把图片堆在文章末尾。"
+            "禁止使用「画面呈现」「该画面」「上图」等流水账句式。"
         )
         payload_observations = []
         for item in observations:
@@ -3385,9 +3386,9 @@ P 数索引：
             )
         user_template = self._settings.visual_note_user_prompt_template.strip() or (
             "请以画面客观信息为参考重新整合知识笔记，图片链接使用 observations 中的 markdown_image。\n"
-            "要求：写一篇连贯的图文笔记，禁止使用「画面呈现」「该画面」「上图」「如下所示」等句式；"
-            "以知识点为叙事主线重新编排段落；精简合并重复内容；图片自然插入相关段落后用 1-2 句过渡；"
-            "key_facts 和 semantic_summary 是参考素材，转化为自己的语言融入文章，不要复制。\n"
+            "核心规则：每张图必须紧跟其对应段落后方，禁止把所有图片堆在文章末尾。图片分散在全文中。\n"
+            "要求：以知识点为叙事主线重新编排段落；精简合并重复内容；禁止「画面呈现」「该画面」「上图」等句式；"
+            "图片插入后用 1-2 句自然过渡；key_facts/semantic_summary 转化为自己的语言，不要复制。\n"
             "标题：{title}\n原始知识笔记：\n{knowledge_note_markdown}\n视觉解析 JSON：\n{visual_observations_json}"
         )
         if insert_plan:
@@ -3468,9 +3469,16 @@ P 数索引：
                 output.extend(self._format_visual_insertion_markdown(current))
                 insertion_index += 1
                 inserted += 1
-        while insertion_index < len(insertions):
-            output.extend(self._format_visual_insertion_markdown(insertions[insertion_index]))
-            insertion_index += 1
+        # Place any remaining insertions before the last content line instead of dumping at the end.
+        if insertion_index < len(insertions):
+            tail = len(output)
+            for rev_idx in range(len(output) - 1, -1, -1):
+                if output[rev_idx].strip():
+                    tail = rev_idx + 1
+                    break
+            for extra in reversed(insertions[insertion_index:]):
+                output.insert(tail, "")
+                output[tail:tail] = self._format_visual_insertion_markdown(extra)
         return "\n".join(output).strip()
 
     def _format_visual_insertion_markdown(self, insertion: dict[str, object]) -> list[str]:
