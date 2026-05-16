@@ -3247,6 +3247,7 @@ export function SettingsPage({
                     <select className="settings-select-field" value={form.visual_vlm_provider || "openai-compatible"} onChange={(e) => updateForm({ ...form, visual_vlm_provider: e.target.value })}>
                       <option value="openai-compatible">OpenAI Compatible</option>
                       <option value="openai">OpenAI</option>
+                      <option value="anthropic">Anthropic</option>
                       <option value="custom">自定义</option>
                     </select>
                   </label>

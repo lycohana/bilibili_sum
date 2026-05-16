@@ -3022,11 +3022,12 @@ P 数索引：
         base_url, model, api_key = self._visual_llm_config()
         return bool(base_url and model and api_key)
 
-    def _visual_llm_config(self) -> tuple[str, str, str]:
+    def _visual_llm_config(self) -> tuple[str, str, str, str]:
+        provider = (self._settings.visual_vlm_provider or "openai-compatible").strip()
         base_url = (self._settings.visual_evidence_base_url or self._settings.llm_base_url or "").rstrip("/")
         model = self._settings.visual_evidence_model or self._settings.llm_model
         api_key = self._settings.visual_evidence_api_key or self._settings.llm_api_key
-        return base_url, model, api_key
+        return provider, base_url, model, api_key
 
     def _describe_visual_frames(
         self,
@@ -3034,14 +3035,18 @@ P 数索引：
         title: str,
         result: TaskResult,
     ) -> list[dict[str, object]]:
-        base_url, model, api_key = self._visual_llm_config()
+        provider, base_url, model, api_key = self._visual_llm_config()
         observations: list[dict[str, object]] = []
         timeline_hint = "\n".join(
             f"- {self._format_seconds(float(item.get('start') or 0))} {str(item.get('title') or '').strip()}：{str(item.get('summary') or '').strip()}"
             for item in (result.timeline or [])[:20]
             if isinstance(item, dict)
         )
-        headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+        is_anthropic = provider == "anthropic"
+        if is_anthropic:
+            headers = {"x-api-key": api_key, "anthropic-version": "2023-06-01", "Content-Type": "application/json"}
+        else:
+            headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
         timeout = max(15, int(self._settings.visual_evidence_timeout_seconds or 120))
         retry_count = max(0, min(int(self._settings.visual_evidence_retry_count or 1), 3))
         for frame in frames:
@@ -3050,7 +3055,6 @@ P 数索引：
                 image_path = str(frame.get("analysis_image_path") or frame.get("image_path") or "")
             image_file = Path(str(image_path))
             if not image_file.exists():
-                # frame_index stores paths relative to the visual directory.
                 continue
             image_data = base64.b64encode(image_file.read_bytes()).decode("ascii")
             prompt = self._settings.visual_vlm_prompt.strip() or (
@@ -3068,39 +3072,71 @@ P 数索引：
                 )
             except (KeyError, IndexError, ValueError):
                 prompt = f"{prompt}\n视频标题：{title}\n时间点：{frame.get('timestamp')}\n章节线索：\n{timeline_hint}"
-            payload = {
-                "model": normalize_openai_compatible_model_name(model),
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "text", "text": prompt},
-                            {
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": f"data:image/jpeg;base64,{image_data}",
-                                    "detail": "low",
+            if is_anthropic:
+                payload: dict[str, object] = {
+                    "model": model,
+                    "max_tokens": 2048,
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": prompt},
+                                {
+                                    "type": "image",
+                                    "source": {
+                                        "type": "base64",
+                                        "media_type": "image/jpeg",
+                                        "data": image_data,
+                                    },
                                 },
-                            },
-                        ],
-                    }
-                ],
-                "response_format": {"type": "json_object"},
-                "enable_thinking": False,
-            }
+                            ],
+                        }
+                    ],
+                }
+                request_url = f"{base_url}/messages"
+            else:
+                payload = {
+                    "model": normalize_openai_compatible_model_name(model),
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": prompt},
+                                {
+                                    "type": "image_url",
+                                    "image_url": {
+                                        "url": f"data:image/jpeg;base64,{image_data}",
+                                        "detail": "low",
+                                    },
+                                },
+                            ],
+                        }
+                    ],
+                    "response_format": {"type": "json_object"},
+                    "enable_thinking": False,
+                }
+                request_url = f"{base_url}/chat/completions"
             last_error: Exception | None = None
             for attempt in range(retry_count + 1):
                 try:
                     with httpx.Client(timeout=timeout, follow_redirects=True) as client:
-                        response = client.post(f"{base_url}/chat/completions", headers=headers, json=payload)
+                        response = client.post(request_url, headers=headers, json=payload)
                     response.raise_for_status()
                     body = response.json()
-                    choices = body.get("choices") if isinstance(body, dict) else None
                     content = ""
-                    if isinstance(choices, list) and choices:
-                        message = choices[0].get("message") if isinstance(choices[0], dict) else None
-                        if isinstance(message, dict):
-                            content = str(message.get("content") or "")
+                    if is_anthropic:
+                        anthropic_content = body.get("content") if isinstance(body, dict) else None
+                        if isinstance(anthropic_content, list):
+                            for block in anthropic_content:
+                                if isinstance(block, dict) and block.get("type") == "text":
+                                    content = str(block.get("text") or "")
+                                    break
+                    else:
+                        choices = body.get("choices") if isinstance(body, dict) else None
+                        if isinstance(choices, list) and choices:
+                            message = choices[0].get("message") if isinstance(choices[0], dict) else None
+                            if isinstance(message, dict):
+                                content = str(message.get("content") or "")
                     parsed = json.loads(_extract_json_object_text(content))
                     key_facts_raw = parsed.get("key_facts")
                     key_facts: list[str] = []
@@ -3269,7 +3305,8 @@ P 数索引：
         observations: list[dict[str, object]],
         insert_plan: dict[str, object] | None = None,
     ) -> str:
-        base_url, model, api_key = self._visual_llm_config()
+        provider, base_url, model, api_key = self._visual_llm_config()
+        is_anthropic = provider == "anthropic"
         system_prompt = self._settings.visual_note_system_prompt.strip() or (
             "你是一名擅长基于视频截图深度整合知识的中文编辑。只输出 Markdown 正文。"
             "以画面客观信息为线索重新组织文章，禁止使用「画面呈现」「该画面」「上图」等流水账句式。"
@@ -3317,26 +3354,49 @@ P 数索引：
                 f"原始知识笔记：\n{knowledge_note_markdown}\n\n"
                 f"视觉解析 JSON：\n{visual_observations_json}"
             )
-        payload = {
-            "model": normalize_openai_compatible_model_name(model),
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            "temperature": 0.5,
-            "enable_thinking": True,
-        }
-        headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+        if is_anthropic:
+            payload = {
+                "model": model,
+                "max_tokens": 65536,
+                "system": system_prompt,
+                "messages": [
+                    {"role": "user", "content": user_prompt},
+                ],
+                "temperature": 0.5,
+            }
+            headers = {"x-api-key": api_key, "anthropic-version": "2023-06-01", "Content-Type": "application/json"}
+            request_url = f"{base_url}/messages"
+        else:
+            payload = {
+                "model": normalize_openai_compatible_model_name(model),
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                "temperature": 0.5,
+                "enable_thinking": True,
+            }
+            headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+            request_url = f"{base_url}/chat/completions"
         timeout = max(15, int(self._settings.visual_evidence_timeout_seconds or 120))
         with httpx.Client(timeout=timeout, follow_redirects=True) as client:
-            response = client.post(f"{base_url}/chat/completions", headers=headers, json=payload)
+            response = client.post(request_url, headers=headers, json=payload)
         response.raise_for_status()
         body = response.json()
-        choices = body.get("choices") if isinstance(body, dict) else None
-        if not isinstance(choices, list) or not choices:
-            raise VideoSumError("图文笔记模型没有返回内容。")
-        message = choices[0].get("message") if isinstance(choices[0], dict) else None
-        content = str(message.get("content") if isinstance(message, dict) else "").strip()
+        content = ""
+        if is_anthropic:
+            anthropic_content = body.get("content") if isinstance(body, dict) else None
+            if isinstance(anthropic_content, list):
+                for block in anthropic_content:
+                    if isinstance(block, dict) and block.get("type") == "text":
+                        content = str(block.get("text") or "")
+                        break
+        else:
+            choices = body.get("choices") if isinstance(body, dict) else None
+            if not isinstance(choices, list) or not choices:
+                raise VideoSumError("图文笔记模型没有返回内容。")
+            message = choices[0].get("message") if isinstance(choices[0], dict) else None
+            content = str(message.get("content") if isinstance(message, dict) else "").strip()
         if not content:
             raise VideoSumError("图文笔记模型返回空内容。")
         return content
@@ -3428,7 +3488,7 @@ P 数索引：
             "status": status,
             "source_kind": source_kind,
             "provider": "openai_compatible" if self._visual_llm_available() else "none",
-            "model": self._visual_llm_config()[1] if self._visual_llm_available() else "",
+            "model": self._visual_llm_config()[2] if self._visual_llm_available() else "",
             "visual_note_path": note_path.name,
             "visual_enhanced_note_path": enhanced_note_path.name,
             "frame_index_path": frame_index_path.name,
