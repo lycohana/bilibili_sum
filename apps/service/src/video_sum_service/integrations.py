@@ -216,11 +216,7 @@ def build_effective_llm_test_settings(payload: SettingsUpdatePayload | None = No
         }
     if payload is not None and payload.llm_test_scope == "visual":
         provider = current_settings.visual_vlm_provider or current_settings.llm_provider
-        explicit_base_url = (current_settings.visual_evidence_base_url or "").strip()
-        fallback_base_url = (current_settings.llm_base_url or "").strip()
-        base_url = explicit_base_url or fallback_base_url
-        if is_anthropic_llm(provider, base_url) and not explicit_base_url and "api.anthropic.com" not in fallback_base_url.lower():
-            base_url = "https://api.anthropic.com/v1"
+        base_url = current_settings.visual_evidence_base_url or current_settings.llm_base_url
         current_dump = {
             **current_dump,
             "llm_enabled": current_settings.visual_multimodal_enabled,

@@ -994,7 +994,8 @@ class RealPipelineRunner(PipelineRunner):
 
         segments: list[dict[str, object]] = []
         for chunk_offset, chunk_text in all_transcripts:
-            chunk_segs = self._build_fallback_segments_from_transcript(chunk_text, chunk_duration)
+            actual_dur = min(chunk_duration, max(1.0, total_duration - chunk_offset))
+            chunk_segs = self._build_fallback_segments_from_transcript(chunk_text, actual_dur)
             for seg in chunk_segs:
                 segments.append({
                     "start": round(seg["start"] + chunk_offset, 3),
@@ -1289,7 +1290,8 @@ class RealPipelineRunner(PipelineRunner):
         # Build segments with proper timestamps
         segments: list[dict[str, object]] = []
         for chunk_offset, chunk_dur, chunk_text in all_transcripts:
-            chunk_segments = self._build_fallback_segments_from_transcript(chunk_text, chunk_dur)
+            actual_dur = min(chunk_dur, max(1.0, total_duration - chunk_offset)) if total_duration > 0 else chunk_dur
+            chunk_segments = self._build_fallback_segments_from_transcript(chunk_text, actual_dur)
             for seg in chunk_segments:
                 segments.append({
                     "start": round(seg["start"] + chunk_offset, 3),
@@ -3110,12 +3112,7 @@ P 数索引：
 
     def _visual_llm_config(self) -> tuple[str, str, str, str]:
         provider = (self._settings.visual_vlm_provider or "openai-compatible").strip()
-        explicit_base_url = (self._settings.visual_evidence_base_url or "").strip().rstrip("/")
-        fallback_base_url = (self._settings.llm_base_url or "").strip().rstrip("/")
-        base_url = explicit_base_url or fallback_base_url
-        use_anthropic = is_anthropic_llm(provider, base_url if base_url else None)
-        if use_anthropic and not explicit_base_url and "api.anthropic.com" not in fallback_base_url.lower():
-            base_url = "https://api.anthropic.com/v1"
+        base_url = (self._settings.visual_evidence_base_url or self._settings.llm_base_url or "").rstrip("/")
         model = self._settings.visual_evidence_model or self._settings.llm_model
         api_key = self._settings.visual_evidence_api_key or self._settings.llm_api_key
         return provider, base_url, model, api_key
