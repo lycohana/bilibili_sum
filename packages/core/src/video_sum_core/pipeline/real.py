@@ -3094,7 +3094,11 @@ P 数索引：
                 "response_format": {"type": "json_object"},
                 "enable_thinking": False,
             }
-            if is_anthropic:
+            # Only use Anthropic image format for the real Anthropic API.
+            # Third-party Anthropic-compatible endpoints (e.g. SiliconFlow) do not
+            # support images via /messages — fall back to OpenAI format for those.
+            use_anthropic_images = is_anthropic and "api.anthropic.com" in base_url.lower()
+            if use_anthropic_images:
                 request_url = anthropic_messages_url(base_url)
                 headers = {"x-api-key": api_key, "anthropic-version": "2023-06-01", "Content-Type": "application/json"}
                 request_payload = build_anthropic_messages_payload(payload)

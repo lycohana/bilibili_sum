@@ -309,7 +309,21 @@ def probe_llm_connection(payload: SettingsUpdatePayload | None = None) -> dict[s
             "enable_thinking": False,
             "chat_template_kwargs": {"enable_thinking": False},
         }
-    if use_anthropic:
+    # For visual tests with images, only the real Anthropic API supports image
+    # blocks via /messages. Third-party Anthropic-compatible endpoints
+    # (SiliconFlow etc.) need OpenAI format for image requests.
+    fallback_to_openai_for_images = (
+        use_anthropic and test_scope == "visual" and "api.anthropic.com" not in base_url.lower()
+    )
+    if fallback_to_openai_for_images:
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
+        request_url = openai_chat_completions_url(base_url)
+        request_json = request_payload
+        request_json["model"] = normalize_openai_compatible_model_name(model)
+    elif use_anthropic:
         headers = {
             "x-api-key": api_key,
             "anthropic-version": ANTHROPIC_API_VERSION,
@@ -325,8 +339,9 @@ def probe_llm_connection(payload: SettingsUpdatePayload | None = None) -> dict[s
         request_url = openai_chat_completions_url(base_url)
         request_json = request_payload
 
+    probe_timeout = 120 if test_scope == "visual" else 30
     try:
-        with httpx.Client(timeout=20, follow_redirects=True) as client:
+        with httpx.Client(timeout=probe_timeout, follow_redirects=True) as client:
             response = client.post(
                 request_url,
                 headers=headers,
