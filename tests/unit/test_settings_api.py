@@ -1561,6 +1561,56 @@ def test_asr_connection_uses_custom_test_audio_file(monkeypatch, tmp_path: Path)
     assert calls[0]["files"]["file"] == ("voice.mp3", b"voice-bytes", "audio/mpeg")
 
 
+def test_multimodal_asr_connection_falls_back_to_reasoning_content(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    current = ServiceSettings(
+        data_dir=tmp_path / "data",
+        cache_dir=tmp_path / "cache",
+        tasks_dir=tmp_path / "tasks",
+        runtime_channel="base",
+        transcription_provider="multimodal",
+        multimodal_asr_base_url="https://api.example.com/v1",
+        multimodal_asr_api_key="test-key",
+        multimodal_asr_model="test-model",
+    )
+    settings_manager._settings = current
+
+    calls: list[dict[str, object]] = []
+
+    class FakeResponse:
+        status_code = 200
+        text = '{"choices":[{"message":{"reasoning_content":"reasoned transcript"}}]}'
+
+        def json(self) -> dict[str, object]:
+            return {"choices": [{"message": {"reasoning_content": "reasoned transcript"}}]}
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def __enter__(self) -> "FakeClient":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def post(self, url: str, headers: dict[str, str], json: dict[str, object]) -> FakeResponse:
+            calls.append({"url": url, "headers": headers, "json": json})
+            return FakeResponse()
+
+    monkeypatch.setattr(service_app.httpx, "Client", FakeClient)
+
+    response = probe_asr_connection()
+
+    assert response["ok"] is True
+    assert response["responsePreview"] == "reasoned transcript"
+    assert calls[0]["url"] == "https://api.example.com/v1/chat/completions"
+    assert calls[0]["headers"]["Authorization"] == "Bearer test-key"
+    assert calls[0]["json"]["model"] == "test-model"
+
+
 def test_asr_connection_requires_api_key(tmp_path: Path) -> None:
     current = ServiceSettings(
         data_dir=tmp_path / "data",

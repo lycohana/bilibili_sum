@@ -26,6 +26,7 @@ from video_sum_infra.config import (
 
 SECRET_SETTINGS_FIELDS = {
     "siliconflow_asr_api_key",
+    "multimodal_asr_api_key",
     "llm_api_key",
     "knowledge_llm_api_key",
     "visual_evidence_api_key",
@@ -56,6 +57,9 @@ class SettingsUpdatePayload(BaseModel):
     siliconflow_asr_base_url: str | None = None
     siliconflow_asr_model: str | None = None
     siliconflow_asr_api_key: str | None = None
+    multimodal_asr_base_url: str | None = None
+    multimodal_asr_model: str | None = None
+    multimodal_asr_api_key: str | None = None
     cuda_variant: str | None = None
     runtime_channel: str | None = None
     output_dir: str | None = None

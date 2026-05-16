@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 
 import httpx
@@ -222,6 +223,156 @@ def test_transcribe_uses_siliconflow_provider(monkeypatch: pytest.MonkeyPatch) -
     assert segments[0]["text"] == "mock"
     assert called["audio_path"] == Path("sample.mp3")
     assert called["duration"] == 12.0
+
+
+def test_transcribe_uses_multimodal_provider(monkeypatch: pytest.MonkeyPatch) -> None:
+    runner = RealPipelineRunner(
+        PipelineSettings(
+            tasks_dir=Path("tests/tmp_tasks"),
+            transcription_provider="multimodal",
+            multimodal_asr_base_url="https://api.example.com/v1",
+            multimodal_asr_model="test-model",
+        )
+    )
+
+    called: dict[str, object] = {}
+
+    def fake_multimodal(
+        audio_path: Path,
+        duration: float | None,
+        emit,
+    ) -> tuple[str, list[dict[str, object]]]:
+        called["audio_path"] = audio_path
+        called["duration"] = duration
+        return "mock transcript", [{"start": 0.0, "end": 5.0, "text": "mock"}]
+
+    monkeypatch.setattr(runner, "_transcribe_with_multimodal", fake_multimodal)
+
+    transcript, segments = runner._transcribe(Path("sample.mp3"), 12.0, lambda *_args, **_kwargs: None)
+
+    assert transcript == "mock transcript"
+    assert segments[0]["text"] == "mock"
+    assert called["audio_path"] == Path("sample.mp3")
+    assert called["duration"] == 12.0
+
+
+def test_transcribe_with_multimodal_uses_configured_ffmpeg_for_chunking(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    runner = RealPipelineRunner(
+        PipelineSettings(
+            tasks_dir=tmp_path,
+            transcription_provider="multimodal",
+            multimodal_asr_base_url="https://api.example.com/v1",
+            multimodal_asr_model="test-model",
+        )
+    )
+    audio_path = tmp_path / "sample.mp3"
+    audio_path.write_bytes(b"fake audio" * 1024)
+    ffmpeg_exe = tmp_path / ("ffmpeg.exe" if os.name == "nt" else "ffmpeg")
+    ffprobe_exe = tmp_path / ("ffprobe.exe" if os.name == "nt" else "ffprobe")
+    ffmpeg_exe.write_text("", encoding="utf-8")
+    ffprobe_exe.write_text("", encoding="utf-8")
+    commands: list[list[str]] = []
+
+    class FakeCompletedProcess:
+        def __init__(self, stdout: str = "", stderr: str = "", returncode: int = 0) -> None:
+            self.stdout = stdout
+            self.stderr = stderr
+            self.returncode = returncode
+
+    def fake_run(command, *args, **kwargs):
+        command = [str(item) for item in command]
+        commands.append(command)
+        if command[0] == str(ffprobe_exe):
+            return FakeCompletedProcess(stdout="370.0\n")
+        chunk_path = Path(command[-1])
+        chunk_path.write_bytes(b"chunk")
+        return FakeCompletedProcess()
+
+    transcripts = iter(["第一段", "第二段", "第三段"])
+
+    monkeypatch.setattr("video_sum_core.pipeline.real.ffmpeg_location", lambda: ffmpeg_exe)
+    monkeypatch.setattr("video_sum_core.pipeline.real.subprocess.run", fake_run)
+    monkeypatch.setattr(
+        runner,
+        "_build_fallback_segments_from_transcript",
+        lambda text, duration: [{"start": 0.0, "end": 1.0, "text": text}],
+    )
+
+    def fake_send(*args, **kwargs):
+        return next(transcripts)
+
+    # Replace the network-facing nested behavior by making every generated chunk readable
+    # through a small fake httpx client.
+    class FakeResponse:
+        status_code = 200
+        text = "{}"
+
+        def json(self) -> dict[str, object]:
+            return {"choices": [{"message": {"content": fake_send()}}]}
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def __enter__(self) -> "FakeClient":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def post(self, *args, **kwargs) -> FakeResponse:
+            return FakeResponse()
+
+    monkeypatch.setattr("video_sum_core.pipeline.real.httpx.Client", FakeClient)
+
+    transcript, segments = runner._transcribe_with_multimodal(
+        audio_path,
+        None,
+        lambda *_args, **_kwargs: None,
+    )
+
+    assert commands[0][0] == str(ffprobe_exe)
+    assert all(command[0] == str(ffmpeg_exe) for command in commands[1:])
+    assert len(commands[1:]) == 3
+    assert "第一段" in transcript
+    assert [segment["text"] for segment in segments] == ["第一段", "第二段", "第三段"]
+
+
+def test_transcribe_with_multimodal_fails_when_large_audio_duration_is_unknown(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    runner = RealPipelineRunner(
+        PipelineSettings(
+            tasks_dir=tmp_path,
+            transcription_provider="multimodal",
+            multimodal_asr_base_url="https://api.example.com/v1",
+            multimodal_asr_model="test-model",
+        )
+    )
+    audio_path = tmp_path / "large.mp3"
+    audio_path.write_bytes(b"0" * (16 * 1024 * 1024))
+    ffmpeg_exe = tmp_path / ("ffmpeg.exe" if os.name == "nt" else "ffmpeg")
+    ffprobe_exe = tmp_path / ("ffprobe.exe" if os.name == "nt" else "ffprobe")
+    ffmpeg_exe.write_text("", encoding="utf-8")
+    ffprobe_exe.write_text("", encoding="utf-8")
+
+    class FakeCompletedProcess:
+        stdout = ""
+        stderr = ""
+        returncode = 1
+
+    monkeypatch.setattr("video_sum_core.pipeline.real.ffmpeg_location", lambda: ffmpeg_exe)
+    monkeypatch.setattr(
+        "video_sum_core.pipeline.real.subprocess.run",
+        lambda *args, **kwargs: FakeCompletedProcess(),
+    )
+
+    with pytest.raises(VideoSumError, match="duration"):
+        runner._transcribe_with_multimodal(audio_path, None, lambda *_args, **_kwargs: None)
 
 
 def test_transcribe_with_siliconflow_requires_api_key() -> None:

@@ -184,6 +184,9 @@ class PipelineSettings:
     siliconflow_asr_base_url: str = "https://api.siliconflow.cn/v1"
     siliconflow_asr_model: str = "TeleAI/TeleSpeechASR"
     siliconflow_asr_api_key: str = ""
+    multimodal_asr_base_url: str = ""
+    multimodal_asr_model: str = "mimo-v2-omni"
+    multimodal_asr_api_key: str = ""
     llm_enabled: bool = False
     llm_provider: str = "openai-compatible"
     llm_api_key: str = ""
@@ -803,8 +806,11 @@ class RealPipelineRunner(PipelineRunner):
         duration: float | None,
         emit: Callable[[str, int, str, dict[str, object] | None], None],
     ) -> tuple[str, list[dict[str, object]]]:
-        if self._settings.transcription_provider == "siliconflow":
+        provider = self._settings.transcription_provider
+        if provider == "siliconflow":
             return self._transcribe_with_siliconflow(audio_path, duration, emit)
+        if provider == "multimodal":
+            return self._transcribe_with_multimodal(audio_path, duration, emit)
         return self._transcribe_with_local_whisper(audio_path, duration, emit)
 
     def _transcribe_with_local_whisper(
@@ -948,6 +954,266 @@ class RealPipelineRunner(PipelineRunner):
             84,
             f"转写完成，共整理 {len(segments)} 段",
             {"provider": "siliconflow", "segment_count": len(segments)},
+        )
+        return self._render_transcript_from_segments(segments), segments
+
+    def _transcribe_with_multimodal(
+        self,
+        audio_path: Path,
+        duration: float | None,
+        emit: Callable[[str, int, str, dict[str, object] | None], None],
+    ) -> tuple[str, list[dict[str, object]]]:
+        import base64
+        import subprocess
+        import tempfile
+
+        base_url = (self._settings.multimodal_asr_base_url or "").rstrip("/")
+        model_name = (self._settings.multimodal_asr_model or "").strip()
+        api_key = (self._settings.multimodal_asr_api_key or "").strip()
+        if not base_url:
+            raise TranscriptionConfigurationError("Multimodal ASR base URL is not configured.")
+        if not model_name:
+            raise TranscriptionConfigurationError("Multimodal ASR model is not configured.")
+
+        request_url = f"{base_url}/chat/completions"
+        emit(
+            "transcribing",
+            52,
+            f"正在连接多模态语音识别服务 {model_name}",
+            {"provider": "multimodal", "model": model_name},
+        )
+
+        # Audio chunking config: split into chunks of 3 minutes
+        CHUNK_DURATION_SECONDS = 180  # 3 minutes per chunk
+        total_duration = float(duration or 0)
+        ffmpeg_exe = ffmpeg_location()
+        ffprobe_exe = None
+        if ffmpeg_exe is not None:
+            ffprobe_name = "ffprobe.exe" if os.name == "nt" else "ffprobe"
+            ffprobe_exe = ffmpeg_exe.parent / ffprobe_name
+        if ffprobe_exe is None or not ffprobe_exe.is_file():
+            ffprobe_which = shutil.which("ffprobe")
+            if ffprobe_which:
+                ffprobe_exe = Path(ffprobe_which)
+
+        # If duration is unknown, try to get it from ffprobe
+        if total_duration <= 0 and ffprobe_exe is not None:
+            try:
+                result = subprocess.run(
+                    [
+                        str(ffprobe_exe),
+                        "-v",
+                        "quiet",
+                        "-show_entries",
+                        "format=duration",
+                        "-of",
+                        "csv=p=0",
+                        str(audio_path),
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                    check=False,
+                    **_windows_hidden_subprocess_kwargs(),
+                )
+                if result.returncode == 0:
+                    total_duration = float(result.stdout.strip())
+            except Exception:
+                total_duration = 0
+
+        # Determine if chunking is needed (> 6 minutes or file > 15MB)
+        file_size = audio_path.stat().st_size
+        needs_chunking = (total_duration > 360) or (file_size > 15 * 1024 * 1024)
+        if needs_chunking and ffmpeg_exe is None:
+            raise VideoSumError("FFmpeg is unavailable, cannot split audio for multimodal ASR.")
+        if needs_chunking and total_duration <= 0:
+            raise VideoSumError("Unable to determine audio duration for multimodal ASR chunking.")
+
+        mime_map = {".wav": "audio/wav", ".mp3": "audio/mp3", ".m4a": "audio/mp4", ".ogg": "audio/ogg", ".flac": "audio/flac"}
+
+        headers = {"Content-Type": "application/json"}
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+
+        def _send_audio_chunk(chunk_path: Path, chunk_offset: float, chunk_index: int, total_chunks: int) -> str:
+            """Send a single audio chunk to the multimodal ASR API with retry on empty response."""
+            with chunk_path.open("rb") as f:
+                chunk_data = f.read()
+            chunk_b64 = base64.b64encode(chunk_data).decode("utf-8")
+
+            emit(
+                "transcribing",
+                55 + int(20 * chunk_index / max(1, total_chunks)),
+                f"正在识别音频片段 {chunk_index + 1}/{total_chunks}",
+                {"provider": "multimodal", "chunk": chunk_index + 1, "total": total_chunks, "offset": chunk_offset},
+            )
+
+            chunk_ext = chunk_path.suffix.lower()
+            chunk_mime = mime_map.get(chunk_ext, "audio/wav")
+
+            payload = {
+                "model": model_name,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "input_audio",
+                                "input_audio": {
+                                    "data": f"data:{chunk_mime};base64,{chunk_b64}",
+                                },
+                            },
+                            {
+                                "type": "text",
+                                "text": "请转录这段音频的全部文字内容，保持原文，不要修改",
+                            },
+                        ],
+                    }
+                ],
+                "max_completion_tokens": 4096,
+            }
+
+            max_retries = 5
+            for attempt in range(max_retries):
+                if attempt > 0:
+                    wait_sec = 3 * (attempt + 1)
+                    logger.info("multimodal chunk %d/%d retry %d/%d (offset=%.0fs, size=%d bytes, wait=%ds)", chunk_index + 1, total_chunks, attempt + 1, max_retries, chunk_offset, len(chunk_data), wait_sec)
+                    time.sleep(wait_sec)
+
+                timeout = httpx.Timeout(connect=30.0, read=600.0, write=600.0, pool=30.0)
+                with httpx.Client(timeout=timeout) as client:
+                    response = client.post(request_url, headers=headers, json=payload)
+
+                if response.status_code in {401, 403}:
+                    detail = _extract_response_error_detail(response)
+                    raise TranscriptionAuthenticationError(f"Multimodal ASR authentication failed: {detail}")
+                if response.status_code >= 400:
+                    detail = _extract_response_error_detail(response)
+                    raise VideoSumError(f"Multimodal ASR request failed: {detail}")
+
+                result = response.json()
+                transcript = ""
+                choices = result.get("choices") or []
+                if choices:
+                    message = choices[0].get("message") or {}
+                    transcript = str(message.get("content") or "").strip()
+                    if not transcript:
+                        transcript = str(message.get("reasoning_content") or "").strip()
+
+                if transcript:
+                    if attempt > 0:
+                        logger.info("multimodal chunk %d/%d succeeded on retry %d (offset=%.0fs)", chunk_index + 1, total_chunks, attempt + 1, chunk_offset)
+                    return transcript
+
+                finish_reason = choices[0].get("finish_reason", "unknown") if choices else "no_choices"
+                logger.warning("multimodal chunk %d/%d empty response (attempt %d/%d, offset=%.0fs, finish_reason=%s)", chunk_index + 1, total_chunks, attempt + 1, max_retries, chunk_offset, finish_reason)
+
+            return ""
+
+        # Reject oversized single-chunk payloads (> 12MB raw → ~16MB base64)
+        MAX_SINGLE_CHUNK_BYTES = 12 * 1024 * 1024
+        all_transcripts: list[tuple[float, float, str]] = []  # (offset, duration, text)
+
+        if not needs_chunking:
+            if file_size > MAX_SINGLE_CHUNK_BYTES:
+                raise VideoSumError(
+                    f"Audio file too large for single-chunk multimodal ASR "
+                    f"({file_size / 1024 / 1024:.1f}MB > {MAX_SINGLE_CHUNK_BYTES / 1024 / 1024:.0f}MB). "
+                    f"Please enable chunking by ensuring audio duration is known."
+                )
+            # Single chunk - send entire audio
+            emit("transcribing", 58, "正在发送音频到多模态识别服务", {"provider": "multimodal", "audio_size": file_size})
+            transcript = _send_audio_chunk(audio_path, 0.0, 0, 1)
+            if not transcript:
+                raise VideoSumError("Multimodal ASR returned empty transcript text.")
+            all_transcripts.append((0.0, total_duration or 0, transcript))
+        else:
+            # Multiple chunks - split and process with overlap to reduce
+            # missed words at boundaries.  Each chunk (except the first)
+            # starts 2s earlier so the model hears boundary audio in both
+            # adjacent chunks.  This may produce slight duplication in the
+            # merged transcript, which the LLM summariser can handle.
+            CHUNK_OVERLAP_SECONDS = 2
+            num_chunks = max(1, int(-(-total_duration // CHUNK_DURATION_SECONDS)))  # ceil division
+            emit(
+                "transcribing",
+                55,
+                f"音频较长({int(total_duration)}秒)，将分 {num_chunks} 段识别",
+                {"provider": "multimodal", "total_duration": total_duration, "chunks": num_chunks},
+            )
+
+            with tempfile.TemporaryDirectory() as tmpdir:
+                for i in range(num_chunks):
+                    chunk_start = i * CHUNK_DURATION_SECONDS
+                    chunk_duration = CHUNK_DURATION_SECONDS
+                    if i > 0:
+                        chunk_start -= CHUNK_OVERLAP_SECONDS
+                        chunk_duration += CHUNK_OVERLAP_SECONDS
+                    chunk_path = Path(tmpdir) / f"chunk_{i:03d}.mp3"
+
+                    # Re-encode to MP3 for reliable splitting and smaller file size
+                    ffmpeg_cmd = [
+                        str(ffmpeg_exe), "-y",
+                        "-i", str(audio_path),
+                        "-ss", str(chunk_start),
+                        "-t", str(chunk_duration),
+                        "-acodec", "libmp3lame",
+                        "-ab", "64k",
+                        "-ar", "16000",
+                        "-ac", "1",
+                        str(chunk_path),
+                    ]
+                    result = subprocess.run(
+                        ffmpeg_cmd,
+                        capture_output=True,
+                        text=True,
+                        timeout=120,
+                        check=False,
+                        **_windows_hidden_subprocess_kwargs(),
+                    )
+
+                    if not chunk_path.exists() or chunk_path.stat().st_size == 0:
+                        logger.warning("multimodal chunk %d/%d extraction failed (offset=%.0fs): %s", i + 1, num_chunks, chunk_start, result.stderr[-200:] if result.stderr else "empty output")
+                        continue
+
+                    chunk_size_kb = chunk_path.stat().st_size / 1024
+                    logger.info("multimodal chunk %d/%d extracted: offset=%.0fs, size=%.0fKB", i + 1, num_chunks, chunk_start, chunk_size_kb)
+
+                    transcript = _send_audio_chunk(chunk_path, chunk_start, i, num_chunks)
+                    if transcript:
+                        all_transcripts.append((chunk_start, chunk_duration, transcript))
+                    else:
+                        logger.warning("multimodal chunk %d/%d returned empty transcript after all retries (offset=%.0fs, size=%.0fKB)", i + 1, num_chunks, chunk_start, chunk_size_kb)
+
+        if not all_transcripts:
+            raise VideoSumError("Multimodal ASR returned empty transcript text.")
+
+        # Merge all chunk transcripts
+        full_transcript = "\n".join(text for _, _, text in all_transcripts)
+
+        emit(
+            "transcribing",
+            78,
+            "多模态语音识别完成，正在整理文本结构",
+            {"provider": "multimodal", "transcript_chars": len(full_transcript), "chunks_processed": len(all_transcripts)},
+        )
+
+        # Build segments with proper timestamps
+        segments: list[dict[str, object]] = []
+        for chunk_offset, chunk_dur, chunk_text in all_transcripts:
+            chunk_segments = self._build_fallback_segments_from_transcript(chunk_text, chunk_dur)
+            for seg in chunk_segments:
+                segments.append({
+                    "start": round(seg["start"] + chunk_offset, 3),
+                    "end": round(seg["end"] + chunk_offset, 3),
+                    "text": seg["text"],
+                })
+
+        emit(
+            "transcribing",
+            84,
+            f"转写完成，共整理 {len(segments)} 段",
+            {"provider": "multimodal", "segment_count": len(segments)},
         )
         return self._render_transcript_from_segments(segments), segments
 
