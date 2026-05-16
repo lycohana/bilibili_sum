@@ -3413,11 +3413,15 @@ P 数索引：
                 if plan_item:
                     item["insert_plan"] = plan_item
         visual_observations_json = json.dumps(payload_observations, ensure_ascii=False, indent=2)
+        # Truncate large inputs to keep compose prompt under reasonable token limits.
+        # Long knowledge notes and many observations cause timeouts on reasoning models.
+        truncated_note = _truncate_text(knowledge_note_markdown, 8000)
+        truncated_obs = _truncate_text(visual_observations_json, 12000)
         try:
             user_prompt = user_template.format(
                 title=title,
-                knowledge_note_markdown=knowledge_note_markdown,
-                visual_observations_json=visual_observations_json,
+                knowledge_note_markdown=truncated_note,
+                visual_observations_json=truncated_obs,
             )
         except (KeyError, IndexError, ValueError) as exc:
             logger.warning("visual note prompt template format failed error=%s", exc)
