@@ -18,147 +18,106 @@
 
 ---
 
-> 深度优化 B 站体验，同时支持 YouTube 与本地视频；自动转写、总结、生成知识卡片，并支持 RAG 问答与 Markdown / Obsidian 导出。
+> 深度优化 B 站体验，同时支持 YouTube 与本地视频。自动转写、总结、图文笔记、思维导图、知识库 RAG 问答，数据全部落本地。
 
-## 🌟 为什么需要 BiliSum
+[📸 待截图: 首页整体截图，展示视频库、任务队列、侧边栏导航]
 
-市面上的视频转写工具不少，但大多止步于"把话说完"——丢给你一段 transcript，或者一段泛泛的摘要。
+## 产品特性
 
-**BiliSum 想做得更多：**
+```
+B 站 / YouTube / 本地视频  →  转写  →  文本笔记  →  图文笔记  →  思维导图  →  知识库
+         ↓                          ↓                          ↓
+    B 站扫码登录              可回溯的任务历史             AI 检索问答
+```
 
-- 📚 **不止是转写** —— 自动拆解章节、提炼要点，生成结构化的知识卡片
-- 🧠 **不止于单视频** —— 跨视频知识库，用 AI Agent 对整库内容进行检索与问答
-- 🗃️ **沉淀为资产** —— 每个视频都是一条可追溯的知识条目，附带完整任务历史
-- 🔄 **可反复打磨** —— 转写不满意？重新跑。摘要不够好？换套模型再来
-- 🏠 **本地优先** —— 数据落本地，隐私可控，断网也能用
+### 图文笔记（VLM 理解型） `新增`
 
-## 📸 产品速览
+VLM 理解型图文笔记是一版从零设计的笔记生成方式：VLM 阅读原始笔记和所有截图的客观信息，以画面为线索重新组织文章结构。每张图跟在对应知识段落后面，不是原文里插几张图，也不是把所有截图堆在末尾。
 
-### 知识卡片视图
+- 支持 OpenAI / Anthropic / 兼容接口 / 自定义端点作为视觉模型
+- 帧描述→客观事实列表，从源头杜绝流水账描述
+- 精选配图（3-6 张），段落与图片交替呈现
+- 合成超时 300s，预过滤低质量帧
 
-<div align="center">
-  <img src="docs/pic/cardpage.png" alt="BiliSum 知识卡片" width="800"/>
-  <p><i>核心概览 + 关键要点 + 章节时间轴，三栏布局清晰呈现</i></p>
-</div>
+在设置页 → 图文笔记形式中选择「VLM 理解型图文笔记」启用。
 
-### 笔记视图
+> VLM 模式会调用多模态模型处理截图，API 费用比纯文本高。想控制成本可以把「最多截图数」调小或「截图最小间隔」调大。超长视频的笔记可能偏简略，截图逻辑还在优化中——设置页可以自定义截图规划的提示词。
 
-<div align="center">
-  <img src="docs/pic/notepage.png" alt="BiliSum 笔记视图" width="800"/>
-  <p><i>完整转写内容，支持数学公式、代码块等富文本格式</i></p>
-</div>
+[📸 待截图: 一张 VLM 理解型图文笔记的成品效果，展示段落与图片交替排列的排版]
 
-### 思维导图视图
+### 视觉模型独立配置 `新增`
 
-<div align="center">
-  <img src="docs/pic/mindmappage.png" alt="BiliSum 思维导图" width="800"/>
-  <p><i>放射状知识网络，内容结构和逻辑脉络一目了然</i></p>
-</div>
+画面理解和图文笔记合成可以独立配置视觉模型，不再跟随主 LLM。支持多提供商自动适配——选中 OpenAI / Anthropic / 兼容接口后，图片格式、端点、认证全部自动切换。第三方端点图片请求不兼容时也会自动回退。
+
+[📸 待截图: 设置页视觉模型配置区，包括提供商下拉、Base URL、模型名称、API Key 和测试按钮]
+
+### 文本笔记 / 思维导图
+
+- LLM 摘要：不只是压缩，而是识别论点、案例、结论，生成结构化知识卡片
+- 思维导图：线性视频转放射状知识网络，支持缩放、拖拽、节点高亮
+- 转写全文：章节时间轴 + 关键句定位，数学公式和代码块自动格式化
+- 重跑机制：换套模型重生成摘要，不满意就再来
+
+[📸 待截图: 思维导图视图，展示放射状知识网络]
 
 ### 知识库
 
-<div align="center">
-  <img src="docs/pic/knowledge.png" alt="BiliSum 知识库" width="800"/>
-  <p><i>跨视频 AI 检索与问答，标签化管理，构建可生长的知识体系</i></p>
-</div>
+- 跨视频 RAG 检索问答，语义搜索 + 关键词搜索
+- 自动/手动标签，标签关系网络可视化
+- 支持本地 LLM，断网也能用
 
-### 视频库首页
+[📸 待截图: 知识库问答界面或标签网络视图]
 
-<div align="center">
-  <img src="docs/pic/mainpage.png" alt="BiliSum 首页" width="800"/>
-  <p><i>统一管理已探测和已处理的视频，支持收藏与筛选</i></p>
-</div>
+### 多 P 视频与全集总结
 
-## ✨ 产品特性
+自动检测分 P 视频，支持选择单个分 P 或批量创建任务。全集总结模式可聚合所有分 P 内容生成一篇总笔记。
 
-### 核心工作流
+### ASR 转写
 
-```
-B 站 / YouTube / 本地视频 → 视频探测 → 下载/转写 → 结构化摘要 → 知识卡片 → 知识库入库
-             ↓                              ↓                           ↓
-        B 站扫码登录                   可回溯的任务历史              AI 检索问答
-```
+- SiliconFlow ASR：长音频自动切片 + 并发识别，突破 60 分钟限制
+- 多模态 ASR：支持 OpenAI 兼容的音频模型（如 mimo-v2-omni），切片时长和重试次数可调
+- 本地 Whisper：CPU / CUDA 可选
 
-### 亮点能力
+### 导入导出
 
-- **🧠 智能摘要引擎**
-  - 不只是压缩内容，而是提炼知识骨架
-  - 自动识别视频中的核心论点、案例和结论
-  - 支持重新生成摘要，换套模型换个视角
+- 导入：B 站链接、YouTube 链接、本地视频文件（mp4 / mkv / mov / webm）
+- 导出：Markdown、Obsidian 格式，一键打包笔记和截图
 
-- **🗄️ 知识库系统**
-  - 跨视频 AI 知识检索与问答（RAG Agent）
-  - 自动/手动标签管理，标签关系网络可视化
-  - 语义搜索 + 关键词搜索，精准定位知识点
-  - 可选本地 LLM，无需联网即可使用
+### B 站风控
 
-- **📈 思维导图视图**
-  - 把线性视频转换成放射状知识网络
-  - 一眼看清内容结构和逻辑脉络
-  - 支持缩放、拖拽、节点高亮互动
+桌面端内置扫码登录，自动保存 Cookies。也支持手动导入 cookies.txt。
 
-- **⚡ 学习效率倍增**
-  - 1 小时视频 → 5 分钟快速掌握核心
-  - 章节时间轴 + 关键句高亮，精准定位
-  - 支持倍速浏览文字稿，比看字幕快 3 倍
+### 桌面端 `macOS 新增`
 
-- **📄 多 P 视频全覆盖**
-  - 自动检测分 P 视频，支持选择单个分 P
-  - 批量创建分 P 任务，独立生成摘要
-  - 全集总结模式，聚合所有分 P 内容
+- Windows / macOS 双平台，自绘窗口栏，统一 UI 风格
+- 动画启动画面
+- 应用内自动更新，设置页一键检查新版本
 
-- **📝 完整笔记 + 导出**
-  - 逐字稿全文展示，支持搜索定位
-  - 数学公式、代码块自动格式化
-  - 一键导出为 Markdown / Obsidian 格式
-
-- **🔐 B 站风控处理**
-  - 桌面端一键扫码登录，自动保存 Cookies
-  - 手动导入 cookies.txt 支持
-  - 风控拦截自动提示并提供解决方案
-
-- **📁 本地视频支持**
-  - 导入本地 mp4 / mkv / mov / webm 等格式
-  - 桌面端直接选取文件，浏览器端上传
-  - 与在线视频完全相同的处理流程
-
-- **🔄 灵活重跑机制**
-  - `重新生成摘要`：复用转写，只重跑 LLM
-  - `重新转写`：从音频开始全部重来
-
-- **📊 实时进度透视**
-  - REST + SSE 双通道同步任务状态
-  - 任务悬浮窗实时查看队列与执行状态
-  - 每个阶段在做什么，清清楚楚
-
-- **▶️ YouTube 单视频支持**
-  - 支持 `watch`、`youtu.be`、`shorts` 等常见单视频链接
-  - 带 playlist 参数的单条视频会按当前视频处理
-
-## 🛠️ 技术栈
+## 技术栈
 
 | 模块 | 技术选型 |
 |------|----------|
 | 桌面端 | Electron + React + TypeScript + Vite |
 | 后端服务 | FastAPI + SQLite |
 | 视频下载 | yt-dlp |
-| 语音转写 | SiliconFlow ASR / 本地 Whisper（可选） |
-| 摘要生成 | OpenAI-compatible API / Anthropic Claude / 本地规则降级 |
+| 语音转写 | SiliconFlow ASR / 多模态 ASR / 本地 Whisper |
+| 摘要生成 | OpenAI-compatible / Anthropic Claude / 本地规则降级 |
+| 视觉模型 | OpenAI / Anthropic / 兼容接口（自动格式适配） |
 | 知识库 RAG | Embedding 向量检索 + LLM Agent |
 | 思维导图 | ReactFlow |
 | 知识网络 | D3 Force Graph |
 | 打包分发 | PyInstaller onedir + electron-builder + Docker |
 
-## 🚀 快速开始
+## 快速开始
 
 ### 环境要求
 
 - Python **3.12**
 - Node.js **20+**
-- Windows / macOS 桌面端
-- 可选：`ffmpeg`、CUDA（本地 ASR 加速）
+- Windows / macOS
+- 可选：`ffmpeg`、CUDA
 
-### npx 辅助入口
+### npx 入口
 
 ```powershell
 npx bilisum
@@ -166,58 +125,48 @@ npx bilisum start --port 3839
 npx bilisum doctor
 ```
 
-`npx bilisum` 会在本机启动浏览器版服务，默认访问 `http://127.0.0.1:3838`。首次运行会自动创建托管 Python 虚拟环境；需要本机已安装 Python 3.12。
+`npx bilisum` 在本机启动浏览器版服务，默认 `http://127.0.0.1:3838`。首次运行自动创建 Python 虚拟环境，需要本机已装 Python 3.12。
 
-浏览器版访问受访问密钥保护。若未显式配置 `VIDEO_SUM_ACCESS_TOKEN`，服务会自动生成安全密钥；远程部署或多人使用时，建议手动设置一个足够长的随机密钥。
+浏览器版受访问密钥保护。未配置 `VIDEO_SUM_ACCESS_TOKEN` 时自动生成；远程部署建议手动设置长随机密钥。
 
 ### 安装依赖
 
 ```powershell
-# 推荐：使用 uv
 uv sync --python 3.12 --all-packages
-
-# 安装前端依赖
 npm install --prefix .\apps\desktop
 ```
 
-### 配置环境变量
+### 环境变量
 
 ```powershell
 Copy-Item .env.example .env
 ```
 
-编辑 `.env`，填入你的 API Key：
+编辑 `.env`：
 
 ```env
-# 服务配置
 VIDEO_SUM_HOST=127.0.0.1
 VIDEO_SUM_PORT=3838
 VIDEO_SUM_ACCESS_TOKEN=replace-with-a-long-random-token
 
-# 转写服务（SiliconFlow）
+# 转写（SiliconFlow）
 VIDEO_SUM_TRANSCRIPTION_PROVIDER=siliconflow
 VIDEO_SUM_SILICONFLOW_ASR_BASE_URL=https://api.siliconflow.cn/v1
 VIDEO_SUM_SILICONFLOW_ASR_MODEL=TeleAI/TeleSpeechASR
-VIDEO_SUM_SILICONFLOW_ASR_API_KEY=your-siliconflow-api-key
+VIDEO_SUM_SILICONFLOW_ASR_API_KEY=your-key
 
-# LLM 摘要（可选，支持 OpenAI-compatible 与 Anthropic Claude）
+# LLM 摘要
 VIDEO_SUM_LLM_ENABLED=true
 VIDEO_SUM_LLM_PROVIDER=openai-compatible
 VIDEO_SUM_LLM_BASE_URL=https://coding.dashscope.aliyuncs.com/v1
 VIDEO_SUM_LLM_MODEL=qwen3.5-plus
-VIDEO_SUM_LLM_API_KEY=your-llm-api-key
+VIDEO_SUM_LLM_API_KEY=your-key
 
-# Anthropic / Claude 示例：
-# VIDEO_SUM_LLM_PROVIDER=anthropic
-# VIDEO_SUM_LLM_BASE_URL=https://api.anthropic.com/v1
-# VIDEO_SUM_LLM_MODEL=claude-3-5-haiku-latest
-# VIDEO_SUM_LLM_API_KEY=your-anthropic-api-key
-
-# B 站 Cookies（可选，遇到风控时配置）
+# B 站 Cookies（遇到风控时配置）
 VIDEO_SUM_YTDLP_COOKIES_FILE=
 ```
 
-桌面端遇到 B 站登录态或风控问题时，优先使用内置扫码登录获取 Cookies；Docker、npx 或无桌面环境下，也可以继续手动填写 `cookies.txt` 路径。
+桌面端遇到 B 站风控优先用内置扫码登录。
 
 ### 启动开发环境
 
@@ -225,210 +174,110 @@ VIDEO_SUM_YTDLP_COOKIES_FILE=
 npm run dev
 ```
 
-这条命令会同时拉起：
-- Vite 渲染层
-- Electron 桌面壳
-- Python 后端服务
+同时拉起 Vite 渲染层、Electron 桌面壳、Python 后端。
 
 ### 桌面端打包
 
 ```powershell
-npm run package:win
-```
-
-macOS 打包：
-
-```bash
-npm run package:mac
+npm run package:win     # Windows
+npm run package:mac     # macOS
 ```
 
 ### Docker 浏览器版
 
-Docker 分发提供的是 `Python 后端 + 自带静态前端` 的浏览器访问形态，不包含 Electron 桌面壳。
-镜像内默认内置静态版 `ffmpeg/ffprobe`，不会再额外拉进整套 Debian 多媒体运行库。
-
-#### 本地构建镜像
-
 ```powershell
+# 构建
 npm run docker:build
-```
 
-#### 运行容器
-
-```powershell
-docker run --rm ^
-  -p 3838:3838 ^
-  -v bilisum-data:/data ^
-  -e VIDEO_SUM_ACCESS_TOKEN=replace-with-a-long-random-token ^
-  -e VIDEO_SUM_LLM_ENABLED=true ^
-  -e VIDEO_SUM_LLM_PROVIDER=openai-compatible ^
-  -e VIDEO_SUM_LLM_BASE_URL=https://coding.dashscope.aliyuncs.com/v1 ^
-  -e VIDEO_SUM_LLM_MODEL=qwen3.5-plus ^
-  -e VIDEO_SUM_LLM_API_KEY=your-llm-api-key ^
-  -e VIDEO_SUM_SILICONFLOW_ASR_API_KEY=your-siliconflow-api-key ^
+# 运行
+docker run --rm -p 3838:3838 \
+  -v bilisum-data:/data \
+  -e VIDEO_SUM_ACCESS_TOKEN=your-token \
+  -e VIDEO_SUM_LLM_ENABLED=true \
+  -e VIDEO_SUM_LLM_BASE_URL=https://coding.dashscope.aliyuncs.com/v1 \
+  -e VIDEO_SUM_LLM_MODEL=qwen3.5-plus \
+  -e VIDEO_SUM_LLM_API_KEY=your-key \
+  -e VIDEO_SUM_SILICONFLOW_ASR_API_KEY=your-key \
   lycohana/bilisum:latest
 ```
 
-启动后直接访问 `http://127.0.0.1:3838`。
-
-容器内默认约定：
-- 服务监听 `0.0.0.0:3838`
-- 数据目录为 `/data`
-- SQLite 数据库默认写入 `/data/video_sum.db`
-- 缓存目录为 `/data/cache`
-- 任务产物目录为 `/data/tasks`
-
-#### 拉取正式发布镜像
-
-每次 tag 发版都会同步发布 Docker Hub 镜像：
+访问 `http://127.0.0.1:3838`。容器内服务监听 `0.0.0.0:3838`，数据目录 `/data`。
 
 ```powershell
 docker pull lycohana/bilisum:latest
-# 或者使用带版本号的 tag
-docker pull lycohana/bilisum:v1.15.1
 ```
 
 ### 从旧版迁移
 
-BiliSum 会在首次启动时自动从旧的 BriefVid 目录迁移本地数据：
+首次启动自动从 BriefVid 目录迁移数据到 BiliSum 目录，只复制缺失文件，不覆盖已有数据，不删除旧目录。
 
-- `%LOCALAPPDATA%\briefvid\data` → `%LOCALAPPDATA%\bilisum\data`
-- `%LOCALAPPDATA%\briefvid\runtime` → `%LOCALAPPDATA%\bilisum\runtime`
-- 旧桌面端偏好、B 站登录态和 cookies 会复制到新的 BiliSum 用户目录
-
-迁移只复制新目录中缺失的文件，不覆盖已有数据，也不会删除旧目录。
-
-## 📦 项目结构
+## 项目结构
 
 ```
 BiliSum/
 ├── apps/
-│   ├── desktop/       # Electron + React 桌面端
-│   │   ├── src/
-│   │   │   ├── pages/      # 页面组件（首页/视频库/知识库/详情页/设置）
-│   │   │   │   └── KnowledgePage/  # 知识库页面（问答/检索/标签/网络）
-│   │   │   ├── components/ # 通用 UI 组件
-│   │   │   ├── api.ts      # API 客户端
-│   │   │   └── appModel.ts # 状态管理
-│   │   └── build/          # 构建产物
-│   ├── web/           # 浏览器版静态产物目录（由 desktop renderer 构建写入）
-│   └── service/       # FastAPI 本地服务
-│       └── src/
-│           └── video_sum_service/
-│               ├── app.py             # FastAPI 应用入口
-│               ├── main.py            # 服务启动逻辑
-│               ├── worker.py          # 后台任务调度与执行
-│               ├── repository.py      # SQLite 数据持久化
-│               ├── schemas.py         # API 数据模型
-│               ├── task_exports.py    # 笔记导出（Markdown / Obsidian）
-│               ├── runtime_support.py # 运行时环境检测与维护
-│               ├── settings_manager.py # 配置管理
-│               ├── knowledge/         # 知识库子系统
-│               │   ├── index_service.py  # 知识索引构建
-│               │   ├── rag_service.py    # RAG 检索增强生成
-│               │   ├── tag_service.py    # 标签管理
-│               │   └── local_llm.py      # 本地 LLM 接入
-│               └── routers/           # API 路由
+│   ├── desktop/          # Electron + React 桌面端
+│   │   └── src/
+│   │       ├── pages/         # 首页/视频库/知识库/详情页/设置
+│   │       ├── components/    # 通用 UI 组件
+│   │       ├── api.ts         # API 客户端
+│   │       └── appModel.ts    # 状态管理
+│   ├── web/              # 浏览器版静态产物
+│   └── service/          # FastAPI 本地服务
+│       └── src/video_sum_service/
+│           ├── app.py              # FastAPI 入口
+│           ├── worker.py           # 后台任务调度
+│           ├── repository.py       # SQLite 持久化
+│           ├── settings_manager.py # 配置管理
+│           ├── knowledge/          # 知识库（索引/RAG/标签/本地LLM）
+│           └── routers/            # API 路由
 ├── packages/
-│   ├── core/          # 下载、转写、摘要核心逻辑
-│   │   └── src/video_sum_core/
-│   │       ├── pipeline/        # 流程编排
-│   │       ├── models/          # 领域模型
-│   │       └── markdown_exports.py  # Markdown 导出引擎
-│   └── infra/         # 配置、运行时、基础设施
-│       └── src/video_sum_infra/
-│           ├── config/   # 配置管理
-│           └── runtime/  # 运行时引导
-├── docs/pic/          # 文档资源
-├── Dockerfile         # Docker 浏览器版镜像定义
-├── scripts/           # PowerShell 工具脚本
-├── build/pyinstaller/ # PyInstaller 打包配置
-├── tests/             # 测试用例
-└── .env.example       # 环境变量模板
+│   ├── core/             # 下载/转写/摘要/图文笔记核心逻辑
+│   └── infra/            # 配置/运行时/LLM 工具函数
+├── docs/pic/             # 文档截图
+├── tests/                # 测试
+└── .env.example
 ```
 
-## 🤝 贡献指南
+## 贡献指南
 
-欢迎以任意方式参与 BiliSum 的成长：
+- 遇到 Bug 或有想法 → 直接开 Issue
+- 修复 Bug、加功能、优化体验 → 提 PR
+- 完善文档、补充示例 → 非常欢迎
+- 在你的工作流里用起来了 → 分享经验，帮助后来者
 
-### 你可以贡献什么
+代码风格：Python PEP 8 + 类型注解，TypeScript 严格模式 + 函数式组件，Commit 遵循 Conventional Commits。
 
-- 🐛 **提交 Issue**：遇到 Bug 或有功能建议，直接开 Issue
-- 🔧 **提交 PR**：修复 Bug、新增功能、优化体验均可
-- 📝 **完善文档**：补充使用说明、优化文案、增加示例
-- 💡 **分享用例**：在你的工作流中使用 BiliSum，欢迎分享经验
+## 开发流程
 
-
-### 代码风格
-
-- Python：遵循 PEP 8，类型注解优先
-- TypeScript：严格模式，React 组件使用函数式写法
-- Commit 信息：参考 [Conventional Commits](https://www.conventionalcommits.org/)
-
-## 👨‍💻 开发流程
-
-### 1. 初始化开发环境
-
-项目使用 `uv workspace` 管理 `apps/service`、`packages/core`、`packages/infra` 三个 Python 包。
-
-首次拉取代码后，推荐先执行：
+### 初始化
 
 ```powershell
 uv sync --python 3.12 --all-packages
 npm install --prefix .\apps\desktop
 ```
 
-这一步会把 workspace 成员同步到当前虚拟环境，后续开发时 `video_sum_service` / `video_sum_core` 会直接指向本地源码。
-
-### 2. 启动后端服务
-
-推荐使用 `uv run`，这是当前最稳的跨平台启动方式：
+### 启动后端
 
 ```powershell
 uv run --package video-sum-service python -m video_sum_service
 ```
 
-如果你已经激活了虚拟环境，也可以直接运行：
-
-```powershell
-python -m video_sum_service
-```
-
-### 3. 启动桌面端开发环境
+### 启动桌面端
 
 ```powershell
 npm run dev
 ```
 
-这条命令会启动：
-
-- Vite 渲染层
-- Electron 桌面壳
-- Python 本地后端服务
-
-### 4. 常用开发验证
-
-Python 单测：
+### 测试
 
 ```powershell
-.\.venv\Scripts\python -m pytest
+.\.venv\Scripts\python -m pytest          # Python
+npm test --prefix .\apps\desktop           # 桌面端
+npm run typecheck --prefix .\apps\desktop  # 类型检查
 ```
 
-桌面端测试：
-
-```powershell
-npm test --prefix .\apps\desktop
-```
-
-桌面端类型检查：
-
-```powershell
-npm run typecheck --prefix .\apps\desktop
-```
-
-### 5. macOS / Linux 说明
-
-PowerShell 脚本主要用于 Windows 辅助开发；在 macOS / Linux 上，推荐统一使用：
+### macOS / Linux
 
 ```bash
 uv sync --python 3.12 --all-packages
@@ -436,38 +285,43 @@ uv run --package video-sum-service python -m video_sum_service
 npm run dev
 ```
 
-### 6. 遇到"代码已修改，但运行时还是旧逻辑"怎么办？
-
-先检查当前解释器导入的是不是源码路径：
+### 代码改了但运行时还是旧逻辑？
 
 ```powershell
 uv run --package video-sum-service python -c "import video_sum_core, video_sum_service; print(video_sum_core.__file__); print(video_sum_service.__file__)"
 ```
 
-如果输出不是仓库内的 `packages/core/src/...`、`apps/service/src/...`，通常说明当前环境还没有重新同步，可以重新执行：
+如果输出不是仓库内的源码路径，重新执行 `uv sync --python 3.12 --all-packages`。
 
-```powershell
-uv sync --python 3.12 --all-packages
-```
-
-## 🔮 路线图
+## 路线图
 
 - [x] 思维导图视图
 - [x] 本地视频导入与处理
-- [x] 知识笔记导出为 Markdown / Obsidian
-- [x] 知识库系统（RAG 检索问答、标签管理、知识网络）
-- [x] B 站风控处理（扫码登录、Cookies 管理）
+- [x] 知识笔记 Markdown / Obsidian 导出
+- [x] 知识库系统（RAG / 标签 / 知识网络）
+- [x] B 站风控处理（扫码登录 / Cookies）
 - [x] 多 P 视频批量处理与全集总结
-- [x] GPU 运行时一键安装与管理
-- [x] macOS 桌面端构建
-- [x] Anthropic / Claude 原生 API 接入
+- [x] GPU 运行时一键安装
+- [x] macOS 桌面端
+- [x] Anthropic / Claude 原生 API
 - [x] 桌面端自动更新
-- [x] 任务调度与中断恢复
-- [ ] 更多视频平台支持
-- [ ] 与 Notion 等第三方知识管理工具集成
-- [ ] 知识卡片导出为 Notion
+- [x] VLM 理解型图文笔记
+- [x] 视觉模型多提供商独立配置
+- [x] 多模态 ASR
+- [ ] 更多平台支持
+- [ ] Notion 等第三方工具集成
 
-## 📄 License
+## Star History
+
+<a href="https://github.com/lycohana/bilisum">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=lycohana/bilisum&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=lycohana/bilisum&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=lycohana/bilisum&type=date&legend=top-left" />
+ </picture>
+</a>
+
+## License
 
 MIT License © 2026 Lycohana
 
