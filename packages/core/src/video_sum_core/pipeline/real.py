@@ -3370,13 +3370,24 @@ P 数索引：
         is_anthropic = provider == "anthropic"
         system_prompt = self._settings.visual_note_system_prompt.strip() or (
             "你是一名擅长将截图与文字深度整合的中文技术编辑。只输出 Markdown 正文。"
-            "每张截图必须紧跟在它所属的知识段落后面，绝对禁止把图片堆在文章末尾。"
-            "禁止使用「画面呈现」「该画面」「上图」等流水账句式。"
+            "输出必须是段落→图片→段落的交替结构，只选最重要的 3-6 张图。"
+            "绝对禁止图片堆积在末尾，禁止使用「画面呈现」「该画面」「上图」等流水账句式。"
         )
         payload_observations = []
         for item in observations:
             frame_id = str(item.get("frame_id") or "")
             if not frame_id:
+                continue
+            # Pre-filter: only send frames that are likely to be inserted.
+            # Low-importance frames bloat the prompt and confuse the model.
+            should_insert = item.get("should_insert")
+            if should_insert is not None and not should_insert:
+                continue
+            try:
+                importance = float(item.get("importance") if item.get("importance") is not None else 3)
+            except (TypeError, ValueError):
+                importance = 3
+            if importance < 2.5:
                 continue
             payload_observations.append(
                 {
@@ -3386,9 +3397,9 @@ P 数索引：
             )
         user_template = self._settings.visual_note_user_prompt_template.strip() or (
             "请以画面客观信息为参考重新整合知识笔记，图片链接使用 observations 中的 markdown_image。\n"
-            "核心规则：每张图必须紧跟其对应段落后方，禁止把所有图片堆在文章末尾。图片分散在全文中。\n"
-            "要求：以知识点为叙事主线重新编排段落；精简合并重复内容；禁止「画面呈现」「该画面」「上图」等句式；"
-            "图片插入后用 1-2 句自然过渡；key_facts/semantic_summary 转化为自己的语言，不要复制。\n"
+            "核心规则：输出必须是 段落1→图1→段落2→图2 交替模式，只选 3-6 张最重要的图，禁止图片堆在末尾。\n"
+            "要求：以知识点为叙事主线；精简合并重复内容；禁止「画面呈现」「该画面」「上图」等句式；"
+            "图片插入后用 1-2 句自然过渡；key_facts/semantic_summary 转化为自己的语言。\n"
             "标题：{title}\n原始知识笔记：\n{knowledge_note_markdown}\n视觉解析 JSON：\n{visual_observations_json}"
         )
         if insert_plan:
@@ -3470,16 +3481,29 @@ P 数索引：
                 output.extend(self._format_visual_insertion_markdown(current))
                 insertion_index += 1
                 inserted += 1
-        # Place any remaining insertions before the last content line instead of dumping at the end.
-        if insertion_index < len(insertions):
-            tail = len(output)
-            for rev_idx in range(len(output) - 1, -1, -1):
-                if output[rev_idx].strip():
-                    tail = rev_idx + 1
-                    break
-            for extra in reversed(insertions[insertion_index:]):
-                output.insert(tail, "")
-                output[tail:tail] = self._format_visual_insertion_markdown(extra)
+        # Distribute any remaining insertions evenly through the document.
+        remaining = insertions[insertion_index:]
+        if remaining:
+            # Find candidate insertion points: non-empty non-heading lines
+            insertion_points: list[int] = []
+            for idx, line in enumerate(output):
+                stripped = line.strip()
+                if stripped and not stripped.startswith("#"):
+                    insertion_points.append(idx + 1)
+            if len(insertion_points) >= len(remaining):
+                step = max(1, len(insertion_points) // len(remaining))
+                for j, extra in enumerate(remaining):
+                    pt = insertion_points[min(j * step, len(insertion_points) - 1)]
+                    block = self._format_visual_insertion_markdown(extra)
+                    for offset, bline in enumerate(reversed(block)):
+                        output.insert(pt, bline)
+            else:
+                # Not enough points — still distribute as best we can
+                for j, extra in enumerate(remaining):
+                    pt = insertion_points[j % len(insertion_points)] if insertion_points else len(output)
+                    block = self._format_visual_insertion_markdown(extra)
+                    for offset, bline in enumerate(reversed(block)):
+                        output.insert(pt, bline)
         return "\n".join(output).strip()
 
     def _format_visual_insertion_markdown(self, insertion: dict[str, object]) -> list[str]:
