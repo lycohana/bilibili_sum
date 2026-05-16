@@ -160,6 +160,7 @@ const SETTINGS_SEARCH_ITEMS: SettingsSearchItem[] = [
   { category: "prompts", targetKey: "knowledge_note_system_prompt", title: "知识笔记 System Prompt", description: "控制知识笔记角色、风格和整体约束。", keywords: ["知识笔记", "prompt", "system", "提示词", "风格"] },
   { category: "prompts", targetKey: "knowledge_note_user_prompt_template", title: "知识笔记 User Template", description: "控制知识笔记变量、结构和 Markdown 格式。", keywords: ["知识笔记", "template", "模板", "格式", "summary_json", "transcript"] },
   { category: "prompts", targetKey: "visual_note_system_prompt", title: "图文笔记 System Prompt", description: "控制 VLM 图文笔记整合风格。", keywords: ["图文笔记", "prompt", "vlm", "图片"] },
+  { category: "prompts", targetKey: "visual_note_user_prompt_template", title: "图文笔记 User Template", description: "控制图文笔记变量、结构和格式。", keywords: ["图文笔记", "template", "模板", "格式", "prompt"] },
   { category: "prompts", targetKey: "visual_frame_planning_prompt", title: "捕获帧规划 Prompt", description: "控制如何判断哪些时间点值得截图。", keywords: ["截图", "规划", "关键帧", "prompt"] },
   { category: "prompts", targetKey: "visual_vlm_prompt", title: "画面理解 Prompt", description: "控制 VLM 如何解析截图。", keywords: ["vlm", "画面理解", "ocr", "prompt"] },
   { category: "performance", targetKey: "task_concurrency", title: "任务并发数", description: "控制整体任务吞吐。", keywords: ["并发", "concurrency", "任务", "性能"] },

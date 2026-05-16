@@ -25,3 +25,4 @@ temp_repo_inspect/
 # The service and package:*-notfront paths serve apps/web/static directly, so
 # the hashed Vite bundle referenced by index.html must be committed with it.
 /.claude
+null

@@ -2210,11 +2210,11 @@ P 数索引：
                 {
                     "frame_id": str(frame["frame_id"]),
                     "timestamp_seconds": float(frame["timestamp_seconds"]),
-                    "caption": str(frame.get("planned_caption") or frame.get("planned_concept") or "关键画面截图"),
+                    "caption": str(frame.get("planned_caption") or frame.get("planned_concept") or "关键画面信息"),
                     "ocr_text": "",
                     "semantic_summary": str(frame.get("planned_reason") or ""),
+                    "key_facts": [],
                     "suggested_anchor": str(frame.get("anchor_heading") or ""),
-                    "note_explanation": str(frame.get("planned_note_hint") or frame.get("planned_reason") or ""),
                     "scene": "unknown",
                     "confidence": None,
                 }
@@ -2786,9 +2786,9 @@ P 数索引：
                 continue
             image_data = base64.b64encode(image_file.read_bytes()).decode("ascii")
             prompt = self._settings.visual_vlm_prompt.strip() or (
-                "请只基于截图可见内容输出 JSON。不要猜测画面外信息。"
-                "字段：visual_type, caption, ocr_text, semantic_summary, importance, should_insert, "
-                "suggested_anchor, note_explanation, scene, confidence。"
+                "提取画面中的客观信息输出 JSON。不要叙述、不要评价、不要写「该画面」。"
+                "字段：visual_type, caption, ocr_text, key_facts, semantic_summary, importance, should_insert, "
+                "suggested_anchor, scene, confidence。"
                 "\n视频标题：{title}\n时间点：{timestamp}\n章节线索：\n{timeline_hint}"
             )
             try:
@@ -2834,18 +2834,22 @@ P 数索引：
                         if isinstance(message, dict):
                             content = str(message.get("content") or "")
                     parsed = json.loads(_extract_json_object_text(content))
+                    key_facts_raw = parsed.get("key_facts")
+                    key_facts: list[str] = []
+                    if isinstance(key_facts_raw, list):
+                        key_facts = [str(f).strip()[:200] for f in key_facts_raw if str(f).strip()]
                     observations.append(
                         {
                             "frame_id": str(frame["frame_id"]),
                             "timestamp_seconds": float(frame["timestamp_seconds"]),
                             "visual_type": str(parsed.get("visual_type") or parsed.get("scene") or "unknown").strip()[:64],
-                            "caption": str(parsed.get("caption") or "关键画面截图").strip()[:240],
+                            "caption": str(parsed.get("caption") or "关键画面信息").strip()[:240],
                             "ocr_text": str(parsed.get("ocr_text") or "").strip()[:600],
-                            "semantic_summary": str(parsed.get("semantic_summary") or parsed.get("caption") or "").strip()[:600],
+                            "semantic_summary": str(parsed.get("semantic_summary") or "").strip()[:600],
+                            "key_facts": key_facts,
                             "importance": parsed.get("importance"),
                             "should_insert": parsed.get("should_insert", True),
                             "suggested_anchor": str(parsed.get("suggested_anchor") or "").strip()[:120],
-                            "note_explanation": str(parsed.get("note_explanation") or parsed.get("semantic_summary") or parsed.get("caption") or "").strip()[:500],
                             "scene": str(parsed.get("scene") or "unknown").strip()[:64],
                             "confidence": parsed.get("confidence"),
                         }
@@ -2863,13 +2867,13 @@ P 数索引：
                         "frame_id": str(frame["frame_id"]),
                         "timestamp_seconds": float(frame["timestamp_seconds"]),
                         "visual_type": "unknown",
-                        "caption": "关键画面截图",
+                        "caption": "关键画面信息",
                         "ocr_text": "",
                         "semantic_summary": "",
+                        "key_facts": [],
                         "importance": None,
                         "should_insert": True,
                         "suggested_anchor": "",
-                        "note_explanation": "这是对应时间点的关键画面，可辅助回看本段内容。",
                         "scene": "unknown",
                         "confidence": None,
                     }
@@ -2912,13 +2916,14 @@ P 数索引：
                 or chapter.get("title")
                 or "关键画面"
             ).strip()
+            key_facts_list = observation.get("key_facts") if isinstance(observation.get("key_facts"), list) else []
             explanation = str(
-                observation.get("note_explanation")
+                (". ".join(str(f) for f in key_facts_list) if key_facts_list else "")
                 or observation.get("semantic_summary")
                 or frame.get("planned_note_hint")
                 or frame.get("planned_reason")
                 or chapter.get("summary")
-                or "这张截图对应当前段落的关键讲解画面，适合复盘时对照查看。"
+                or ""
             ).strip()
             insertions.append(
                 {
@@ -2998,8 +3003,8 @@ P 数索引：
     ) -> str:
         base_url, model, api_key = self._visual_llm_config()
         system_prompt = self._settings.visual_note_system_prompt.strip() or (
-            "你是一名擅长整理图文学习笔记的中文编辑。只输出 Markdown 正文。"
-            "文本永远是主体，图片只作为贴近段落的补充材料，不要把笔记改写成图片清单或截图画廊。"
+            "你是一名擅长基于视频截图深度整合知识的中文编辑。只输出 Markdown 正文。"
+            "以画面客观信息为线索重新组织文章，禁止使用「画面呈现」「该画面」「上图」等流水账句式。"
         )
         payload_observations = []
         for item in observations:
@@ -3013,10 +3018,10 @@ P 数索引：
                 }
             )
         user_template = self._settings.visual_note_user_prompt_template.strip() or (
-            "请把关键图片自然插入原始知识笔记，图片链接使用 observations 中的 markdown_image。\n"
-            "要求：保留原始知识笔记的文字主体和层级；不要把图片集中放到末尾；不要新增独立的图片合集章节。"
-            "每张图只能作为某个知识点后的辅助说明，图片前后必须仍然以文字解释为主。"
-            "每张图后写 1-2 句简短说明，说明图片如何补充当前文字，不要复述整段画面。\n"
+            "请以画面客观信息为参考重新整合知识笔记，图片链接使用 observations 中的 markdown_image。\n"
+            "要求：写一篇连贯的图文笔记，禁止使用「画面呈现」「该画面」「上图」「如下所示」等句式；"
+            "以知识点为叙事主线重新编排段落；精简合并重复内容；图片自然插入相关段落后用 1-2 句过渡；"
+            "key_facts 和 semantic_summary 是参考素材，转化为自己的语言融入文章，不要复制。\n"
             "标题：{title}\n原始知识笔记：\n{knowledge_note_markdown}\n视觉解析 JSON：\n{visual_observations_json}"
         )
         if insert_plan:
@@ -3050,8 +3055,8 @@ P 数索引：
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            "temperature": 0.2,
-            "enable_thinking": False,
+            "temperature": 0.5,
+            "enable_thinking": True,
         }
         headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
         timeout = max(15, int(self._settings.visual_evidence_timeout_seconds or 120))

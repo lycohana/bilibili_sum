@@ -1153,32 +1153,6 @@ export function VideoDetailPage({ onRefresh, onOpenCookieSettings, onOpenCookieT
     () => buildVisualEvidenceItems(selectedTaskId, selectedVisualEvidence),
     [selectedTaskId, selectedVisualEvidence],
   );
-  const visualEvidenceEvents = useMemo(
-    () => selectedTaskEvents.filter((event) => event.stage.startsWith("visual_")),
-    [selectedTaskEvents],
-  );
-  const visualNoteProgress = useMemo(() => {
-    if (!selectedTaskId) {
-      return null;
-    }
-    const generating = selectedVisualEvidence?.status === "generating" || selectedTaskDetail?.result?.visual_note_status === "generating";
-    const loading = Boolean(visualEvidenceLoading[selectedTaskId]);
-    const summarized = visualEvidenceEvents.length ? summarizeEvents(visualEvidenceEvents) : null;
-    if (!generating && !loading && !summarized?.filtered.length) {
-      return null;
-    }
-    return {
-      progress: Math.max(0, Math.min(100, Math.round(summarized?.progress ?? (loading ? 8 : 90)))),
-      currentLabel: summarized?.currentEvent?.stage ? stageLabel(summarized.currentEvent.stage) : (loading ? "提交生成请求" : "等待阶段回传"),
-      message: selectedVisualEvidence?.error_message
-        || selectedTaskDetail?.result?.visual_note_error_message
-        || summarized?.failedEvent?.message
-        || summarized?.currentEvent?.message
-        || (loading ? "正在向本地服务提交图文笔记生成请求。" : "系统正在生成图文笔记，完成后会自动刷新。"),
-      events: summarized?.filtered ?? [],
-      hasError: Boolean(summarized?.failedEvent),
-    };
-  }, [selectedTaskDetail?.result?.visual_note_error_message, selectedTaskDetail?.result?.visual_note_status, selectedTaskId, selectedVisualEvidence, visualEvidenceEvents, visualEvidenceLoading]);
   const canExportSelectedKnowledgeNote = useMemo(() => canExportKnowledgeNote(selectedTaskDetail), [selectedTaskDetail]);
   const selectedTranscript = selectedResult?.transcript_text ?? "";
   const canExportSelectedTranscript = Boolean(
@@ -2709,51 +2683,6 @@ export function VideoDetailPage({ onRefresh, onOpenCookieSettings, onOpenCookieT
                         onSeekToTimestamp={!isAggregateSummaryView && hasSeekablePlayer ? handleSeekToChapter : undefined}
                       />
                     </details>
-                    {visualNoteProgress ? (
-                      <div className="detail-mindmap-progress">
-                        <div className="progress-bar-wrapper">
-                          <div
-                            className="progress-bar-simple"
-                            role="progressbar"
-                            aria-valuemin={0}
-                            aria-valuemax={100}
-                            aria-valuenow={visualNoteProgress.progress}
-                            aria-label="图文笔记生成进度"
-                          >
-                            <div
-                              className={`progress-fill-simple ${visualNoteProgress.hasError ? "error" : visualNoteProgress.progress >= 100 ? "success" : ""}`}
-                              style={{ width: `${visualNoteProgress.progress}%` }}
-                            />
-                          </div>
-                          <div className="progress-info-simple">
-                            <span className="progress-percent-simple">{visualNoteProgress.progress}%</span>
-                            <span className="progress-status-simple">{visualNoteProgress.message}</span>
-                          </div>
-                        </div>
-                        {visualNoteProgress.events.length ? (
-                          <details className="progress-stage-card">
-                            <summary>
-                              <strong>{visualNoteProgress.currentLabel}</strong>
-                              <span className="progress-stage-toggle">查看图文笔记进度</span>
-                            </summary>
-                            <div className="progress-stage-list">
-                              {visualNoteProgress.events.map((event) => (
-                                <article className={`progress-event-card ${progressEventClass(event.stage)}`} key={event.event_id}>
-                                  <div className="progress-event-index">{stageLabel(event.stage)}</div>
-                                  <div className="progress-event-copy">
-                                    <div className="progress-event-topline">
-                                      <strong>{event.message}</strong>
-                                      <time>{formatDateTime(event.created_at)}</time>
-                                    </div>
-                                    <div className="progress-event-meta">阶段进度 {event.progress}%</div>
-                                  </div>
-                                </article>
-                              ))}
-                            </div>
-                          </details>
-                        ) : null}
-                      </div>
-                    ) : null}
                   </section>
 
                   <section className="detail-content-section">
