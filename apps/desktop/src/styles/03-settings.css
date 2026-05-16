@@ -959,7 +959,7 @@
 
 .settings-visual-note-preset.is-active {
   border-color: var(--brand-500);
-  background: color-mix(in srgb, var(--brand-50) 82%, var(--settings-elevated-bg));
+  background: color-mix(in srgb, var(--brand-500) 12%, var(--settings-elevated-bg));
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--brand-500) 22%, transparent);
 }
 
