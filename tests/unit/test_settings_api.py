@@ -1456,6 +1456,10 @@ def test_asr_connection_uses_unsaved_payload(monkeypatch, tmp_path: Path) -> Non
     assert calls[0]["url"] == "https://api.example.com/v1/audio/transcriptions"
     assert calls[0]["headers"]["Authorization"] == "Bearer new-key"
     assert calls[0]["data"]["model"] == "new-model"
+    file_name, audio_bytes, content_type = calls[0]["files"]["file"]
+    assert file_name == "bilisum-asr-test-zh.wav"
+    assert content_type == "audio/wav"
+    assert len(audio_bytes) > 100_000
 
 
 def test_asr_connection_uses_saved_api_key_when_payload_masks_key(monkeypatch, tmp_path: Path) -> None:
@@ -1509,6 +1513,52 @@ def test_asr_connection_uses_saved_api_key_when_payload_masks_key(monkeypatch, t
     assert calls[0]["url"] == "https://api.example.com/v1/audio/transcriptions"
     assert calls[0]["headers"]["Authorization"] == "Bearer saved-asr-key"
     assert calls[0]["data"]["model"] == "new-model"
+
+
+def test_asr_connection_uses_custom_test_audio_file(monkeypatch, tmp_path: Path) -> None:
+    current = ServiceSettings(
+        data_dir=tmp_path / "data",
+        cache_dir=tmp_path / "cache",
+        tasks_dir=tmp_path / "tasks",
+        runtime_channel="base",
+        siliconflow_asr_base_url="https://api.example.com/v1",
+        siliconflow_asr_api_key="test-key",
+        siliconflow_asr_model="TeleAI/TeleSpeechASR",
+    )
+    settings_manager._settings = current
+    audio_path = tmp_path / "voice.mp3"
+    audio_path.write_bytes(b"voice-bytes")
+    monkeypatch.setenv("VIDEO_SUM_ASR_TEST_AUDIO_FILE", str(audio_path))
+    calls: list[dict[str, object]] = []
+
+    class FakeResponse:
+        status_code = 200
+        text = '{"text":"你好"}'
+
+        def json(self) -> dict[str, object]:
+            return {"text": "你好"}
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def __enter__(self) -> "FakeClient":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def post(self, url: str, headers: dict[str, str], data: dict[str, object], files: dict[str, object]) -> FakeResponse:
+            calls.append({"url": url, "headers": headers, "data": data, "files": files})
+            return FakeResponse()
+
+    monkeypatch.setattr(service_app.httpx, "Client", FakeClient)
+
+    response = probe_asr_connection()
+
+    assert response["ok"] is True
+    assert response["responsePreview"] == "你好"
+    assert calls[0]["files"]["file"] == ("voice.mp3", b"voice-bytes", "audio/mpeg")
 
 
 def test_asr_connection_requires_api_key(tmp_path: Path) -> None:

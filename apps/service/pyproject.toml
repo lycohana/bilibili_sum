@@ -27,3 +27,4 @@ video-sum-transcribe-worker = "video_sum_service.transcribe_worker:run"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/video_sum_service"]
+artifacts = ["src/video_sum_service/assets/*.wav"]

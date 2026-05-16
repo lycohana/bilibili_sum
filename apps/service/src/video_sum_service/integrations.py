@@ -1,7 +1,10 @@
 import base64
 import binascii
+import importlib.resources
 import io
 import json
+import os
+from pathlib import Path
 import struct
 import wave
 import zlib
@@ -169,6 +172,34 @@ def build_test_wav_bytes(duration_ms: int = 250, sample_rate: int = 16000) -> by
         wav_file.setframerate(sample_rate)
         wav_file.writeframes(b"\x00\x00" * frame_count)
     return buffer.getvalue()
+
+
+def load_builtin_asr_test_audio() -> tuple[str, bytes, str]:
+    audio = importlib.resources.files("video_sum_service.assets").joinpath("asr_test_zh.wav")
+    return "bilisum-asr-test-zh.wav", audio.read_bytes(), "audio/wav"
+
+
+def load_asr_test_audio() -> tuple[str, bytes, str]:
+    audio_path = os.environ.get("VIDEO_SUM_ASR_TEST_AUDIO_FILE", "").strip()
+    if audio_path:
+        path = Path(audio_path).expanduser()
+        if not path.is_file():
+            raise HTTPException(status_code=400, detail=f"ASR 测试音频不存在：{path}")
+        suffix = path.suffix.lower()
+        content_type = {
+            ".flac": "audio/flac",
+            ".m4a": "audio/mp4",
+            ".mp3": "audio/mpeg",
+            ".ogg": "audio/ogg",
+            ".wav": "audio/wav",
+            ".webm": "audio/webm",
+        }.get(suffix, "application/octet-stream")
+        return path.name, path.read_bytes(), content_type
+
+    try:
+        return load_builtin_asr_test_audio()
+    except (FileNotFoundError, ModuleNotFoundError):
+        return "bilisum-asr-test.wav", build_test_wav_bytes(), "audio/wav"
 
 
 def build_effective_llm_test_settings(payload: SettingsUpdatePayload | None = None) -> ServiceSettings:
@@ -373,7 +404,7 @@ def probe_asr_connection(payload: SettingsUpdatePayload | None = None) -> dict[s
 
     headers = {"Authorization": f"Bearer {api_key}"}
     request_url = f"{base_url}/audio/transcriptions"
-    audio_bytes = build_test_wav_bytes()
+    audio_name, audio_bytes, audio_content_type = load_asr_test_audio()
 
     try:
         timeout = httpx.Timeout(connect=20.0, read=90.0, write=90.0, pool=20.0)
@@ -382,7 +413,7 @@ def probe_asr_connection(payload: SettingsUpdatePayload | None = None) -> dict[s
                 request_url,
                 headers=headers,
                 data={"model": model},
-                files={"file": ("bilisum-asr-test.wav", audio_bytes, "audio/wav")},
+                files={"file": (audio_name, audio_bytes, audio_content_type)},
             )
     except httpx.HTTPError as exc:
         raise HTTPException(status_code=502, detail=f"ASR 连接失败：{exc}") from exc
