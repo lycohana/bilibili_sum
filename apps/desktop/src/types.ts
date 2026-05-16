@@ -251,6 +251,10 @@ export type ServiceSettings = {
   siliconflow_asr_model: string;
   siliconflow_asr_api_key: string;
   siliconflow_asr_api_key_configured?: boolean;
+  multimodal_asr_base_url: string;
+  multimodal_asr_model: string;
+  multimodal_asr_api_key: string;
+  multimodal_asr_api_key_configured?: boolean;
   cuda_variant: string;
   runtime_channel: string;
   output_dir: string;

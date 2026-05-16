@@ -103,6 +103,7 @@ function maskConfiguredApiKeys(settings: ServiceSettings | null): ServiceSetting
   return {
     ...settings,
     siliconflow_asr_api_key: settings.siliconflow_asr_api_key_configured ? MASKED_API_KEY : settings.siliconflow_asr_api_key,
+    multimodal_asr_api_key: settings.multimodal_asr_api_key_configured ? MASKED_API_KEY : settings.multimodal_asr_api_key,
     llm_api_key: settings.llm_api_key_configured ? MASKED_API_KEY : settings.llm_api_key,
     knowledge_llm_api_key: settings.knowledge_llm_api_key_configured ? MASKED_API_KEY : settings.knowledge_llm_api_key,
   };
@@ -126,6 +127,9 @@ const SETTINGS_SEARCH_ITEMS: SettingsSearchItem[] = [
   { category: "transcription", targetKey: "siliconflow_asr_base_url", title: "SiliconFlow Base URL", description: "云端转写 API 地址。", keywords: ["siliconflow", "base url", "api", "硅基流动"] },
   { category: "transcription", targetKey: "siliconflow_asr_api_key", title: "SiliconFlow API Key", description: "云端转写 API 密钥。", keywords: ["key", "apikey", "api key", "密钥", "硅基流动"] },
   { category: "transcription", targetKey: "siliconflow_asr_model", title: "ASR 模型", description: "云端转写模型名称。", keywords: ["model", "模型", "teleai", "telespeechasr"] },
+  { category: "transcription", targetKey: "multimodal_asr_base_url", title: "多模态 ASR Base URL", description: "多模态转写 API 地址。", keywords: ["multimodal", "多模态", "base url", "api"] },
+  { category: "transcription", targetKey: "multimodal_asr_api_key", title: "多模态 ASR API Key", description: "多模态转写 API 密钥。", keywords: ["multimodal", "多模态", "key", "apikey", "api key", "密钥"] },
+  { category: "transcription", targetKey: "multimodal_asr_model", title: "多模态 ASR 模型", description: "多模态转写模型名称。", keywords: ["multimodal", "多模态", "model", "模型", "mimo"] },
   { category: "transcription", targetKey: "device_preference", title: "推理设备", description: "本地 ASR 使用 CPU 或 CUDA。", keywords: ["cuda", "gpu", "cpu", "设备"] },
   { category: "transcription", targetKey: "fixed_model", title: "Whisper 固定模型", description: "本地 Whisper 模型大小。", keywords: ["whisper", "tiny", "base", "small", "medium", "large"] },
   { category: "generation", targetKey: "llm_enabled", title: "启用 LLM 摘要", description: "打开或关闭大模型摘要。", keywords: ["llm", "摘要", "开启", "关闭"] },
@@ -514,7 +518,9 @@ export function SettingsPage({
   const asrReady =
     form?.transcription_provider === "local"
       ? Boolean(environment?.localAsrAvailable)
-      : Boolean(form?.siliconflow_asr_api_key_configured);
+      : form?.transcription_provider === "multimodal"
+        ? Boolean(form?.multimodal_asr_api_key_configured && String(form?.multimodal_asr_base_url || "").trim() && String(form?.multimodal_asr_model || "").trim())
+        : Boolean(form?.siliconflow_asr_api_key_configured);
   const updateUnsupported = isUpdateUnsupported(updateInfo);
   const updateStatusLabel = getUpdateStatusLabel(updateInfo);
   const updateStatusTone = getUpdateStatusTone(updateInfo);
@@ -616,6 +622,7 @@ export function SettingsPage({
   if (!form) return <section className="grid-card empty-state-card">正在加载设置...</section>;
 
   const usesSiliconFlowAsr = form.transcription_provider === "siliconflow";
+  const usesMultimodalAsr = form.transcription_provider === "multimodal";
   const recommendedTaskConcurrency = form.transcription_provider === "local" ? 1 : 2;
   const performanceRecommendation = recommendedTaskConcurrency === 1
     ? "当前建议：本地 ASR / CPU 场景任务并发数设为 1，导图并发数设为 1。"
@@ -701,6 +708,9 @@ export function SettingsPage({
     };
     if (nextForm.siliconflow_asr_api_key_configured && (!String(nextForm.siliconflow_asr_api_key || "").trim() || isMaskedApiKey(nextForm.siliconflow_asr_api_key))) {
       delete payload.siliconflow_asr_api_key;
+    }
+    if (nextForm.multimodal_asr_api_key_configured && (!String(nextForm.multimodal_asr_api_key || "").trim() || isMaskedApiKey(nextForm.multimodal_asr_api_key))) {
+      delete payload.multimodal_asr_api_key;
     }
     if (nextForm.llm_api_key_configured && (!String(nextForm.llm_api_key || "").trim() || isMaskedApiKey(nextForm.llm_api_key))) {
       delete payload.llm_api_key;
@@ -902,6 +912,9 @@ export function SettingsPage({
         siliconflow_asr_base_url: form.siliconflow_asr_base_url,
         siliconflow_asr_model: form.siliconflow_asr_model,
         ...(form.siliconflow_asr_api_key.trim() && !isMaskedApiKey(form.siliconflow_asr_api_key) ? { siliconflow_asr_api_key: form.siliconflow_asr_api_key } : {}),
+        multimodal_asr_base_url: form.multimodal_asr_base_url,
+        multimodal_asr_model: form.multimodal_asr_model,
+        ...(form.multimodal_asr_api_key.trim() && !isMaskedApiKey(form.multimodal_asr_api_key) ? { multimodal_asr_api_key: form.multimodal_asr_api_key } : {}),
       });
       const preview = response.responsePreview ? `，示例：${response.responsePreview}` : "";
       setAsrTestStatus(`${response.message}${preview}`);
@@ -957,6 +970,9 @@ export function SettingsPage({
     }
     if (issueKey === "siliconflow_asr_api_key") {
       return { category: "transcription", targetKey: "siliconflow_asr_api_key" };
+    }
+    if (issueKey === "multimodal_asr_base_url") {
+      return { category: "transcription", targetKey: "multimodal_asr_base_url" };
     }
     if (issueKey === "local_asr_runtime") {
       return { category: "runtime", targetKey: "local_asr_runtime" };
@@ -1274,7 +1290,7 @@ export function SettingsPage({
                   </div>
                   <div className="overview-status-info">
                     <span className="overview-status-label">推理设备</span>
-                    <strong className="overview-status-value">{form.transcription_provider === "siliconflow" ? "云端识别" : devicePreferenceLabel(form.whisper_device)}</strong>
+                    <strong className="overview-status-value">{form.transcription_provider === "local" ? devicePreferenceLabel(form.whisper_device) : "云端识别"}</strong>
                   </div>
                 </div>
                 <div className="overview-status-card">
@@ -1303,9 +1319,13 @@ export function SettingsPage({
                         ? asrReady
                           ? "硅基流动已配置"
                           : "硅基流动待补全"
-                        : localAsrInstalled
-                          ? "本地 ASR 已安装"
-                          : "本地 ASR 未安装"}
+                        : form.transcription_provider === "multimodal"
+                          ? asrReady
+                            ? "多模态 ASR 已配置"
+                            : "多模态 ASR 待补全"
+                          : localAsrInstalled
+                            ? "本地 ASR 已安装"
+                            : "本地 ASR 未安装"}
                     </strong>
                   </div>
                 </div>
@@ -1382,7 +1402,7 @@ export function SettingsPage({
                   </div>
                   <div className="overview-info-item">
                     <span className="overview-info-label">ASR 模型</span>
-                    <span className="overview-info-value">{form.transcription_provider === "siliconflow" ? form.siliconflow_asr_model : form.fixed_model}</span>
+                    <span className="overview-info-value">{form.transcription_provider === "local" ? form.fixed_model : form.transcription_provider === "multimodal" ? form.multimodal_asr_model : form.siliconflow_asr_model}</span>
                   </div>
                 </div>
               </div>
@@ -1644,6 +1664,7 @@ export function SettingsPage({
                     onChange={(e) => updateForm({ ...form, transcription_provider: e.target.value })}
                   >
                     <option value="siliconflow">硅基流动 API</option>
+                    <option value="multimodal">多模态 ASR（第三方）</option>
                     <option value="local" disabled={!localAsrInstalled}>本地 ASR（需先安装）</option>
                   </select>
                   <span className="settings-input-caption">默认推荐云端模式。</span>
@@ -1682,6 +1703,42 @@ export function SettingsPage({
                       </button>
                       <span className="settings-input-caption">
                         使用当前表单中的 SiliconFlow Base URL、API Key 和 ASR 模型名发起一次临时转写测试，不会保存设置。
+                      </span>
+                    </div>
+                  </>
+                ) : usesMultimodalAsr ? (
+                  <>
+                    <label
+                      className={`settings-input-group settings-focus-target ${activeFocusTarget === "multimodal_asr_base_url" ? "is-highlighted" : ""}`}
+                      ref={registerFocusTarget("multimodal_asr_base_url") as (node: HTMLLabelElement | null) => void}
+                    >
+                      <span className="settings-input-label">多模态 ASR Base URL</span>
+                      <input className="settings-input-field" value={form.multimodal_asr_base_url} onChange={(e) => updateForm({ ...form, multimodal_asr_base_url: e.target.value })} placeholder="https://api.example.com/v1" />
+                      <span className="settings-input-caption">支持 OpenAI 兼容的多模态 API 地址。</span>
+                    </label>
+                    <label
+                      className={`settings-input-group settings-focus-target ${activeFocusTarget === "multimodal_asr_api_key" ? "is-highlighted" : ""}`}
+                      ref={registerFocusTarget("multimodal_asr_api_key") as (node: HTMLLabelElement | null) => void}
+                    >
+                      <span className="settings-input-label">多模态 ASR API Key</span>
+                      <input className="settings-input-field" type="password" value={form.multimodal_asr_api_key} onFocus={selectMaskedApiKey} onChange={(e) => updateForm({ ...form, multimodal_asr_api_key: e.target.value })} placeholder="sk-..." />
+                    </label>
+                    <label className="settings-input-group" ref={registerFocusTarget("multimodal_asr_model") as (node: HTMLLabelElement | null) => void}>
+                      <span className="settings-input-label">多模态 ASR 模型</span>
+                      <input className="settings-input-field" value={form.multimodal_asr_model} onChange={(e) => updateForm({ ...form, multimodal_asr_model: e.target.value })} placeholder="mimo-v2-omni" />
+                      <span className="settings-input-caption">使用支持音频输入的多模态模型进行语音转文字。</span>
+                    </label>
+                    <div className="settings-inline-actions">
+                      <button
+                        className="secondary-button"
+                        type="button"
+                        disabled={asrTestBusy}
+                        onClick={() => void testAsrConnection()}
+                      >
+                        {asrTestBusy ? "测试中..." : "测试 ASR 是否可用"}
+                      </button>
+                      <span className="settings-input-caption">
+                        使用当前表单中的多模态配置发起一次临时转写测试，不会保存设置。
                       </span>
                     </div>
                   </>

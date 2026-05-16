@@ -152,6 +152,27 @@ export function getConfigHealth(
     });
   }
 
+  if (transcriptionProvider === "multimodal") {
+    const multimodalMissingParts: string[] = [];
+    if (!String(settings.multimodal_asr_base_url || "").trim()) {
+      multimodalMissingParts.push("Base URL");
+    }
+    if (!String(settings.multimodal_asr_model || "").trim()) {
+      multimodalMissingParts.push("模型名");
+    }
+    if (!settings.multimodal_asr_api_key_configured) {
+      multimodalMissingParts.push("API Key");
+    }
+    if (multimodalMissingParts.length > 0) {
+      issues.push({
+        key: "multimodal_asr_base_url",
+        title: "多模态 ASR 配置未补全",
+        description: `当前使用多模态 ASR 转写，但以下项目仍为空：${multimodalMissingParts.join("、")}，无法开始视频转写。`,
+        severity: "critical",
+      });
+    }
+  }
+
   if (transcriptionProvider === "local" && environment?.localAsrAvailable === false) {
     issues.push({
       key: "local_asr_runtime",
