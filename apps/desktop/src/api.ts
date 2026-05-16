@@ -19,6 +19,7 @@ import type {
   TaskEvent,
   TaskMarkdownExportResponse,
   TaskMindMapResponse,
+  TaskVisualEvidenceResponse,
   TaskSummary,
   VideoKnowledgeTagListResponse,
   VideoAssetDetail,
@@ -44,7 +45,7 @@ export type AppUpdateInfo = {
 };
 
 export type LlmTestPayload = Partial<ServiceSettings> & {
-  llm_test_scope?: "main" | "knowledge";
+  llm_test_scope?: "main" | "knowledge" | "visual";
 };
 
 export type BilibiliCookieCaptureResponse = {
@@ -310,6 +311,9 @@ export const api = {
   getTaskMindMap(taskId: string) {
     return fetchJson<TaskMindMapResponse>(`/api/v1/tasks/${taskId}/mindmap`);
   },
+  getTaskVisualEvidence(taskId: string) {
+    return fetchJson<TaskVisualEvidenceResponse>(`/api/v1/tasks/${taskId}/visual-evidence`);
+  },
   exportTaskMarkdown(
     taskId: string,
     payload?: { target?: "markdown" | "obsidian"; include_transcript?: boolean; output_dir?: string },
@@ -333,6 +337,16 @@ export const api = {
       url.searchParams.set("force", "1");
     }
     return fetchJson<TaskMindMapResponse>(url.toString(), { method: "POST" });
+  },
+  generateTaskVisualEvidence(taskId: string, options?: { force?: boolean; mode?: string }) {
+    const url = new URL(`/api/v1/tasks/${taskId}/visual-evidence`, window.location.origin);
+    if (options?.force) {
+      url.searchParams.set("force", "1");
+    }
+    if (options?.mode) {
+      url.searchParams.set("mode", options.mode);
+    }
+    return fetchJson<TaskVisualEvidenceResponse>(url.toString(), { method: "POST" });
   },
   deleteTask(taskId: string) {
     return fetchJson<{ deleted: boolean }>(`/api/v1/tasks/${taskId}`, { method: "DELETE" });

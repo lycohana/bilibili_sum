@@ -378,6 +378,17 @@ export function stageLabel(stage?: string | null) {
     mindmap_generating: "导图生成中",
     mindmap_completed: "导图完成",
     mindmap_failed: "导图失败",
+    visual_queued: "图文笔记排队",
+    visual_generating: "图文笔记生成中",
+    visual_source_preparing: "准备画面来源",
+    visual_frame_extracting: "抽取关键画面",
+    visual_frame_extracted: "图片索引整理",
+    visual_frame_analyzing: "VLM 解析画面",
+    visual_insert_planning: "规划插图位置",
+    visual_note_composing: "整合图文笔记",
+    visual_completed: "图文笔记完成",
+    visual_partial: "图文笔记降级完成",
+    visual_failed: "图文笔记失败",
     completed: "已完成",
     failed: "失败",
   };
@@ -396,6 +407,8 @@ export function progressEventClass(stage?: string | null) {
   if (stage === "failed") return "error";
   if (stage === "mindmap_completed") return "completed";
   if (stage === "mindmap_failed") return "error";
-  if (stage === "summarizing" || stage === "transcribing" || stage === "downloading" || stage === "mindmap_queued" || stage === "mindmap_llm_request" || stage === "mindmap_generating") return "active";
+  if (stage === "visual_completed" || stage === "visual_partial") return "completed";
+  if (stage === "visual_failed") return "error";
+  if (stage === "summarizing" || stage === "transcribing" || stage === "downloading" || stage === "mindmap_queued" || stage === "mindmap_llm_request" || stage === "mindmap_generating" || stage?.startsWith("visual_")) return "active";
   return "";
 }

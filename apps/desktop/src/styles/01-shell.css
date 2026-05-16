@@ -28,7 +28,6 @@
   gap: 12px;
   padding-left: 18px;
   width: var(--sidebar-width);
-  -webkit-app-region: no-drag;
   transition: width var(--transition-sidebar-snap);
 }
 

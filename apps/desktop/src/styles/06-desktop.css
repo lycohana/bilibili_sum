@@ -282,7 +282,7 @@
   position: fixed;
   top: calc(var(--title-bar-height) + 18px);
   left: 50%;
-  z-index: 1800;
+  z-index: 2600;
   display: grid;
   gap: 10px;
   width: min(720px, calc(100vw - 32px));
@@ -426,6 +426,200 @@
   grid-template-columns: 1fr auto;
   gap: 12px;
   align-items: end;
+}
+
+.summary-submit-control {
+  position: relative;
+  display: inline-grid;
+  justify-self: end;
+}
+
+.summary-split-button {
+  display: inline-flex;
+  min-width: 140px;
+  min-height: 52px;
+  border-radius: var(--radius-md);
+  background: var(--brand-500);
+  box-shadow: 0 2px 8px rgba(251, 114, 153, 0.25);
+  overflow: hidden;
+}
+
+.summary-split-button:hover {
+  box-shadow: 0 4px 12px rgba(251, 114, 153, 0.3);
+}
+
+.summary-submit-main.primary-button {
+  min-width: 104px;
+  min-height: 52px;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.summary-submit-main.primary-button:hover {
+  box-shadow: none;
+}
+
+.summary-submit-menu-button {
+  width: 42px;
+  min-height: 52px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-left: 1px solid rgba(255, 255, 255, 0.24);
+  background: var(--brand-500);
+  color: var(--text-on-brand);
+  cursor: pointer;
+  transition: background-color var(--transition-fast), transform var(--transition-fast);
+}
+
+.summary-submit-menu-button:hover,
+.summary-submit-menu-button:focus-visible {
+  background: var(--brand-600);
+  outline: none;
+}
+
+.summary-submit-menu-button:active {
+  transform: scale(0.98);
+}
+
+.summary-submit-menu-button svg {
+  width: 17px;
+  height: 17px;
+}
+
+.summary-preference-menu {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  z-index: 40;
+  width: 232px;
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-default);
+  background: var(--bg-elevated);
+  box-shadow: 0 18px 44px rgba(15, 23, 42, 0.12);
+  animation: fade-up 160ms ease;
+}
+
+[data-theme="dark"] .summary-preference-menu {
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.34);
+}
+
+.summary-preference-group {
+  display: grid;
+  gap: 6px;
+}
+
+.summary-preference-label {
+  padding: 2px 6px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--text-tertiary);
+}
+
+.summary-preference-option {
+  min-height: 38px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background-color var(--transition-fast), color var(--transition-fast);
+}
+
+.summary-preference-option:hover,
+.summary-preference-option:focus-within,
+.summary-preference-option.is-selected {
+  background: rgba(251, 114, 153, 0.08);
+  color: var(--text-primary);
+}
+
+.summary-preference-option input {
+  position: relative;
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  appearance: none;
+  -webkit-appearance: none;
+  margin: 0;
+  border: 1.5px solid var(--border-strong);
+  background: var(--bg-canvas);
+  cursor: pointer;
+  transition: border-color var(--transition-fast), background-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.summary-preference-option input[type="radio"] {
+  border-radius: 999px;
+}
+
+.summary-preference-option input[type="radio"]::after {
+  content: "";
+  position: absolute;
+  inset: 4px;
+  border-radius: 999px;
+  background: transparent;
+  transition: background-color var(--transition-fast);
+}
+
+.summary-preference-option input[type="checkbox"] {
+  border-radius: 4px;
+}
+
+.summary-preference-option input[type="checkbox"]::after {
+  content: "";
+  position: absolute;
+  left: 4px;
+  top: 1px;
+  width: 5px;
+  height: 9px;
+  border: solid var(--text-on-brand);
+  border-width: 0 2px 2px 0;
+  opacity: 0;
+  transform: rotate(45deg) scale(0.88);
+  transition: opacity var(--transition-fast), transform var(--transition-fast);
+}
+
+.summary-preference-option input:checked {
+  border-color: var(--brand-600);
+  background: var(--brand-500);
+}
+
+.summary-preference-option input[type="radio"]:checked {
+  background: var(--bg-canvas);
+  box-shadow: 0 0 0 3px rgba(251, 114, 153, 0.12);
+}
+
+.summary-preference-option input[type="radio"]:checked::after {
+  background: var(--brand-600);
+}
+
+.summary-preference-option input[type="checkbox"]:checked::after {
+  opacity: 1;
+  transform: rotate(45deg) scale(1);
+}
+
+.summary-preference-option input:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(251, 114, 153, 0.18);
+}
+
+.summary-preference-option span {
+  font-size: 0.86rem;
+  font-weight: 650;
+}
+
+.summary-preference-toggle {
+  justify-content: flex-start;
+}
+
+.summary-preference-divider {
+  height: 1px;
+  background: var(--border-subtle);
 }
 
 .summary-metric {

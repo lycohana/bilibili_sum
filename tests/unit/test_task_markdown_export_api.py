@@ -130,6 +130,91 @@ def test_export_task_markdown_can_include_transcript_and_override_output_dir(tmp
     assert "[00:00] 转写内容" in content
 
 
+def test_export_task_markdown_copies_visual_assets_with_relative_links(tmp_path: Path) -> None:
+    repository = create_repository()
+    task_id = create_completed_task(repository)
+    record = repository.get_task(task_id)
+    assert record is not None and record.result is not None
+    visual_dir = tmp_path / "tasks" / task_id / "visual_evidence"
+    frames_dir = visual_dir / "frames"
+    frames_dir.mkdir(parents=True)
+    frame_path = frames_dir / "f0001.jpg"
+    frame_path.write_bytes(b"fake-jpeg")
+    visual_note_path = visual_dir / "visual_enhanced_note.md"
+    visual_note_path.write_text("## 知识笔记\n\n这个概念需要对照画面理解。\n\n![00:12 画面](visual://f0001)\n\n画面说明被整合进正文。", encoding="utf-8")
+    repository.save_result(
+        task_id,
+        record.result.model_copy(
+            update={
+                    "visual_note_status": "ready",
+                    "visual_note_artifact_path": str(visual_note_path),
+                    "visual_enhanced_note_artifact_path": str(visual_note_path),
+                    "visual_frame_count": 1,
+                    "artifacts": {**record.result.artifacts, "visual_enhanced_note_path": str(visual_note_path)},
+                }
+            ),
+        )
+    settings = ServiceSettings(
+        data_dir=tmp_path / "data",
+        cache_dir=tmp_path / "cache",
+        tasks_dir=tmp_path / "tasks",
+        output_dir=str(tmp_path / "vault"),
+    )
+
+    response = export_task_markdown(repository, settings, task_id)
+    export_path = Path(response.path)
+    content = export_path.read_text(encoding="utf-8")
+
+    assert "这个概念需要对照画面理解。" in content
+    assert "画面说明被整合进正文。" in content
+    assert "## 视觉证据" not in content
+    assert f"]({export_path.stem}.assets/f0001.jpg)" in content
+    assert (export_path.parent / f"{export_path.stem}.assets" / "f0001.jpg").read_bytes() == b"fake-jpeg"
+    assert "visual_evidence" not in content
+
+
+def test_export_task_markdown_copies_visual_asset_by_frame_index(tmp_path: Path) -> None:
+    repository = create_repository()
+    task_id = create_completed_task(repository)
+    record = repository.get_task(task_id)
+    assert record is not None and record.result is not None
+    visual_dir = tmp_path / "tasks" / task_id / "visual_evidence"
+    frames_dir = visual_dir / "frames"
+    frames_dir.mkdir(parents=True)
+    frame_path = frames_dir / "frame-a.webp"
+    frame_path.write_bytes(b"fake-webp")
+    (visual_dir / "frame_index.json").write_text(
+        '{"frames":[{"frame_id":"f0001","file_name":"frame-a.webp","image_path":"frames/frame-a.webp"}]}',
+        encoding="utf-8",
+    )
+    visual_note_path = visual_dir / "visual_enhanced_note.md"
+    visual_note_path.write_text("正文。\n\n![00:12 画面](visual://f0001)", encoding="utf-8")
+    repository.save_result(
+        task_id,
+        record.result.model_copy(
+            update={
+                "visual_note_status": "ready",
+                "visual_enhanced_note_artifact_path": str(visual_note_path),
+                "visual_frame_count": 1,
+                "artifacts": {**record.result.artifacts, "visual_enhanced_note_path": str(visual_note_path)},
+            }
+        ),
+    )
+    settings = ServiceSettings(
+        data_dir=tmp_path / "data",
+        cache_dir=tmp_path / "cache",
+        tasks_dir=tmp_path / "tasks",
+        output_dir=str(tmp_path / "vault"),
+    )
+
+    response = export_task_markdown(repository, settings, task_id)
+    export_path = Path(response.path)
+    content = export_path.read_text(encoding="utf-8")
+
+    assert f"]({export_path.stem}.assets/frame-a.webp)" in content
+    assert (export_path.parent / f"{export_path.stem}.assets" / "frame-a.webp").read_bytes() == b"fake-webp"
+
+
 def test_export_task_markdown_avoids_overwriting_existing_file(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

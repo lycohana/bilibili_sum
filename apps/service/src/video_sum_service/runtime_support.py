@@ -8,14 +8,19 @@ import sys
 import textwrap
 import venv
 import importlib
+from dataclasses import fields
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from fastapi import HTTPException
 
 from video_sum_infra.config import (
+    DEFAULT_VISUAL_FRAME_PLANNING_PROMPT,
     DEFAULT_KNOWLEDGE_NOTE_SYSTEM_PROMPT,
     DEFAULT_KNOWLEDGE_NOTE_USER_PROMPT_TEMPLATE,
+    DEFAULT_VISUAL_VLM_PROMPT,
+    DEFAULT_VISUAL_NOTE_SYSTEM_PROMPT,
+    DEFAULT_VISUAL_NOTE_USER_PROMPT_TEMPLATE,
     ServiceSettings,
 )
 from video_sum_infra.runtime import (
@@ -863,42 +868,74 @@ def build_worker(
     activate_runtime_pythonpath(selected_runtime_channel)
     environment = environment_info or detect_environment(selected_runtime_channel)
     runtime_settings = current_settings.with_resolved_runtime(cuda_available=bool(environment.get("cudaAvailable")))
+    pipeline_settings_payload = {
+        "tasks_dir": runtime_settings.tasks_dir,
+        "runtime_channel": selected_runtime_channel,
+        "transcription_provider": runtime_settings.transcription_provider,
+        "whisper_model": runtime_settings.whisper_model,
+        "whisper_device": runtime_settings.whisper_device,
+        "whisper_compute_type": runtime_settings.whisper_compute_type,
+        "local_asr_available": bool(environment.get("localAsrAvailable")),
+        "siliconflow_asr_base_url": runtime_settings.siliconflow_asr_base_url,
+        "siliconflow_asr_model": runtime_settings.siliconflow_asr_model,
+        "siliconflow_asr_api_key": runtime_settings.siliconflow_asr_api_key,
+        "siliconflow_asr_chunk_duration_seconds": runtime_settings.siliconflow_asr_chunk_duration_seconds,
+        "siliconflow_asr_concurrency": runtime_settings.siliconflow_asr_concurrency,
+        "multimodal_asr_base_url": runtime_settings.multimodal_asr_base_url,
+        "multimodal_asr_model": runtime_settings.multimodal_asr_model,
+        "multimodal_asr_api_key": runtime_settings.multimodal_asr_api_key,
+        "multimodal_asr_chunk_duration_seconds": runtime_settings.multimodal_asr_chunk_duration_seconds,
+        "multimodal_asr_max_retries": runtime_settings.multimodal_asr_max_retries,
+        "llm_enabled": runtime_settings.llm_enabled,
+        "llm_provider": runtime_settings.llm_provider,
+        "llm_api_key": runtime_settings.llm_api_key,
+        "llm_base_url": runtime_settings.llm_base_url,
+        "llm_model": runtime_settings.llm_model,
+        "visual_evidence_enabled": runtime_settings.visual_evidence_enabled,
+        "visual_note_mode": runtime_settings.visual_note_mode,
+        "visual_multimodal_enabled": runtime_settings.visual_multimodal_enabled,
+        "visual_download_resolution": runtime_settings.visual_download_resolution,
+        "visual_evidence_use_llm": runtime_settings.visual_evidence_use_llm and runtime_settings.visual_multimodal_enabled,
+        "visual_vlm_provider": runtime_settings.visual_vlm_provider,
+        "visual_evidence_base_url": runtime_settings.visual_evidence_base_url,
+        "visual_evidence_model": runtime_settings.visual_evidence_model,
+        "visual_evidence_api_key": runtime_settings.visual_evidence_api_key,
+        "visual_evidence_max_frames": runtime_settings.visual_evidence_max_frames,
+        "visual_evidence_frame_interval_seconds": runtime_settings.visual_evidence_frame_interval_seconds,
+        "visual_evidence_frame_width": runtime_settings.visual_evidence_frame_width,
+        "visual_evidence_image_quality": runtime_settings.visual_evidence_image_quality,
+        "visual_evidence_timeout_seconds": runtime_settings.visual_evidence_timeout_seconds,
+        "visual_evidence_retry_count": runtime_settings.visual_evidence_retry_count,
+        "visual_note_system_prompt": runtime_settings.visual_note_system_prompt,
+        "visual_note_user_prompt_template": runtime_settings.visual_note_user_prompt_template,
+        "visual_frame_planning_prompt": runtime_settings.visual_frame_planning_prompt,
+        "visual_vlm_prompt": runtime_settings.visual_vlm_prompt,
+        "summary_system_prompt": runtime_settings.summary_system_prompt,
+        "summary_user_prompt_template": runtime_settings.summary_user_prompt_template,
+        "knowledge_note_system_prompt": runtime_settings.knowledge_note_system_prompt,
+        "knowledge_note_user_prompt_template": runtime_settings.knowledge_note_user_prompt_template,
+        "mindmap_system_prompt": runtime_settings.mindmap_system_prompt,
+        "mindmap_user_prompt_template": runtime_settings.mindmap_user_prompt_template,
+        "summary_chunk_target_chars": runtime_settings.summary_chunk_target_chars,
+        "summary_chunk_overlap_segments": runtime_settings.summary_chunk_overlap_segments,
+        "summary_chunk_concurrency": runtime_settings.summary_chunk_concurrency,
+        "summary_chunk_retry_count": runtime_settings.summary_chunk_retry_count,
+        "ytdlp_cookies_file": runtime_settings.ytdlp_cookies_file,
+        "ytdlp_cookies_browser": runtime_settings.ytdlp_cookies_browser,
+    }
+    supported_pipeline_fields = {field.name for field in fields(PipelineSettings)}
     pipeline_settings = PipelineSettings(
-        tasks_dir=runtime_settings.tasks_dir,
-        runtime_channel=selected_runtime_channel,
-        transcription_provider=runtime_settings.transcription_provider,
-        whisper_model=runtime_settings.whisper_model,
-        whisper_device=runtime_settings.whisper_device,
-        whisper_compute_type=runtime_settings.whisper_compute_type,
-        local_asr_available=bool(environment.get("localAsrAvailable")),
-        siliconflow_asr_base_url=runtime_settings.siliconflow_asr_base_url,
-        siliconflow_asr_model=runtime_settings.siliconflow_asr_model,
-        siliconflow_asr_api_key=runtime_settings.siliconflow_asr_api_key,
-        multimodal_asr_base_url=runtime_settings.multimodal_asr_base_url,
-        multimodal_asr_model=runtime_settings.multimodal_asr_model,
-        multimodal_asr_api_key=runtime_settings.multimodal_asr_api_key,
-        llm_enabled=runtime_settings.llm_enabled,
-        llm_provider=runtime_settings.llm_provider,
-        llm_api_key=runtime_settings.llm_api_key,
-        llm_base_url=runtime_settings.llm_base_url,
-        llm_model=runtime_settings.llm_model,
-        summary_system_prompt=runtime_settings.summary_system_prompt,
-        summary_user_prompt_template=runtime_settings.summary_user_prompt_template,
-        knowledge_note_system_prompt=runtime_settings.knowledge_note_system_prompt,
-        knowledge_note_user_prompt_template=runtime_settings.knowledge_note_user_prompt_template,
-        mindmap_system_prompt=runtime_settings.mindmap_system_prompt,
-        mindmap_user_prompt_template=runtime_settings.mindmap_user_prompt_template,
-        summary_chunk_target_chars=runtime_settings.summary_chunk_target_chars,
-        summary_chunk_overlap_segments=runtime_settings.summary_chunk_overlap_segments,
-        summary_chunk_concurrency=runtime_settings.summary_chunk_concurrency,
-        summary_chunk_retry_count=runtime_settings.summary_chunk_retry_count,
-        ytdlp_cookies_file=runtime_settings.ytdlp_cookies_file,
-        ytdlp_cookies_browser=runtime_settings.ytdlp_cookies_browser,
+        **{
+            key: value
+            for key, value in pipeline_settings_payload.items()
+            if key in supported_pipeline_fields
+        }
     )
     return TaskWorker(
         repository=repository,
         pipeline_runner=RealPipelineRunner(pipeline_settings),
         auto_generate_mindmap=current_settings.auto_generate_mindmap,
+        auto_generate_visual_evidence=current_settings.visual_evidence_enabled and current_settings.visual_note_mode != "text",
         knowledge_index_auto_rebuild=(
             current_settings.knowledge_index_auto_rebuild
             if current_settings.knowledge_enabled
@@ -916,7 +953,7 @@ def replace_task_worker(app_state, next_worker: TaskWorker) -> TaskWorker:
     previous_worker = getattr(app_state, "task_worker", None)
     app_state.task_worker = next_worker
     if isinstance(previous_worker, TaskWorker):
-        previous_worker.close_for_new_work()
+        previous_worker.shutdown(wait=False, cancel_pending=True)
     return next_worker
 
 
@@ -958,6 +995,22 @@ def serialize_settings(
         "summary_mode": current_settings.summary_mode,
         "llm_enabled": current_settings.llm_enabled,
         "auto_generate_mindmap": current_settings.auto_generate_mindmap,
+        "visual_note_mode": current_settings.visual_note_mode,
+        "visual_evidence_enabled": current_settings.visual_evidence_enabled,
+        "visual_multimodal_enabled": current_settings.visual_multimodal_enabled,
+        "visual_download_resolution": current_settings.visual_download_resolution,
+        "visual_evidence_use_llm": current_settings.visual_evidence_use_llm,
+        "visual_vlm_provider": current_settings.visual_vlm_provider,
+        "visual_evidence_base_url": current_settings.visual_evidence_base_url,
+        "visual_evidence_model": current_settings.visual_evidence_model,
+        "visual_evidence_api_key": "",
+        "visual_evidence_api_key_configured": bool(current_settings.visual_evidence_api_key),
+        "visual_evidence_max_frames": current_settings.visual_evidence_max_frames,
+        "visual_evidence_frame_interval_seconds": current_settings.visual_evidence_frame_interval_seconds,
+        "visual_evidence_frame_width": current_settings.visual_evidence_frame_width,
+        "visual_evidence_image_quality": current_settings.visual_evidence_image_quality,
+        "visual_evidence_timeout_seconds": current_settings.visual_evidence_timeout_seconds,
+        "visual_evidence_retry_count": current_settings.visual_evidence_retry_count,
         "llm_provider": current_settings.llm_provider,
         "llm_base_url": current_settings.llm_base_url,
         "llm_model": current_settings.llm_model,
@@ -976,6 +1029,10 @@ def serialize_settings(
         "summary_user_prompt_template": current_settings.summary_user_prompt_template,
         "knowledge_note_system_prompt": current_settings.knowledge_note_system_prompt,
         "knowledge_note_user_prompt_template": current_settings.knowledge_note_user_prompt_template,
+        "visual_note_system_prompt": current_settings.visual_note_system_prompt,
+        "visual_note_user_prompt_template": current_settings.visual_note_user_prompt_template,
+        "visual_frame_planning_prompt": current_settings.visual_frame_planning_prompt,
+        "visual_vlm_prompt": current_settings.visual_vlm_prompt,
         "summary_chunk_target_chars": current_settings.summary_chunk_target_chars,
         "summary_chunk_overlap_segments": current_settings.summary_chunk_overlap_segments,
         "task_concurrency": current_settings.task_concurrency,
@@ -988,6 +1045,10 @@ def serialize_settings(
         "defaults": {
             "knowledge_note_system_prompt": DEFAULT_KNOWLEDGE_NOTE_SYSTEM_PROMPT,
             "knowledge_note_user_prompt_template": DEFAULT_KNOWLEDGE_NOTE_USER_PROMPT_TEMPLATE,
+            "visual_note_system_prompt": DEFAULT_VISUAL_NOTE_SYSTEM_PROMPT,
+            "visual_note_user_prompt_template": DEFAULT_VISUAL_NOTE_USER_PROMPT_TEMPLATE,
+            "visual_frame_planning_prompt": DEFAULT_VISUAL_FRAME_PLANNING_PROMPT,
+            "visual_vlm_prompt": DEFAULT_VISUAL_VLM_PROMPT,
         },
     }
 

@@ -1,6 +1,13 @@
+import base64
+import binascii
+import importlib.resources
 import io
 import json
+import os
+from pathlib import Path
+import struct
 import wave
+import zlib
 
 import httpx
 from fastapi import HTTPException
@@ -23,6 +30,72 @@ from video_sum_service.settings_manager import SettingsUpdatePayload, is_blank_o
 
 MAX_LOG_CHARS = 20_000
 MAX_LOG_LINE_CHARS = 1_000
+
+VISUAL_TEST_FONT: dict[str, tuple[str, ...]] = {
+    "B": ("11110", "10001", "10001", "11110", "10001", "10001", "11110"),
+    "I": ("11111", "00100", "00100", "00100", "00100", "00100", "11111"),
+    "L": ("10000", "10000", "10000", "10000", "10000", "10000", "11111"),
+    "S": ("01111", "10000", "10000", "01110", "00001", "00001", "11110"),
+    "U": ("10001", "10001", "10001", "10001", "10001", "10001", "01110"),
+    "M": ("10001", "11011", "10101", "10101", "10001", "10001", "10001"),
+}
+
+
+def _png_chunk(chunk_type: bytes, data: bytes) -> bytes:
+    return (
+        struct.pack(">I", len(data))
+        + chunk_type
+        + data
+        + struct.pack(">I", binascii.crc32(chunk_type + data) & 0xFFFFFFFF)
+    )
+
+
+def build_visual_test_image_data_url() -> str:
+    width, height = 320, 160
+    white = (255, 255, 255)
+    ink = (22, 24, 28)
+    pink = (251, 114, 153)
+    pixels = bytearray(white * width * height)
+
+    def set_pixel(x: int, y: int, color: tuple[int, int, int]) -> None:
+        if 0 <= x < width and 0 <= y < height:
+            offset = (y * width + x) * 3
+            pixels[offset : offset + 3] = bytes(color)
+
+    center_x, center_y, radius = 262, 80, 38
+    for y in range(center_y - radius, center_y + radius + 1):
+        for x in range(center_x - radius, center_x + radius + 1):
+            if (x - center_x) ** 2 + (y - center_y) ** 2 <= radius**2:
+                set_pixel(x, y, pink)
+
+    scale = 11
+    cursor_x = 26
+    top = 48
+    for char in "BILISUM":
+        glyph = VISUAL_TEST_FONT[char]
+        for row_index, row in enumerate(glyph):
+            for col_index, value in enumerate(row):
+                if value != "1":
+                    continue
+                for dy in range(scale):
+                    for dx in range(scale):
+                        set_pixel(cursor_x + col_index * scale + dx, top + row_index * scale + dy, ink)
+        cursor_x += 6 * scale
+
+    raw = bytearray()
+    stride = width * 3
+    for row in range(height):
+        raw.append(0)
+        start = row * stride
+        raw.extend(pixels[start : start + stride])
+
+    png = (
+        b"\x89PNG\r\n\x1a\n"
+        + _png_chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+        + _png_chunk(b"IDAT", zlib.compress(bytes(raw), level=9))
+        + _png_chunk(b"IEND", b"")
+    )
+    return f"data:image/png;base64,{base64.b64encode(png).decode('ascii')}"
 
 
 def trim_log_text(content: str, *, max_chars: int = MAX_LOG_CHARS, max_line_chars: int = MAX_LOG_LINE_CHARS) -> str:
@@ -101,6 +174,34 @@ def build_test_wav_bytes(duration_ms: int = 250, sample_rate: int = 16000) -> by
     return buffer.getvalue()
 
 
+def load_builtin_asr_test_audio() -> tuple[str, bytes, str]:
+    audio = importlib.resources.files("video_sum_service.assets").joinpath("asr_test_zh.wav")
+    return "bilisum-asr-test-zh.wav", audio.read_bytes(), "audio/wav"
+
+
+def load_asr_test_audio() -> tuple[str, bytes, str]:
+    audio_path = os.environ.get("VIDEO_SUM_ASR_TEST_AUDIO_FILE", "").strip()
+    if audio_path:
+        path = Path(audio_path).expanduser()
+        if not path.is_file():
+            raise HTTPException(status_code=400, detail=f"ASR 测试音频不存在：{path}")
+        suffix = path.suffix.lower()
+        content_type = {
+            ".flac": "audio/flac",
+            ".m4a": "audio/mp4",
+            ".mp3": "audio/mpeg",
+            ".ogg": "audio/ogg",
+            ".wav": "audio/wav",
+            ".webm": "audio/webm",
+        }.get(suffix, "application/octet-stream")
+        return path.name, path.read_bytes(), content_type
+
+    try:
+        return load_builtin_asr_test_audio()
+    except (FileNotFoundError, ModuleNotFoundError):
+        return "bilisum-asr-test.wav", build_test_wav_bytes(), "audio/wav"
+
+
 def build_effective_llm_test_settings(payload: SettingsUpdatePayload | None = None) -> ServiceSettings:
     current_settings = settings_manager.current
     current_dump = current_settings.model_dump(mode="json")
@@ -113,6 +214,17 @@ def build_effective_llm_test_settings(payload: SettingsUpdatePayload | None = No
             "llm_api_key": current_settings.knowledge_llm_api_key,
             "llm_model": current_settings.knowledge_llm_model,
         }
+    if payload is not None and payload.llm_test_scope == "visual":
+        provider = current_settings.visual_vlm_provider or current_settings.llm_provider
+        base_url = current_settings.visual_evidence_base_url or current_settings.llm_base_url
+        current_dump = {
+            **current_dump,
+            "llm_enabled": current_settings.visual_multimodal_enabled,
+            "llm_provider": provider,
+            "llm_base_url": base_url,
+            "llm_api_key": current_settings.visual_evidence_api_key or current_settings.llm_api_key,
+            "llm_model": current_settings.visual_evidence_model or current_settings.llm_model,
+        }
     updates = payload.model_dump(exclude_none=True, exclude={"llm_test_scope"}) if payload is not None else {}
     if "llm_api_key" in updates and is_blank_or_masked_secret(updates["llm_api_key"]) and current_dump.get("llm_api_key"):
         updates.pop("llm_api_key")
@@ -121,6 +233,7 @@ def build_effective_llm_test_settings(payload: SettingsUpdatePayload | None = No
 
 def probe_llm_connection(payload: SettingsUpdatePayload | None = None) -> dict[str, object]:
     effective_settings = build_effective_llm_test_settings(payload)
+    test_scope = payload.llm_test_scope if payload and payload.llm_test_scope else "main"
 
     base_url = str(effective_settings.llm_base_url or "").strip().rstrip("/")
     api_key = str(effective_settings.llm_api_key or "").strip()
@@ -136,28 +249,77 @@ def probe_llm_connection(payload: SettingsUpdatePayload | None = None) -> dict[s
     if not model:
         raise HTTPException(status_code=400, detail="请先填写模型名称。")
 
-    request_payload = {
-        "model": request_model,
-        "messages": [
-            {
-                "role": "system",
-                "content": "你是一个 JSON 测试助手。你只能返回合法 JSON，不能输出任何额外文字。",
-            },
-            {
-                "role": "user",
-                "content": (
-                    "请只返回一个合法 JSON 对象，不要带 markdown 代码块，不要带解释。"
-                    '格式必须是：{"ok":true,"message":"test"}'
-                ),
-            },
-        ],
-        "temperature": 0,
-        "max_tokens": 64,
-        "response_format": {"type": "json_object"},
-        "enable_thinking": False,
-        "chat_template_kwargs": {"enable_thinking": False},
-    }
-    if use_anthropic:
+    if test_scope == "visual":
+        request_payload = {
+            "model": request_model,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "你是一个视觉 JSON 测试助手。你必须观察图片，只返回合法 JSON。",
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": (
+                                "请识别图片中的大字文本和主要形状。只返回 JSON，不要解释。"
+                                '格式：{"ok":true,"text":"BILISUM","shape":"pink circle"}'
+                            ),
+                        },
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": build_visual_test_image_data_url(),
+                                "detail": "low",
+                            },
+                        },
+                    ],
+                },
+            ],
+            "temperature": 0,
+            "max_tokens": 96,
+            "response_format": {"type": "json_object"},
+            "enable_thinking": False,
+            "chat_template_kwargs": {"enable_thinking": False},
+        }
+    else:
+        request_payload = {
+            "model": request_model,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "你是一个 JSON 测试助手。你只能返回合法 JSON，不能输出任何额外文字。",
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        "请只返回一个合法 JSON 对象，不要带 markdown 代码块，不要带解释。"
+                        '格式必须是：{"ok":true,"message":"test"}'
+                    ),
+                },
+            ],
+            "temperature": 0,
+            "max_tokens": 64,
+            "response_format": {"type": "json_object"},
+            "enable_thinking": False,
+            "chat_template_kwargs": {"enable_thinking": False},
+        }
+    # For visual tests with images, only the real Anthropic API supports image
+    # blocks via /messages. Third-party Anthropic-compatible endpoints
+    # (SiliconFlow etc.) need OpenAI format for image requests.
+    fallback_to_openai_for_images = (
+        use_anthropic and test_scope == "visual" and "api.anthropic.com" not in base_url.lower()
+    )
+    if fallback_to_openai_for_images:
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
+        request_url = openai_chat_completions_url(base_url)
+        request_json = request_payload
+        request_json["model"] = normalize_openai_compatible_model_name(model)
+    elif use_anthropic:
         headers = {
             "x-api-key": api_key,
             "anthropic-version": ANTHROPIC_API_VERSION,
@@ -173,8 +335,9 @@ def probe_llm_connection(payload: SettingsUpdatePayload | None = None) -> dict[s
         request_url = openai_chat_completions_url(base_url)
         request_json = request_payload
 
+    probe_timeout = 120 if test_scope == "visual" else 30
     try:
-        with httpx.Client(timeout=20, follow_redirects=True) as client:
+        with httpx.Client(timeout=probe_timeout, follow_redirects=True) as client:
             response = client.post(
                 request_url,
                 headers=headers,
@@ -207,14 +370,27 @@ def probe_llm_connection(payload: SettingsUpdatePayload | None = None) -> dict[s
             detail=f"LLM 测试失败：接口可访问，但当前模型未返回合法 JSON。{exc.msg}",
         ) from exc
 
+    if test_scope == "visual":
+        parsed_text = json.dumps(parsed_json, ensure_ascii=False).lower()
+        if "bilisum" not in parsed_text and "bili" not in parsed_text:
+            raise HTTPException(
+                status_code=502,
+                detail="视觉模型测试失败：接口返回了 JSON，但未识别出测试图片中的 BiliSum 文本。",
+            )
+
     preview = preview[:200]
     return {
         "ok": True,
-        "message": f"LLM 连接与 JSON 输出测试成功：{model}",
+        "message": (
+            f"视觉模型图片识别测试成功：{model}"
+            if test_scope == "visual"
+            else f"LLM 连接与 JSON 输出测试成功：{model}"
+        ),
         "model": model,
         "baseUrl": base_url,
         "responsePreview": preview,
         "jsonOutputAvailable": True,
+        "visualImageRecognitionAvailable": test_scope == "visual",
         "jsonPreview": json.dumps(parsed_json, ensure_ascii=False)[:200],
     }
 
@@ -256,7 +432,7 @@ def probe_asr_connection(payload: SettingsUpdatePayload | None = None) -> dict[s
 
     headers = {"Authorization": f"Bearer {api_key}"}
     request_url = f"{base_url}/audio/transcriptions"
-    audio_bytes = build_test_wav_bytes()
+    audio_name, audio_bytes, audio_content_type = load_asr_test_audio()
 
     try:
         timeout = httpx.Timeout(connect=20.0, read=90.0, write=90.0, pool=20.0)
@@ -265,7 +441,7 @@ def probe_asr_connection(payload: SettingsUpdatePayload | None = None) -> dict[s
                 request_url,
                 headers=headers,
                 data={"model": model},
-                files={"file": ("bilisum-asr-test.wav", audio_bytes, "audio/wav")},
+                files={"file": (audio_name, audio_bytes, audio_content_type)},
             )
     except httpx.HTTPError as exc:
         raise HTTPException(status_code=502, detail=f"ASR 连接失败：{exc}") from exc

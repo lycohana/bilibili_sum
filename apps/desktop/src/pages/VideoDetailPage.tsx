@@ -29,7 +29,7 @@ import {
   type KnowledgeCard,
   type TaskPanelState,
 } from "../detailModel";
-import type { MindMapNode, TaskDetail, TaskEvent, TaskMarkdownExportResponse, TaskMindMapResponse, TaskStatus, TaskSummary, VideoAssetDetail, VideoPageBatchOption, VideoTaskBatchResponse } from "../types";
+import type { MindMapNode, TaskDetail, TaskEvent, TaskMarkdownExportResponse, TaskMindMapResponse, TaskStatus, TaskSummary, TaskVisualEvidenceResponse, VideoAssetDetail, VideoPageBatchOption, VideoTaskBatchResponse, VisualEvidenceFrame, VisualEvidenceObservation } from "../types";
 import { formatDateTime, formatDuration, formatTaskDuration, formatTokenCount, sanitizeMindMapLabel, summarizeEvents, taskStatusLabel } from "../utils";
 import { buildPlayerEmbedDescriptor, withPlayerSeek } from "../videoPlayer";
 
@@ -119,6 +119,8 @@ type FloatingPlayerLayout = {
   y: number;
 };
 
+type KnowledgeNoteViewMode = "text" | "visual";
+
 const MINDMAP_ROOT_ACCENT: MindMapAccent = {
   stroke: "#4c9fdd",
   surface: "rgba(76, 159, 221, 0.18)",
@@ -142,6 +144,7 @@ const FLOATING_PLAYER_VIEWPORT_MARGIN = 20;
 const FLOATING_PLAYER_TOP_OFFSET = 92;
 const FLOATING_PLAYER_CHROME_HEIGHT = 62;
 const LOCAL_VIDEO_SUFFIXES = new Set([".mp4", ".mov", ".mkv", ".avi", ".wmv", ".webm", ".flv", ".m4v", ".ts", ".mpeg", ".mpg"]);
+const SUMMARY_PREFERENCE_STORAGE_KEY = "bilisum.summaryPreference";
 
 const detailTabs: Array<{ id: DetailTab; label: string; description: string }> = [
   { id: "knowledge", label: "知识卡片", description: "按概览、要点、章节整理当前任务结果。" },
@@ -284,6 +287,35 @@ function shouldDisplayMindMapTimestamp(seconds?: number | null) {
   return typeof seconds === "number" && Number.isFinite(seconds) && seconds > 0;
 }
 
+function loadKnowledgeNoteViewMode(): KnowledgeNoteViewMode {
+  if (typeof window === "undefined") {
+    return "text";
+  }
+  try {
+    const rawValue = window.localStorage.getItem(SUMMARY_PREFERENCE_STORAGE_KEY);
+    if (!rawValue) {
+      return "text";
+    }
+    const parsed = JSON.parse(rawValue) as { noteMode?: unknown };
+    return parsed.noteMode === "visual" ? "visual" : "text";
+  } catch {
+    return "text";
+  }
+}
+
+function saveKnowledgeNoteViewMode(mode: KnowledgeNoteViewMode) {
+  if (typeof window === "undefined") {
+    return;
+  }
+  try {
+    const rawValue = window.localStorage.getItem(SUMMARY_PREFERENCE_STORAGE_KEY);
+    const parsed = rawValue ? JSON.parse(rawValue) as Record<string, unknown> : {};
+    window.localStorage.setItem(SUMMARY_PREFERENCE_STORAGE_KEY, JSON.stringify({ ...parsed, noteMode: mode }));
+  } catch {
+    window.localStorage.setItem(SUMMARY_PREFERENCE_STORAGE_KEY, JSON.stringify({ noteMode: mode }));
+  }
+}
+
 async function loadTaskContext(taskId: string): Promise<TaskContext> {
   const [detail, events] = await Promise.all([api.getTaskResult(taskId), api.getTaskEvents(taskId)]);
   return { detail, events };
@@ -319,6 +351,10 @@ export function VideoDetailPage({ onRefresh, onOpenCookieSettings, onOpenCookieT
   const [cookieHelpDialogOpen, setCookieHelpDialogOpen] = useState(false);
   const [mindMaps, setMindMaps] = useState<Record<string, TaskMindMapResponse>>({});
   const [mindMapLoading, setMindMapLoading] = useState<Record<string, boolean>>({});
+  const [visualEvidence, setVisualEvidence] = useState<Record<string, TaskVisualEvidenceResponse>>({});
+  const [visualEvidenceLoading, setVisualEvidenceLoading] = useState<Record<string, boolean>>({});
+  const [knowledgeNoteViewMode, setKnowledgeNoteViewMode] = useState<KnowledgeNoteViewMode>(() => loadKnowledgeNoteViewMode());
+  const [knowledgeNoteModeMenuOpen, setKnowledgeNoteModeMenuOpen] = useState(false);
   const [isExportingKnowledgeCard, setIsExportingKnowledgeCard] = useState(false);
   const [isExportingKnowledgeNote, setIsExportingKnowledgeNote] = useState(false);
   const [isExportingTranscript, setIsExportingTranscript] = useState(false);
@@ -342,6 +378,7 @@ export function VideoDetailPage({ onRefresh, onOpenCookieSettings, onOpenCookieT
   const playerFrameRef = useRef<HTMLDivElement | null>(null);
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
   const knowledgeExportRef = useRef<HTMLElement | null>(null);
+  const knowledgeNoteModeMenuRef = useRef<HTMLDivElement | null>(null);
   const knowledgeNoteExportMenuRef = useRef<HTMLDivElement | null>(null);
   const lastChapterGroupSignatureRef = useRef("");
   const activeVideoIdRef = useRef(videoId);
@@ -474,6 +511,61 @@ export function VideoDetailPage({ onRefresh, onOpenCookieSettings, onOpenCookieT
       throw error;
     } finally {
       setMindMapLoading((current) => omitRecordKey(current, taskId));
+    }
+  }
+
+  async function loadVisualEvidence(taskId: string, options: { force?: boolean } = {}) {
+    if (!options.force && visualEvidence[taskId]) {
+      return visualEvidence[taskId];
+    }
+    setVisualEvidenceLoading((current) => ({ ...current, [taskId]: true }));
+    try {
+      const response = await api.getTaskVisualEvidence(taskId);
+      setVisualEvidence((current) => ({ ...current, [taskId]: response }));
+      return response;
+    } catch (error) {
+      const failedState: TaskVisualEvidenceResponse = {
+        task_id: taskId,
+        mode: "text",
+        status: "failed",
+        error_message: error instanceof Error ? error.message : "图文笔记加载失败",
+        updated_at: null,
+        frame_count: 0,
+        insert_count: 0,
+        visual_note_markdown: "",
+        enhanced_note_markdown: "",
+        context: null,
+      };
+      setVisualEvidence((current) => ({ ...current, [taskId]: failedState }));
+      throw error;
+    } finally {
+      setVisualEvidenceLoading((current) => omitRecordKey(current, taskId));
+    }
+  }
+
+  async function triggerVisualNoteGeneration(taskId: string, options: { force?: boolean; mode?: string } = {}) {
+    setVisualEvidenceLoading((current) => ({ ...current, [taskId]: true }));
+    try {
+      const response = await api.generateTaskVisualEvidence(taskId, { force: options.force, mode: options.mode });
+      setVisualEvidence((current) => ({ ...current, [taskId]: response }));
+      return response;
+    } catch (error) {
+      const failedState: TaskVisualEvidenceResponse = {
+        task_id: taskId,
+        mode: "frame_insert",
+        status: "failed",
+        error_message: error instanceof Error ? error.message : "图文笔记生成失败",
+        updated_at: null,
+        frame_count: 0,
+        insert_count: 0,
+        visual_note_markdown: "",
+        enhanced_note_markdown: "",
+        context: null,
+      };
+      setVisualEvidence((current) => ({ ...current, [taskId]: failedState }));
+      throw error;
+    } finally {
+      setVisualEvidenceLoading((current) => omitRecordKey(current, taskId));
     }
   }
 
@@ -678,6 +770,17 @@ export function VideoDetailPage({ onRefresh, onOpenCookieSettings, onOpenCookieT
   }, [activeTab, selectedTaskId]);
 
   useEffect(() => {
+    if (!selectedTaskId || activeTab !== "summary") {
+      return;
+    }
+    void loadVisualEvidence(selectedTaskId).catch(() => undefined);
+  }, [activeTab, selectedTaskId]);
+
+  useEffect(() => {
+    saveKnowledgeNoteViewMode(knowledgeNoteViewMode);
+  }, [knowledgeNoteViewMode]);
+
+  useEffect(() => {
     if (!selectedTaskId) {
       return;
     }
@@ -694,6 +797,24 @@ export function VideoDetailPage({ onRefresh, onOpenCookieSettings, onOpenCookieT
     }, 1500);
     return () => window.clearInterval(timer);
   }, [mindMaps, selectedTaskDetail?.result?.mindmap_status, selectedTaskId]);
+
+  useEffect(() => {
+    if (!selectedTaskId) {
+      return;
+    }
+    const currentVisualEvidence = visualEvidence[selectedTaskId];
+    const isGenerating = currentVisualEvidence?.status === "generating" || selectedTaskDetail?.result?.visual_note_status === "generating";
+    if (!isGenerating) {
+      return;
+    }
+    const timer = window.setInterval(() => {
+      void Promise.all([
+        loadVisualEvidence(selectedTaskId, { force: true }),
+        ensureTaskContext(selectedTaskId, { force: true }),
+      ]).catch(() => undefined);
+    }, 1800);
+    return () => window.clearInterval(timer);
+  }, [selectedTaskDetail?.result?.visual_note_status, selectedTaskId, visualEvidence]);
 
   useEffect(() => {
     if (!latestTaskId) {
@@ -757,6 +878,9 @@ export function VideoDetailPage({ onRefresh, onOpenCookieSettings, onOpenCookieT
       || event.stage === "cancelled"
       || event.stage === "mindmap_completed"
       || event.stage === "mindmap_failed"
+      || event.stage === "visual_completed"
+      || event.stage === "visual_partial"
+      || event.stage === "visual_failed"
     ));
     if (!terminalEvent) {
       return;
@@ -780,7 +904,7 @@ export function VideoDetailPage({ onRefresh, onOpenCookieSettings, onOpenCookieT
   }, [latestEvents, latestTaskId]);
 
   useEffect(() => {
-    if (taskPanelState !== "expanded" && !actionMenuOpen && !pageMenuOpen && !knowledgeNoteExportMenuOpen) {
+    if (taskPanelState !== "expanded" && !actionMenuOpen && !pageMenuOpen && !knowledgeNoteExportMenuOpen && !knowledgeNoteModeMenuOpen) {
       return;
     }
 
@@ -790,6 +914,7 @@ export function VideoDetailPage({ onRefresh, onOpenCookieSettings, onOpenCookieT
       const clickedActionMenu = actionMenuRef.current?.contains(target);
       const clickedPageSwitcher = pageSwitcherRef.current?.contains(target);
       const clickedKnowledgeNoteExportMenu = knowledgeNoteExportMenuRef.current?.contains(target);
+      const clickedKnowledgeNoteModeMenu = knowledgeNoteModeMenuRef.current?.contains(target);
       const clickedBatchSide = batchSideRef.current?.contains(target);
 
       if (!clickedTaskPopover && !clickedBatchSide) {
@@ -805,6 +930,9 @@ export function VideoDetailPage({ onRefresh, onOpenCookieSettings, onOpenCookieT
       if (!clickedKnowledgeNoteExportMenu) {
         setKnowledgeNoteExportMenuOpen(false);
       }
+      if (!clickedKnowledgeNoteModeMenu) {
+        setKnowledgeNoteModeMenuOpen(false);
+      }
     }
 
     function handleEscape(event: KeyboardEvent) {
@@ -814,6 +942,7 @@ export function VideoDetailPage({ onRefresh, onOpenCookieSettings, onOpenCookieT
         setActionMenuSection(null);
         setPageMenuOpen(false);
         setKnowledgeNoteExportMenuOpen(false);
+        setKnowledgeNoteModeMenuOpen(false);
       }
     }
 
@@ -823,7 +952,7 @@ export function VideoDetailPage({ onRefresh, onOpenCookieSettings, onOpenCookieT
       document.removeEventListener("mousedown", handlePointerDown);
       window.removeEventListener("keydown", handleEscape);
     };
-  }, [actionMenuOpen, knowledgeNoteExportMenuOpen, pageMenuOpen, taskPanelState]);
+  }, [actionMenuOpen, knowledgeNoteExportMenuOpen, knowledgeNoteModeMenuOpen, pageMenuOpen, taskPanelState]);
 
   async function handleCopyKnowledgeCardAsImage() {
     if (!knowledgeExportRef.current || isExportingKnowledgeCard) {
@@ -1008,6 +1137,28 @@ export function VideoDetailPage({ onRefresh, onOpenCookieSettings, onOpenCookieT
   );
   const areAllChapterGroupsExpanded = chapterGroups.length > 0 && expandedChapterGroupIds.length === chapterGroups.length;
   const selectedKnowledgeNoteMarkdown = useMemo(() => resolveKnowledgeNoteMarkdown(selectedResult), [selectedResult]);
+  const selectedVisualEvidence = selectedTaskId ? visualEvidence[selectedTaskId] ?? null : null;
+  const selectedVisualEvidenceStatus = selectedVisualEvidence?.status || selectedTaskDetail?.result?.visual_note_status || "idle";
+  const selectedEnhancedNoteMarkdown = selectedVisualEvidence?.enhanced_note_markdown || selectedVisualEvidence?.visual_note_markdown || "";
+  const hasEnhancedKnowledgeNote = Boolean(selectedEnhancedNoteMarkdown.trim());
+  const effectiveKnowledgeNoteViewMode: KnowledgeNoteViewMode = knowledgeNoteViewMode === "visual" && hasEnhancedKnowledgeNote ? "visual" : "text";
+
+  useEffect(() => {
+    if (!hasEnhancedKnowledgeNote && knowledgeNoteViewMode === "visual") {
+      setKnowledgeNoteViewMode("text");
+    }
+  }, [hasEnhancedKnowledgeNote, knowledgeNoteViewMode]);
+  const displayedKnowledgeNoteMarkdown = effectiveKnowledgeNoteViewMode === "visual"
+    ? selectedEnhancedNoteMarkdown
+    : selectedKnowledgeNoteMarkdown;
+  const knowledgeNoteModeLabel = effectiveKnowledgeNoteViewMode === "visual" ? "图文" : "纯文本";
+  const visualKnowledgeNoteUnavailableText = selectedVisualEvidenceStatus === "generating"
+    ? "图文笔记生成中，完成后可选"
+    : "当前任务没有图文笔记";
+  const visualEvidenceFrames = useMemo(
+    () => buildVisualEvidenceItems(selectedTaskId, selectedVisualEvidence),
+    [selectedTaskId, selectedVisualEvidence],
+  );
   const canExportSelectedKnowledgeNote = useMemo(() => canExportKnowledgeNote(selectedTaskDetail), [selectedTaskDetail]);
   const selectedTranscript = selectedResult?.transcript_text ?? "";
   const canExportSelectedTranscript = Boolean(
@@ -1038,6 +1189,14 @@ export function VideoDetailPage({ onRefresh, onOpenCookieSettings, onOpenCookieT
     selectedTaskId
     && selectedTaskDetail?.result?.transcript_text?.trim()
     && selectedTaskDetail.result.artifacts?.summary_path,
+  );
+  const canRegenerateVisualNote = Boolean(
+    selectedTaskId
+    && selectedTaskStatus === "completed"
+    && selectedResult?.knowledge_note_markdown?.trim()
+    && !isAggregateSummaryView
+    && selectedVisualEvidenceStatus !== "generating"
+    && !visualEvidenceLoading[selectedTaskId],
   );
   const workspaceStatusLabel = isSelectedTaskLoading
     ? "加载中"
@@ -1276,6 +1435,26 @@ export function VideoDetailPage({ onRefresh, onOpenCookieSettings, onOpenCookieT
       setStatus(force ? "正在重新生成思维导图..." : "正在生成思维导图...");
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "思维导图生成失败");
+    }
+  }
+
+  async function handleGenerateVisualNote(force = false) {
+    if (!selectedTaskId) {
+      return;
+    }
+    setActiveTab("summary");
+    setKnowledgeNoteViewMode("visual");
+    setStatus(force ? "已发起重新生成图文笔记..." : "已发起生成图文笔记...");
+    try {
+      const response = await triggerVisualNoteGeneration(selectedTaskId, { force });
+      await ensureTaskContext(selectedTaskId, { force: true }).catch(() => undefined);
+      if (response.status === "ready" || response.status === "partial") {
+        setStatus("图文笔记已更新");
+        return;
+      }
+      setStatus(force ? "正在重新生成图文笔记..." : "正在生成图文笔记...");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "图文笔记生成失败");
     }
   }
 
@@ -1704,7 +1883,22 @@ export function VideoDetailPage({ onRefresh, onOpenCookieSettings, onOpenCookieT
                               }}
                             >
                               <IconSummaryRefresh className="detail-action-icon" />
-                              <span>仅重跑摘要</span>
+                              <span>重跑文本笔记</span>
+                            </button>
+                            <button
+                              className="detail-action-subitem"
+                              role="menuitem"
+                              type="button"
+                              tabIndex={actionMenuSection === "regenerate" ? 0 : -1}
+                              disabled={!canRegenerateVisualNote}
+                              onClick={async () => {
+                                setActionMenuOpen(false);
+                                setActionMenuSection(null);
+                                await handleGenerateVisualNote(true);
+                              }}
+                            >
+                              <IconCopyImage className="detail-action-icon" />
+                              <span>重跑图文笔记</span>
                             </button>
                             <button
                               className="detail-action-subitem"
@@ -2353,7 +2547,65 @@ export function VideoDetailPage({ onRefresh, onOpenCookieSettings, onOpenCookieT
                     <div className="detail-section-heading">
                       <h3 className="detail-section-label">Knowledge Note</h3>
                       <div className="detail-section-heading-actions">
-                        <span className="detail-section-meta">完整学习视图</span>
+                        <span className="detail-section-meta">完整学习视图 · {knowledgeNoteModeLabel}</span>
+                        <div className="detail-section-menu" ref={knowledgeNoteModeMenuRef}>
+                          <button
+                            className={`detail-section-icon-button detail-section-menu-trigger ${knowledgeNoteModeMenuOpen ? "is-open" : ""}`}
+                            type="button"
+                            onClick={() => setKnowledgeNoteModeMenuOpen((current) => !current)}
+                            aria-haspopup="menu"
+                            aria-expanded={knowledgeNoteModeMenuOpen}
+                            aria-label="选择知识笔记显示形式"
+                            title="笔记形式"
+                          >
+                            {effectiveKnowledgeNoteViewMode === "visual" ? <IconCopyImage /> : <IconFileText />}
+                            <IconChevronDown className="detail-section-menu-caret" />
+                          </button>
+                          {knowledgeNoteModeMenuOpen ? (
+                            <div className="detail-section-popover detail-note-mode-popover" role="menu" aria-label="知识笔记显示形式">
+                              <button
+                                className={`detail-section-menu-item detail-note-mode-option ${effectiveKnowledgeNoteViewMode === "visual" ? "is-selected" : ""}`}
+                                type="button"
+                                role="menuitemradio"
+                                aria-checked={effectiveKnowledgeNoteViewMode === "visual"}
+                                disabled={!hasEnhancedKnowledgeNote}
+                                onClick={() => {
+                                  if (!hasEnhancedKnowledgeNote) {
+                                    return;
+                                  }
+                                  setKnowledgeNoteViewMode("visual");
+                                  setKnowledgeNoteModeMenuOpen(false);
+                                }}
+                              >
+                                <span className="detail-section-menu-item-icon" aria-hidden="true">
+                                  <IconCopyImage />
+                                </span>
+                                <span className="detail-section-menu-copy">
+                                  <strong>图文</strong>
+                                  <small>{hasEnhancedKnowledgeNote ? "显示带图片的整合笔记" : visualKnowledgeNoteUnavailableText}</small>
+                                </span>
+                              </button>
+                              <button
+                                className={`detail-section-menu-item detail-note-mode-option ${effectiveKnowledgeNoteViewMode === "text" ? "is-selected" : ""}`}
+                                type="button"
+                                role="menuitemradio"
+                                aria-checked={effectiveKnowledgeNoteViewMode === "text"}
+                                onClick={() => {
+                                  setKnowledgeNoteViewMode("text");
+                                  setKnowledgeNoteModeMenuOpen(false);
+                                }}
+                              >
+                                <span className="detail-section-menu-item-icon" aria-hidden="true">
+                                  <IconFileText />
+                                </span>
+                                <span className="detail-section-menu-copy">
+                                  <strong>纯文本</strong>
+                                  <small>显示基础知识笔记正文</small>
+                                </span>
+                              </button>
+                            </div>
+                          ) : null}
+                        </div>
                         <div className="detail-section-menu" ref={knowledgeNoteExportMenuRef}>
                           <button
                             className={`detail-section-icon-button detail-section-menu-trigger ${knowledgeNoteExportMenuOpen ? "is-open" : ""}`}
@@ -2415,11 +2667,28 @@ export function VideoDetailPage({ onRefresh, onOpenCookieSettings, onOpenCookieT
                     {!knowledgeOutputDir && !window.desktop?.dialog ? (
                       <p className="detail-section-body">导出前请先在设置中填写输出目录，Markdown / Obsidian 笔记会写入该目录。</p>
                     ) : null}
-                    {selectedKnowledgeNoteMarkdown ? (
-                      <MarkdownContent className="detail-note-markdown" content={selectedKnowledgeNoteMarkdown} />
+                    {displayedKnowledgeNoteMarkdown ? (
+                      <MarkdownContent
+                        className="detail-note-markdown"
+                        content={displayedKnowledgeNoteMarkdown}
+                        imageResolver={(src) => resolveVisualNoteImageSrc(selectedTaskId, src)}
+                      />
                     ) : (
                       <p className="detail-section-body">当前任务还没有生成知识笔记。</p>
                     )}
+                    <details className="detail-visual-assets-details detail-note-assets-details">
+                      <summary>
+                        <span>查看图片素材记录</span>
+                        <small>{formatVisualEvidenceStatus(selectedVisualEvidenceStatus, visualEvidenceFrames.length, selectedVisualEvidence?.insert_count ?? 0)}</small>
+                      </summary>
+                      <VisualEvidencePanel
+                        frames={visualEvidenceFrames}
+                        status={selectedVisualEvidenceStatus}
+                        errorMessage={selectedVisualEvidence?.error_message || selectedTaskDetail?.result?.visual_note_error_message || ""}
+                        loading={Boolean(selectedTaskId && visualEvidenceLoading[selectedTaskId])}
+                        onSeekToTimestamp={!isAggregateSummaryView && hasSeekablePlayer ? handleSeekToChapter : undefined}
+                      />
+                    </details>
                   </section>
 
                   <section className="detail-content-section">
@@ -2761,6 +3030,131 @@ function formatMindMapNodeType(type: MindMapNode["type"]): string {
     default:
       return "节点";
   }
+}
+
+type VisualEvidenceItem = {
+  key: string;
+  timestampSeconds: number;
+  timestampLabel: string;
+  imageUrl: string;
+  caption: string;
+  ocrText: string;
+  scene: string;
+};
+
+function buildVisualEvidenceItems(taskId: string | null, response: TaskVisualEvidenceResponse | null): VisualEvidenceItem[] {
+  if (!taskId || !response?.context?.observations?.length) {
+    return [];
+  }
+  const framesById = new Map<string, VisualEvidenceFrame>();
+  for (const frame of response.context.frames ?? []) {
+    if (frame.frame_id) {
+      framesById.set(frame.frame_id, frame);
+    }
+  }
+  return response.context.observations
+    .map((observation: VisualEvidenceObservation) => {
+      const frame = framesById.get(observation.frame_id);
+      const fileName = frame?.file_name || `${observation.frame_id}.jpg`;
+      return {
+        key: `${observation.frame_id}-${observation.timestamp_seconds}`,
+        timestampSeconds: observation.timestamp_seconds,
+        timestampLabel: formatDuration(observation.timestamp_seconds),
+        imageUrl: `/api/v1/tasks/${taskId}/visual-evidence/media/${encodeURIComponent(fileName)}`,
+        caption: observation.caption || "关键画面截图",
+        ocrText: observation.ocr_text || "",
+        scene: observation.scene || "",
+      };
+    })
+    .filter((item) => Number.isFinite(item.timestampSeconds));
+}
+
+function formatVisualEvidenceStatus(status: string, frameCount: number, insertCount = 0): string {
+  if (status === "generating") {
+    return "生成中";
+  }
+  if (status === "ready") {
+    return insertCount > 0 ? `${insertCount} 处插图 · ${frameCount} 张图` : `${frameCount} 张图`;
+  }
+  if (status === "partial") {
+    return frameCount ? `${frameCount} 张，部分降级` : "部分降级";
+  }
+  if (status === "unsupported") {
+    return "当前输入不支持";
+  }
+  if (status === "failed") {
+    return "生成失败";
+  }
+  return "按需生成";
+}
+
+function resolveVisualNoteImageSrc(taskId: string | null, src: string): string {
+  if (!taskId) {
+    return src;
+  }
+  const normalized = src.startsWith("visual://")
+    ? src.replace("visual://", "").trim()
+    : src.startsWith("frames/")
+      ? src.replace(/^frames\//, "").trim()
+      : "";
+  if (!normalized) {
+    return src;
+  }
+  const frameId = normalized.replace(/\.jpg$/i, "");
+  if (!frameId || frameId.includes("/") || frameId.includes("\\")) {
+    return src;
+  }
+  const suffixMatch = normalized.match(/\.(jpe?g|png|webp)$/i);
+  const mediaFileName = suffixMatch ? normalized : `${frameId}.jpg`;
+  return `/api/v1/tasks/${taskId}/visual-evidence/media/${encodeURIComponent(mediaFileName)}`;
+}
+
+function VisualEvidencePanel({
+  frames,
+  status,
+  errorMessage,
+  loading,
+  onSeekToTimestamp,
+}: {
+  frames: VisualEvidenceItem[];
+  status: string;
+  errorMessage?: string;
+  loading: boolean;
+  onSeekToTimestamp?: (seconds: number | null) => void;
+}) {
+  if (frames.length) {
+    return (
+      <div className="detail-visual-grid">
+        {frames.map((frame) => (
+          <article className="detail-visual-card" key={frame.key}>
+            <img alt={`${frame.timestampLabel} ${frame.caption}`} src={frame.imageUrl} loading="lazy" />
+            <div className="detail-visual-card-copy">
+              <div className="detail-visual-card-head">
+                {onSeekToTimestamp ? (
+                  <button type="button" onClick={() => onSeekToTimestamp(frame.timestampSeconds)}>
+                    {frame.timestampLabel}
+                  </button>
+                ) : (
+                  <span>{frame.timestampLabel}</span>
+                )}
+                {frame.scene ? <small>{frame.scene}</small> : null}
+              </div>
+              <strong>{frame.caption}</strong>
+              {frame.ocrText ? <p>画面文字：{frame.ocrText}</p> : null}
+            </div>
+          </article>
+        ))}
+      </div>
+    );
+  }
+  const message = loading || status === "generating"
+    ? "正在后台生成图文笔记，完成后会自动刷新。"
+    : status === "unsupported"
+      ? (errorMessage || "音频或纯文本任务没有可截图的视频画面。")
+    : status === "failed"
+        ? (errorMessage || "图文笔记生成失败，可以稍后重试。")
+        : "还没有生成图文笔记。";
+  return <p className="detail-section-body">{message}</p>;
 }
 
 function measureMindMapSpan(node: MindMapNode, depth = 0): number {

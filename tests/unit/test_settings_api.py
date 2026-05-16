@@ -9,8 +9,10 @@ import video_sum_service.app as service_app
 import video_sum_service.runtime_support as runtime_support
 from video_sum_core.models.tasks import InputType, TaskInput, TaskStatus
 from video_sum_infra.config import (
+    DEFAULT_VISUAL_FRAME_PLANNING_PROMPT,
     DEFAULT_KNOWLEDGE_NOTE_SYSTEM_PROMPT,
     DEFAULT_KNOWLEDGE_NOTE_USER_PROMPT_TEMPLATE,
+    DEFAULT_VISUAL_VLM_PROMPT,
     ServiceSettings,
 )
 from video_sum_service.app import (
@@ -88,8 +90,16 @@ def test_serialize_settings_includes_persisted_file_flag(monkeypatch, tmp_path: 
     assert payload["mindmap_concurrency"] == current.mindmap_concurrency
     assert payload["knowledge_note_system_prompt"] == current.knowledge_note_system_prompt
     assert payload["knowledge_note_user_prompt_template"] == current.knowledge_note_user_prompt_template
+    assert payload["visual_multimodal_enabled"] == current.visual_multimodal_enabled
+    assert payload["visual_download_resolution"] == current.visual_download_resolution
+    assert payload["visual_vlm_provider"] == current.visual_vlm_provider
+    assert payload["visual_evidence_image_quality"] == current.visual_evidence_image_quality
+    assert payload["visual_frame_planning_prompt"] == current.visual_frame_planning_prompt
+    assert payload["visual_vlm_prompt"] == current.visual_vlm_prompt
     assert payload["defaults"]["knowledge_note_system_prompt"] == DEFAULT_KNOWLEDGE_NOTE_SYSTEM_PROMPT
     assert payload["defaults"]["knowledge_note_user_prompt_template"] == DEFAULT_KNOWLEDGE_NOTE_USER_PROMPT_TEMPLATE
+    assert payload["defaults"]["visual_frame_planning_prompt"] == DEFAULT_VISUAL_FRAME_PLANNING_PROMPT
+    assert payload["defaults"]["visual_vlm_prompt"] == DEFAULT_VISUAL_VLM_PROMPT
 
     settings_manager._settings_path.parent.mkdir(parents=True, exist_ok=True)
     settings_manager._settings_path.write_text("{}", encoding="utf-8")
@@ -107,6 +117,7 @@ def test_serialize_settings_masks_provider_api_keys(tmp_path: Path) -> None:
         siliconflow_asr_api_key="asr-secret",
         llm_api_key="llm-secret",
         knowledge_llm_api_key="knowledge-secret",
+        visual_evidence_api_key="visual-secret",
     )
 
     payload = serialize_settings(current, environment_info={"cudaAvailable": False, "runtimeChannel": "base"})
@@ -114,9 +125,11 @@ def test_serialize_settings_masks_provider_api_keys(tmp_path: Path) -> None:
     assert payload["siliconflow_asr_api_key"] == ""
     assert payload["llm_api_key"] == ""
     assert payload["knowledge_llm_api_key"] == ""
+    assert payload["visual_evidence_api_key"] == ""
     assert payload["siliconflow_asr_api_key_configured"] is True
     assert payload["llm_api_key_configured"] is True
     assert payload["knowledge_llm_api_key_configured"] is True
+    assert payload["visual_evidence_api_key_configured"] is True
 
 
 def test_update_settings_preserves_configured_api_keys_when_payload_is_blank(tmp_path: Path) -> None:
@@ -199,6 +212,49 @@ def test_update_settings_replaces_api_keys_when_payload_has_new_values(tmp_path:
     assert next_settings.siliconflow_asr_api_key == "new-asr-key"
     assert next_settings.llm_api_key == "new-llm-key"
     assert next_settings.knowledge_llm_api_key == "new-knowledge-key"
+
+
+def test_update_settings_persists_visual_summary_options(tmp_path: Path) -> None:
+    current = ServiceSettings(
+        data_dir=tmp_path / "data",
+        cache_dir=tmp_path / "cache",
+        tasks_dir=tmp_path / "tasks",
+        runtime_channel="base",
+    )
+    settings_manager._settings = current
+    settings_manager._settings_path = tmp_path / "settings.json"
+
+    next_settings = settings_manager.save(
+        SettingsUpdatePayload(
+            visual_multimodal_enabled=True,
+            visual_download_resolution="720p",
+            visual_vlm_provider="openai-compatible",
+            visual_evidence_base_url="https://vlm.example/v1",
+            visual_evidence_model="vlm-model",
+            visual_evidence_api_key="vlm-key",
+            visual_evidence_frame_width=1280,
+            visual_evidence_image_quality=72,
+            visual_frame_planning_prompt="plan frames",
+            visual_vlm_prompt="describe frame",
+            visual_note_user_prompt_template="compose note",
+        )
+    )
+
+    assert next_settings.visual_multimodal_enabled is True
+    assert next_settings.visual_download_resolution == "720p"
+    assert next_settings.visual_vlm_provider == "openai-compatible"
+    assert next_settings.visual_evidence_base_url == "https://vlm.example/v1"
+    assert next_settings.visual_evidence_model == "vlm-model"
+    assert next_settings.visual_evidence_api_key == "vlm-key"
+    assert next_settings.visual_evidence_frame_width == 1280
+    assert next_settings.visual_evidence_image_quality == 72
+    assert next_settings.visual_frame_planning_prompt == "plan frames"
+    assert next_settings.visual_vlm_prompt == "describe frame"
+    assert next_settings.visual_note_user_prompt_template == "compose note"
+
+    stored = settings_manager._settings_path.read_text(encoding="utf-8")
+    assert "visual_download_resolution" in stored
+    assert "visual_frame_planning_prompt" in stored
 
 
 def test_install_local_asr_refreshes_environment(monkeypatch, tmp_path: Path) -> None:
@@ -1089,6 +1145,61 @@ def test_knowledge_llm_connection_uses_custom_provider(monkeypatch, tmp_path: Pa
     assert calls[0]["json"]["model"] == "claude-3-5-haiku-latest"
 
 
+def test_visual_llm_connection_sends_image_and_uses_visual_config(monkeypatch, tmp_path: Path) -> None:
+    current = ServiceSettings(
+        data_dir=tmp_path / "data",
+        cache_dir=tmp_path / "cache",
+        tasks_dir=tmp_path / "tasks",
+        runtime_channel="base",
+        llm_enabled=True,
+        llm_base_url="https://main.example/v1",
+        llm_api_key="main-key",
+        llm_model="main-model",
+        visual_multimodal_enabled=True,
+        visual_evidence_base_url="https://visual.example/v1",
+        visual_evidence_api_key="visual-key",
+        visual_evidence_model="visual-model",
+    )
+    settings_manager._settings = current
+
+    calls: list[dict[str, object]] = []
+
+    class FakeResponse:
+        status_code = 200
+        text = '{"choices":[{"message":{"content":"{\\"ok\\":true,\\"text\\":\\"BILISUM\\",\\"shape\\":\\"pink circle\\"}"}}]}'
+
+        def json(self) -> dict[str, object]:
+            return {"choices": [{"message": {"content": '{"ok":true,"text":"BILISUM","shape":"pink circle"}'}}]}
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def __enter__(self) -> "FakeClient":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def post(self, url: str, headers: dict[str, str], json: dict[str, object]) -> FakeResponse:
+            calls.append({"url": url, "headers": headers, "json": json})
+            return FakeResponse()
+
+    monkeypatch.setattr(service_app.httpx, "Client", FakeClient)
+
+    response = probe_llm_connection(SettingsUpdatePayload(llm_test_scope="visual"))
+
+    assert response["ok"] is True
+    assert response["model"] == "visual-model"
+    assert response["visualImageRecognitionAvailable"] is True
+    assert calls[0]["url"] == "https://visual.example/v1/chat/completions"
+    assert calls[0]["headers"]["Authorization"] == "Bearer visual-key"
+    messages = calls[0]["json"]["messages"]
+    content = messages[1]["content"]
+    assert content[1]["type"] == "image_url"
+    assert content[1]["image_url"]["url"].startswith("data:image/png;base64,")
+
+
 def test_llm_connection_normalizes_mimo_model_and_requests_json_mode(monkeypatch, tmp_path: Path) -> None:
     current = ServiceSettings(
         data_dir=tmp_path / "data",
@@ -1345,6 +1456,10 @@ def test_asr_connection_uses_unsaved_payload(monkeypatch, tmp_path: Path) -> Non
     assert calls[0]["url"] == "https://api.example.com/v1/audio/transcriptions"
     assert calls[0]["headers"]["Authorization"] == "Bearer new-key"
     assert calls[0]["data"]["model"] == "new-model"
+    file_name, audio_bytes, content_type = calls[0]["files"]["file"]
+    assert file_name == "bilisum-asr-test-zh.wav"
+    assert content_type == "audio/wav"
+    assert len(audio_bytes) > 100_000
 
 
 def test_asr_connection_uses_saved_api_key_when_payload_masks_key(monkeypatch, tmp_path: Path) -> None:
@@ -1398,6 +1513,52 @@ def test_asr_connection_uses_saved_api_key_when_payload_masks_key(monkeypatch, t
     assert calls[0]["url"] == "https://api.example.com/v1/audio/transcriptions"
     assert calls[0]["headers"]["Authorization"] == "Bearer saved-asr-key"
     assert calls[0]["data"]["model"] == "new-model"
+
+
+def test_asr_connection_uses_custom_test_audio_file(monkeypatch, tmp_path: Path) -> None:
+    current = ServiceSettings(
+        data_dir=tmp_path / "data",
+        cache_dir=tmp_path / "cache",
+        tasks_dir=tmp_path / "tasks",
+        runtime_channel="base",
+        siliconflow_asr_base_url="https://api.example.com/v1",
+        siliconflow_asr_api_key="test-key",
+        siliconflow_asr_model="TeleAI/TeleSpeechASR",
+    )
+    settings_manager._settings = current
+    audio_path = tmp_path / "voice.mp3"
+    audio_path.write_bytes(b"voice-bytes")
+    monkeypatch.setenv("VIDEO_SUM_ASR_TEST_AUDIO_FILE", str(audio_path))
+    calls: list[dict[str, object]] = []
+
+    class FakeResponse:
+        status_code = 200
+        text = '{"text":"你好"}'
+
+        def json(self) -> dict[str, object]:
+            return {"text": "你好"}
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def __enter__(self) -> "FakeClient":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def post(self, url: str, headers: dict[str, str], data: dict[str, object], files: dict[str, object]) -> FakeResponse:
+            calls.append({"url": url, "headers": headers, "data": data, "files": files})
+            return FakeResponse()
+
+    monkeypatch.setattr(service_app.httpx, "Client", FakeClient)
+
+    response = probe_asr_connection()
+
+    assert response["ok"] is True
+    assert response["responsePreview"] == "你好"
+    assert calls[0]["files"]["file"] == ("voice.mp3", b"voice-bytes", "audio/mpeg")
 
 
 def test_multimodal_asr_connection_falls_back_to_reasoning_content(

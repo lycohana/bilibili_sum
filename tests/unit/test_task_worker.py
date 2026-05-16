@@ -6,6 +6,7 @@ from threading import Event
 from video_sum_core.models.tasks import InputType, TaskInput, TaskResult, TaskStatus
 from video_sum_core.pipeline.base import PipelineContext, PipelineEvent, PipelineRunner
 from video_sum_service.repository import SqliteTaskRepository
+from video_sum_service.schemas import VideoAssetRecord, VideoPageOptionResponse
 from video_sum_service.worker import TaskWorker
 
 
@@ -15,6 +16,22 @@ class FakePipelineRunner(PipelineRunner):
 
     def run(self, context: PipelineContext, on_event=None):  # type: ignore[override]
         return [], self._result
+
+
+class FakeVisualPipelineRunner(FakePipelineRunner):
+    def __init__(self, result: TaskResult) -> None:
+        super().__init__(result)
+        self.visual_inputs: list[TaskInput] = []
+        self.visual_force_values: list[bool] = []
+
+    def build_and_export_visual_evidence(self, task_id: str, task_input: TaskInput, title: str, result: TaskResult, mode=None, force=False, on_event=None):
+        self.visual_inputs.append(task_input)
+        self.visual_force_values.append(force)
+        visual_dir = Path(f"C:/tmp/{task_id}-visual")
+        if on_event is not None:
+            on_event(PipelineEvent(stage="visual_note_composing", progress=92, message="正在整合图文笔记"))
+        context = {"status": "ready", "frame_count": 1, "insert_count": 1, "warnings": [], "mode": mode or "frame_insert"}
+        return context, visual_dir / "visual_note.md", visual_dir / "visual_context.json"
 
 
 class BlockingPipelineRunner(PipelineRunner):
@@ -51,6 +68,18 @@ class BlockingSummaryAndMindmapRunner(BlockingPipelineRunner):
 
     def release_mindmap(self, task_id: str) -> None:
         self._mindmap_release_by_task.setdefault(task_id, Event()).set()
+
+    def build_and_export_visual_evidence(self, task_id: str, task_input: TaskInput, title: str, result: TaskResult, mode=None, on_event=None):
+        visual_dir = Path(f"C:/tmp/{task_id}-visual")
+        context = {
+            "status": "ready",
+            "frame_count": 1,
+            "insert_count": 1,
+            "mode": mode or "frame_insert",
+            "warnings": [],
+            "observations": [{"frame_id": "f0001", "timestamp_seconds": 0, "caption": "画面"}],
+        }
+        return context, visual_dir / "visual_note.md", visual_dir / "visual_context.json"
 
 
 class PartialFailurePipelineRunner(PipelineRunner):
@@ -93,12 +122,28 @@ class PreflightFailurePipelineRunner(PipelineRunner):
 
 
 class TrackingTaskWorker(TaskWorker):
-    def __init__(self, repository: SqliteTaskRepository, pipeline_runner: PipelineRunner, *, auto_generate_mindmap: bool) -> None:
-        super().__init__(repository, pipeline_runner, auto_generate_mindmap=auto_generate_mindmap)
+    def __init__(
+        self,
+        repository: SqliteTaskRepository,
+        pipeline_runner: PipelineRunner,
+        *,
+        auto_generate_mindmap: bool,
+        auto_generate_visual_evidence: bool = False,
+    ) -> None:
+        super().__init__(
+            repository,
+            pipeline_runner,
+            auto_generate_mindmap=auto_generate_mindmap,
+            auto_generate_visual_evidence=auto_generate_visual_evidence,
+        )
         self.mindmap_calls: list[tuple[str, bool]] = []
+        self.visual_calls: list[tuple[str, bool]] = []
 
     def submit_mindmap(self, task_id: str, *, force: bool = False) -> None:  # type: ignore[override]
         self.mindmap_calls.append((task_id, force))
+
+    def submit_visual_evidence(self, task_id: str, *, force: bool = False) -> None:  # type: ignore[override]
+        self.visual_calls.append((task_id, force))
 
 
 def create_repository() -> SqliteTaskRepository:
@@ -170,6 +215,83 @@ def test_worker_skips_auto_mindmap_when_required_inputs_are_missing() -> None:
     worker._run_task(record.task_id)
 
     assert worker.mindmap_calls == []
+
+
+def test_worker_auto_generates_visual_evidence_when_enabled() -> None:
+    repository = create_repository()
+    record = create_task(repository)
+    result = TaskResult(
+        overview="概览",
+        knowledge_note_markdown="# 知识笔记",
+        timeline=[{"title": "章节", "start": 0.0, "summary": "摘要"}],
+        artifacts={"summary_path": str(Path("C:/tmp/summary.json"))},
+    )
+    worker = TrackingTaskWorker(
+        repository,
+        FakeVisualPipelineRunner(result),
+        auto_generate_mindmap=False,
+        auto_generate_visual_evidence=True,
+    )
+
+    worker._run_task(record.task_id)
+
+    assert worker.visual_calls == [(record.task_id, False)]
+
+
+def test_worker_visual_evidence_uses_bound_video_page_for_transcript_tasks() -> None:
+    repository = create_repository()
+    video = repository.upsert_video_asset(
+        VideoAssetRecord(
+            canonical_id="BV1visual",
+            platform="bilibili",
+            title="合集",
+            source_url="https://www.bilibili.com/video/BV1visual",
+            pages=[
+                VideoPageOptionResponse(page=1, title="P1", source_url="https://www.bilibili.com/video/BV1visual?p=1"),
+                VideoPageOptionResponse(page=72, title="P72", source_url="https://www.bilibili.com/video/BV1visual?p=72"),
+            ],
+        )
+    )
+    record = repository.create_task(
+        TaskInput(input_type=InputType.TRANSCRIPT_TEXT, source='{"transcript":"[00:00] 内容"}', title="P72"),
+        video_id=video.video_id,
+        page_number=72,
+        page_title="P72",
+    )
+    result = TaskResult(
+        overview="概览",
+        knowledge_note_markdown="# 知识笔记",
+        timeline=[{"title": "章节", "start": 0.0, "summary": "摘要"}],
+        artifacts={"summary_path": str(Path("C:/tmp/summary.json"))},
+    )
+    repository.save_result(record.task_id, result)
+    repository.update_status(record.task_id, TaskStatus.COMPLETED)
+    runner = FakeVisualPipelineRunner(result)
+    worker = TaskWorker(repository, runner, auto_generate_mindmap=False)
+
+    worker._run_visual_evidence(record.task_id, force=True)
+
+    assert runner.visual_inputs
+    visual_input = runner.visual_inputs[0]
+    assert visual_input.input_type == InputType.URL
+    assert visual_input.source == "https://www.bilibili.com/video/BV1visual?p=72"
+    assert visual_input.title == "P72"
+    assert runner.visual_force_values == [True]
+
+
+def test_worker_skips_auto_visual_evidence_when_disabled() -> None:
+    repository = create_repository()
+    record = create_task(repository)
+    result = TaskResult(
+        overview="概览",
+        timeline=[{"title": "章节", "start": 0.0, "summary": "摘要"}],
+        artifacts={"summary_path": str(Path("C:/tmp/summary.json"))},
+    )
+    worker = TrackingTaskWorker(repository, FakePipelineRunner(result), auto_generate_mindmap=False)
+
+    worker._run_task(record.task_id)
+
+    assert worker.visual_calls == []
 
 
 def test_worker_preserves_transcript_result_when_summary_phase_fails() -> None:
@@ -287,3 +409,21 @@ def test_worker_close_for_new_work_preserves_existing_queue() -> None:
 
     assert repository.get_latest_event(rejected_record.task_id) is None
     assert repository.get_task(rejected_record.task_id).status == TaskStatus.QUEUED
+
+
+def test_worker_shutdown_cancels_pending_jobs() -> None:
+    repository = create_repository()
+    records = [create_task(repository) for _ in range(2)]
+    runner = BlockingPipelineRunner()
+    worker = TaskWorker(repository, runner, auto_generate_mindmap=False, task_concurrency=1)
+
+    worker.submit(records[0])
+    worker.submit(records[1])
+    wait_for(lambda: len(runner.started) == 1)
+
+    worker.shutdown(wait=False, cancel_pending=True)
+    runner.release(records[0].task_id)
+    wait_for(lambda: repository.get_task(records[0].task_id).status == TaskStatus.COMPLETED)
+    time.sleep(0.1)
+
+    assert runner.started == [records[0].task_id]

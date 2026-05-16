@@ -38,6 +38,41 @@ def openai_chat_completions_url(base_url: str) -> str:
     return f"{normalized}/chat/completions"
 
 
+def _adapt_content_blocks_for_anthropic(content: object) -> object:
+    """Convert OpenAI-format content blocks to Anthropic-compatible format."""
+    if not isinstance(content, list):
+        return content
+    adapted: list[dict[str, object]] = []
+    for block in content:
+        if not isinstance(block, dict):
+            adapted.append(block)
+            continue
+        block_type = str(block.get("type") or "").strip()
+        if block_type == "image_url":
+            image_url = block.get("image_url")
+            if isinstance(image_url, dict):
+                url = str(image_url.get("url") or "")
+                if url.startswith("data:"):
+                    # data:image/png;base64,<data>
+                    header, _, b64_data = url.partition("base64,")
+                    media_type = header.removeprefix("data:").rstrip(";")
+                    if not media_type.startswith("image/"):
+                        media_type = "image/png"
+                    adapted.append({
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": media_type,
+                            "data": b64_data,
+                        },
+                    })
+                    continue
+            adapted.append(block)
+        else:
+            adapted.append(block)
+    return adapted
+
+
 def build_anthropic_messages_payload(payload: dict[str, object]) -> dict[str, object]:
     messages = payload.get("messages")
     system_parts: list[str] = []
@@ -55,7 +90,7 @@ def build_anthropic_messages_payload(payload: dict[str, object]) -> dict[str, ob
                 continue
             if role not in {"user", "assistant"}:
                 role = "user"
-            anthropic_messages.append({"role": role, "content": content if content is not None else ""})
+            anthropic_messages.append({"role": role, "content": _adapt_content_blocks_for_anthropic(content) if content is not None else ""})
 
     request_payload: dict[str, object] = {
         "model": str(payload.get("model") or "").strip(),

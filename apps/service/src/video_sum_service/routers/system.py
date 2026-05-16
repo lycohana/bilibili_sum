@@ -96,6 +96,8 @@ def system_info(request: Request, runtime_channel: str | None = None, refresh: b
     runtime_settings = current_settings.with_resolved_runtime(
         cuda_available=bool(environment.get("cudaAvailable"))
     )
+    worker = getattr(request.app.state, "task_worker", None)
+    worker_snapshot = worker.snapshot() if hasattr(worker, "snapshot") else None
     return {
         "application": {"name": app_info.name, "version": app_info.version},
         "service": {
@@ -117,6 +119,11 @@ def system_info(request: Request, runtime_channel: str | None = None, refresh: b
             "llm_model": current_settings.llm_model,
         },
         "runtimeStartup": runtime_startup,
+        "process": {
+            "thread_count": threading.active_count(),
+            "threads": [thread.name for thread in threading.enumerate()[:80]],
+        },
+        "worker": worker_snapshot,
         "taskModel": {"statuses": [status.value for status in TaskStatus]},
         "environment": environment,
     }

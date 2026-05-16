@@ -24,6 +24,36 @@ type HomePageProps = {
   onToggleFavorite(videoId: string, nextFavorite: boolean): Promise<void>;
 };
 
+type SummaryPreference = {
+  noteMode: "text" | "visual";
+  generateMindmap: boolean;
+};
+
+const SUMMARY_PREFERENCE_STORAGE_KEY = "bilisum.summaryPreference";
+const DEFAULT_SUMMARY_PREFERENCE: SummaryPreference = {
+  noteMode: "text",
+  generateMindmap: false,
+};
+
+function loadSummaryPreference(): SummaryPreference {
+  if (typeof window === "undefined") {
+    return DEFAULT_SUMMARY_PREFERENCE;
+  }
+  try {
+    const rawValue = window.localStorage.getItem(SUMMARY_PREFERENCE_STORAGE_KEY);
+    if (!rawValue) {
+      return DEFAULT_SUMMARY_PREFERENCE;
+    }
+    const parsed = JSON.parse(rawValue) as Partial<SummaryPreference>;
+    return {
+      noteMode: parsed.noteMode === "visual" ? "visual" : "text",
+      generateMindmap: Boolean(parsed.generateMindmap),
+    };
+  } catch {
+    return DEFAULT_SUMMARY_PREFERENCE;
+  }
+}
+
 export function HomePage({
   configHealth,
   probePreview,
@@ -39,6 +69,44 @@ export function HomePage({
   recentVideos,
   onToggleFavorite,
 }: HomePageProps) {
+  const preferenceMenuRef = useRef<HTMLDivElement | null>(null);
+  const [summaryPreference, setSummaryPreference] = useState<SummaryPreference>(() => loadSummaryPreference());
+  const [preferenceMenuOpen, setPreferenceMenuOpen] = useState(false);
+
+  useEffect(() => {
+    window.localStorage.setItem(SUMMARY_PREFERENCE_STORAGE_KEY, JSON.stringify(summaryPreference));
+  }, [summaryPreference]);
+
+  useEffect(() => {
+    if (!preferenceMenuOpen) {
+      return;
+    }
+
+    function handlePointerDown(event: MouseEvent) {
+      if (preferenceMenuRef.current?.contains(event.target as Node)) {
+        return;
+      }
+      setPreferenceMenuOpen(false);
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setPreferenceMenuOpen(false);
+      }
+    }
+
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [preferenceMenuOpen]);
+
+  function updateSummaryPreference(nextPreference: SummaryPreference) {
+    setSummaryPreference(nextPreference);
+  }
+
   return (
     <section className="home-page">
       <FloatingNoticeStack notices={[{ id: "home-submit-status", message: submitStatus }]} />
@@ -70,7 +138,58 @@ export function HomePage({
                 ) : null}
               </div>
             </label>
-            <button className="primary-button primary-button-hero" type="submit">开始总结</button>
+            <div className="summary-submit-control" ref={preferenceMenuRef}>
+              <div className="summary-split-button">
+                <button className="primary-button primary-button-hero summary-submit-main" type="submit">
+                  开始总结
+                </button>
+                <button
+                  className="summary-submit-menu-button"
+                  type="button"
+                  aria-label="打开生成偏好"
+                  aria-expanded={preferenceMenuOpen}
+                  aria-controls="summary-preference-menu"
+                  title="生成偏好"
+                  onClick={() => setPreferenceMenuOpen((open) => !open)}
+                >
+                  <IconChevronDown />
+                </button>
+              </div>
+              {preferenceMenuOpen ? (
+                <div className="summary-preference-menu" id="summary-preference-menu" role="menu">
+                  <div className="summary-preference-group">
+                    <span className="summary-preference-label">笔记形式</span>
+                    <label className={`summary-preference-option ${summaryPreference.noteMode === "text" ? "is-selected" : ""}`}>
+                      <input
+                        type="radio"
+                        name="summary-note-mode"
+                        checked={summaryPreference.noteMode === "text"}
+                        onChange={() => updateSummaryPreference({ ...summaryPreference, noteMode: "text" })}
+                      />
+                      <span>文字笔记</span>
+                    </label>
+                    <label className={`summary-preference-option ${summaryPreference.noteMode === "visual" ? "is-selected" : ""}`}>
+                      <input
+                        type="radio"
+                        name="summary-note-mode"
+                        checked={summaryPreference.noteMode === "visual"}
+                        onChange={() => updateSummaryPreference({ ...summaryPreference, noteMode: "visual" })}
+                      />
+                      <span>图文笔记</span>
+                    </label>
+                  </div>
+                  <div className="summary-preference-divider" />
+                  <label className={`summary-preference-option summary-preference-toggle ${summaryPreference.generateMindmap ? "is-selected" : ""}`}>
+                    <input
+                      type="checkbox"
+                      checked={summaryPreference.generateMindmap}
+                      onChange={(event) => updateSummaryPreference({ ...summaryPreference, generateMindmap: event.target.checked })}
+                    />
+                    <span>生成导图</span>
+                  </label>
+                </div>
+              ) : null}
+            </div>
           </div>
         </form>
 
@@ -137,6 +256,14 @@ export function HomePage({
         )}
       </div>
     </section>
+  );
+}
+
+function IconChevronDown() {
+  return (
+    <svg fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.9" viewBox="0 0 24 24" aria-hidden="true">
+      <path d="m6 9 6 6 6-6" />
+    </svg>
   );
 }
 

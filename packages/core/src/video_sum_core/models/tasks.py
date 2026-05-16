@@ -50,6 +50,14 @@ class TaskResult(BaseModel):
     mindmap_error_message: str | None = None
     mindmap_artifact_path: str | None = None
     mindmap_updated_at: datetime | None = None
+    visual_note_status: str = "idle"
+    visual_note_error_message: str | None = None
+    visual_note_artifact_path: str | None = None
+    visual_enhanced_note_artifact_path: str | None = None
+    visual_note_updated_at: datetime | None = None
+    visual_note_mode: str = "text"
+    visual_frame_count: int = 0
+    visual_insert_count: int = 0
 
 
 class MindMapNode(BaseModel):

@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 from video_sum_infra.config import ServiceSettings
 from video_sum_service.app import app, settings_manager
 from video_sum_service.auth import ACCESS_TOKEN_ENV, AccessTokenManager, SESSION_COOKIE_NAME
+from video_sum_service.auth import is_auth_exempt_path
 import video_sum_service.app as service_app
 import video_sum_service.routers.system as system_router
 
@@ -63,6 +64,12 @@ def test_api_requires_access_token(monkeypatch) -> None:
 
         response = client.get("/api/v1/settings", headers={"Authorization": "Bearer test-token"})
         assert response.status_code == 200
+
+
+def test_visual_evidence_media_path_is_auth_exempt_for_image_tags() -> None:
+    assert is_auth_exempt_path("/api/v1/tasks/task-1/visual-evidence/media/f0001.jpg", "GET") is True
+    assert is_auth_exempt_path("/api/v1/tasks/task-1/visual-evidence", "GET") is False
+    assert is_auth_exempt_path("/api/v1/tasks/task-1/visual-evidence/media/f0001.jpg", "POST") is False
 
 
 def test_auth_session_cookie_allows_api_access(monkeypatch) -> None:

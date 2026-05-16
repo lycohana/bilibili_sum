@@ -61,6 +61,17 @@ run("converts highlight marks into portable markdown emphasis", () => {
   assert.equal(normalized, "学习重心是**高等数学与OpenCV**，公式为 $x_n = \\frac{n}{n+1}$。");
 });
 
+run("does not wrap latex-like text inside visual markdown image labels", () => {
+  const normalized = normalizeRenderableMarkdown(
+    "![零比零型极限问题：通过等价无穷小替换求lim(x→3)(e^x−3)−1)/sin(2x−6)=1/2，强调“方块趋于0”才能使用等价替换](visual://f0002)",
+  );
+
+  assert.equal(
+    normalized,
+    "![零比零型极限问题：通过等价无穷小替换求lim(x→3)(e^x−3)−1)/sin(2x−6)=1/2，强调“方块趋于0”才能使用等价替换](visual://f0002)",
+  );
+});
+
 run("repairs truncated mindmap labels before rendering", () => {
   const sanitized = sanitizeMindMapLabel(
     "核心公式$f(x_0+\\Delta$ x)\\app",
