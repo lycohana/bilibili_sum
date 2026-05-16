@@ -3463,47 +3463,55 @@ P 数索引：
         lines = knowledge_note_markdown.splitlines()
         output: list[str] = []
         insertion_index = 0
-        inserted = 0
+        heading_count = 0
         for line in lines:
-            output.append(line)
             stripped = line.strip()
+            is_heading = stripped.startswith("#")
+            if is_heading:
+                heading_count += 1
+            output.append(line)
             if insertion_index >= len(insertions):
                 continue
             current = insertions[insertion_index]
             anchor = str(current.get("anchor_heading") or current.get("chapter_title") or "").strip()
             should_insert_here = False
-            if stripped.startswith("#") and anchor:
-                heading = re.sub(r"^#+\s*", "", stripped).strip()
-                should_insert_here = anchor in heading or heading in anchor
-            if not should_insert_here and stripped and not stripped.startswith("#") and inserted < len(insertions):
-                should_insert_here = len(output) > 3 and inserted == 0
+            # Exact anchor match on heading
+            if is_heading and anchor:
+                heading_text = re.sub(r"^#+\s*", "", stripped).strip()
+                should_insert_here = anchor in heading_text or heading_text in anchor
+            # No anchor match: place one image after each ## or ### heading that
+            # hasn't already been used by an anchor match.
+            if not should_insert_here and is_heading and stripped.startswith("##") and heading_count > 1:
+                should_insert_here = True
             if should_insert_here:
                 output.extend(self._format_visual_insertion_markdown(current))
                 insertion_index += 1
-                inserted += 1
-        # Distribute any remaining insertions evenly through the document.
-        remaining = insertions[insertion_index:]
-        if remaining:
-            # Find candidate insertion points: non-empty non-heading lines
-            insertion_points: list[int] = []
-            for idx, line in enumerate(output):
-                stripped = line.strip()
-                if stripped and not stripped.startswith("#"):
-                    insertion_points.append(idx + 1)
-            if len(insertion_points) >= len(remaining):
-                step = max(1, len(insertion_points) // len(remaining))
-                for j, extra in enumerate(remaining):
-                    pt = insertion_points[min(j * step, len(insertion_points) - 1)]
-                    block = self._format_visual_insertion_markdown(extra)
-                    for offset, bline in enumerate(reversed(block)):
-                        output.insert(pt, bline)
-            else:
-                # Not enough points — still distribute as best we can
-                for j, extra in enumerate(remaining):
-                    pt = insertion_points[j % len(insertion_points)] if insertion_points else len(output)
-                    block = self._format_visual_insertion_markdown(extra)
-                    for offset, bline in enumerate(reversed(block)):
-                        output.insert(pt, bline)
+        # Place any leftover images one per remaining ## level heading, or at the end.
+        while insertion_index < len(insertions):
+            # Try to find the next ## heading that doesn't already have an image after it
+            placed = False
+            for rev_idx in range(len(output) - 1, -1, -1):
+                if output[rev_idx].strip().startswith("##"):
+                    # Check if there's already an image right after this heading
+                    after = rev_idx + 1
+                    if after < len(output) and not output[after].strip().startswith("!["):
+                        block = self._format_visual_insertion_markdown(insertions[insertion_index])
+                        for bline in reversed(block):
+                            output.insert(after, bline)
+                        insertion_index += 1
+                        placed = True
+                        break
+            if not placed:
+                # No free heading found — insert before last content line
+                tail = len(output)
+                for rev_idx in range(len(output) - 1, -1, -1):
+                    if output[rev_idx].strip() and not output[rev_idx].strip().startswith("#"):
+                        tail = rev_idx + 1
+                        break
+                block = self._format_visual_insertion_markdown(insertions[insertion_index])
+                for bline in reversed(block):
+                    output.insert(tail, bline)
+                insertion_index += 1
         return "\n".join(output).strip()
 
     def _format_visual_insertion_markdown(self, insertion: dict[str, object]) -> list[str]:
