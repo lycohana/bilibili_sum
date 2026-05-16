@@ -57,6 +57,7 @@ export type TaskResult = {
   visual_note_artifact_path?: string | null;
   visual_enhanced_note_artifact_path?: string | null;
   visual_note_updated_at?: string | null;
+  visual_note_mode?: VisualNoteMode | string;
   visual_frame_count?: number;
 };
 

@@ -22,9 +22,11 @@ class FakeVisualPipelineRunner(FakePipelineRunner):
     def __init__(self, result: TaskResult) -> None:
         super().__init__(result)
         self.visual_inputs: list[TaskInput] = []
+        self.visual_force_values: list[bool] = []
 
-    def build_and_export_visual_evidence(self, task_id: str, task_input: TaskInput, title: str, result: TaskResult, mode=None, on_event=None):
+    def build_and_export_visual_evidence(self, task_id: str, task_input: TaskInput, title: str, result: TaskResult, mode=None, force=False, on_event=None):
         self.visual_inputs.append(task_input)
+        self.visual_force_values.append(force)
         visual_dir = Path(f"C:/tmp/{task_id}-visual")
         if on_event is not None:
             on_event(PipelineEvent(stage="visual_note_composing", progress=92, message="正在整合图文笔记"))
@@ -274,6 +276,7 @@ def test_worker_visual_evidence_uses_bound_video_page_for_transcript_tasks() -> 
     assert visual_input.input_type == InputType.URL
     assert visual_input.source == "https://www.bilibili.com/video/BV1visual?p=72"
     assert visual_input.title == "P72"
+    assert runner.visual_force_values == [True]
 
 
 def test_worker_skips_auto_visual_evidence_when_disabled() -> None:

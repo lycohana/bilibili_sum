@@ -880,6 +880,10 @@
   grid-column: 2;
 }
 
+.settings-tree-panel > .settings-visual-note-presets {
+  grid-column: 2;
+}
+
 .settings-tree-panel-header + .settings-tree-grid,
 .settings-tree-panel-header + .settings-model-summary-grid {
   margin-top: 2px;
@@ -924,6 +928,51 @@
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 16px;
   align-items: start;
+}
+
+.settings-visual-note-presets {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.settings-visual-note-preset {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  min-height: 92px;
+  padding: 14px;
+  border: 1px solid var(--settings-border);
+  border-radius: 12px;
+  background: var(--settings-elevated-bg);
+  color: var(--settings-text);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease;
+}
+
+.settings-visual-note-preset:hover {
+  border-color: var(--settings-border-strong);
+  box-shadow: var(--settings-card-shadow);
+  transform: translateY(-1px);
+}
+
+.settings-visual-note-preset.is-active {
+  border-color: var(--brand-500);
+  background: color-mix(in srgb, var(--brand-50) 82%, var(--settings-elevated-bg));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--brand-500) 22%, transparent);
+}
+
+.settings-visual-note-preset strong {
+  color: var(--settings-text-strong);
+  font-size: 0.9rem;
+  line-height: 1.35;
+}
+
+.settings-visual-note-preset span {
+  color: var(--settings-text-soft);
+  font-size: 0.78rem;
+  line-height: 1.5;
 }
 
 .settings-model-summary-grid {

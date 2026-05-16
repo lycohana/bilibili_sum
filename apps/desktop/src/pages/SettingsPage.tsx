@@ -588,6 +588,16 @@ export function SettingsPage({
         ? "已配置"
         : "跟随或待补全"
     : "未启用";
+  const visualNotePreset = (() => {
+    const mode = form?.visual_note_mode || "text";
+    if (mode === "vlm_integrated") {
+      return "multimodal";
+    }
+    if (mode === "frame_insert") {
+      return "visual";
+    }
+    return "text";
+  })();
   const knowledgeLlmUsesCustom = String(form?.knowledge_llm_mode || "same_as_main").trim().toLowerCase() === "custom";
   const knowledgeLlmReady = knowledgeLlmUsesCustom
     ? Boolean(form?.knowledge_llm_enabled && knowledgeLlmApiKeyReady && String(form?.knowledge_llm_base_url || "").trim() && String(form?.knowledge_llm_model || "").trim())
@@ -776,6 +786,37 @@ export function SettingsPage({
       visual_vlm_prompt: field === "vlm"
         ? defaultVlmPrompt
         : form.visual_vlm_prompt,
+    });
+  }
+
+  function applyVisualNotePreset(preset: "text" | "visual" | "multimodal") {
+    if (!form) return;
+    if (preset === "text") {
+      updateForm({
+        ...form,
+        visual_note_mode: "text",
+        visual_evidence_enabled: false,
+        visual_evidence_use_llm: false,
+        visual_multimodal_enabled: false,
+      });
+      return;
+    }
+    if (preset === "visual") {
+      updateForm({
+        ...form,
+        visual_note_mode: "frame_insert",
+        visual_evidence_enabled: true,
+        visual_evidence_use_llm: false,
+        visual_multimodal_enabled: false,
+      });
+      return;
+    }
+    updateForm({
+      ...form,
+      visual_note_mode: "vlm_integrated",
+      visual_evidence_enabled: true,
+      visual_evidence_use_llm: true,
+      visual_multimodal_enabled: true,
     });
   }
 
@@ -1871,7 +1912,7 @@ export function SettingsPage({
                     <option value="siliconflow">硅基流动 API</option>
                     <option value="local" disabled={!localAsrInstalled}>本地 ASR（需先安装）</option>
                   </select>
-                  <span className="settings-input-caption">默认推荐云端模式。</span>
+                  <span className="settings-input-caption">默认推荐云端模式（硅基流动的语音识别是免费的！只需要注册然后填上apikey就可以用了）。</span>
                 </label>
                 {usesSiliconFlowAsr ? (
                   <>
@@ -1892,9 +1933,9 @@ export function SettingsPage({
                       <SiliconFlowApiKeyHelp />
                     </label>
                     <label className="settings-input-group" ref={registerFocusTarget("siliconflow_asr_model") as (node: HTMLLabelElement | null) => void}>
-                      <span className="settings-input-label">ASR 模型</span>
+                      <span className="settings-input-label">语音转写 ASR 模型</span>
                       <input className="settings-input-field" value={form.siliconflow_asr_model} onChange={(e) => updateForm({ ...form, siliconflow_asr_model: e.target.value })} placeholder="TeleAI/TeleSpeechASR" />
-                      <span className="settings-input-caption">首批支持 `TeleAI/TeleSpeechASR`。</span>
+                      <span className="settings-input-caption">推荐使用：TeleAI/TeleSpeechASR</span>
                     </label>
                     <div className="settings-inline-actions">
                       <button
@@ -2074,6 +2115,32 @@ export function SettingsPage({
                       <p>摘要完成后是否自动追加导图和图文笔记。</p>
                     </div>
                   </header>
+                  <div className="settings-visual-note-presets" aria-label="知识笔记预设">
+                    <button
+                      type="button"
+                      className={`settings-visual-note-preset ${visualNotePreset === "text" ? "is-active" : ""}`}
+                      onClick={() => applyVisualNotePreset("text")}
+                    >
+                      <strong>纯文本笔记</strong>
+                      <span>只生成文本知识笔记。</span>
+                    </button>
+                    <button
+                      type="button"
+                      className={`settings-visual-note-preset ${visualNotePreset === "visual" ? "is-active" : ""}`}
+                      onClick={() => applyVisualNotePreset("visual")}
+                    >
+                      <strong>无多模态的图文笔记</strong>
+                      <span>抽帧并按文本语义插图。</span>
+                    </button>
+                    <button
+                      type="button"
+                      className={`settings-visual-note-preset ${visualNotePreset === "multimodal" ? "is-active" : ""}`}
+                      onClick={() => applyVisualNotePreset("multimodal")}
+                    >
+                      <strong>多模态理解的图文笔记</strong>
+                      <span>抽帧并调用 VLM 理解画面。</span>
+                    </button>
+                  </div>
                   <div className="settings-tree-grid">
                     <label className="settings-input-group" ref={registerFocusTarget("auto_generate_mindmap") as (node: HTMLLabelElement | null) => void}>
                       <span className="settings-input-label">自动生成思维导图</span>
@@ -2088,13 +2155,16 @@ export function SettingsPage({
                       <select
                         className="settings-select-field"
                         value={form.visual_note_mode || "text"}
-                        onChange={(e) => updateForm({
-                          ...form,
-                          visual_note_mode: e.target.value as typeof form.visual_note_mode,
-                          visual_evidence_enabled: e.target.value !== "text" ? form.visual_evidence_enabled : false,
-                          visual_evidence_use_llm: e.target.value === "vlm_integrated",
-                          visual_multimodal_enabled: e.target.value === "vlm_integrated" ? form.visual_multimodal_enabled : false,
-                        })}
+                        onChange={(e) => {
+                          const nextMode = e.target.value as typeof form.visual_note_mode;
+                          updateForm({
+                            ...form,
+                            visual_note_mode: nextMode,
+                            visual_evidence_enabled: nextMode !== "text",
+                            visual_evidence_use_llm: nextMode === "vlm_integrated",
+                            visual_multimodal_enabled: nextMode === "vlm_integrated",
+                          });
+                        }}
                       >
                         <option value="text">纯文本笔记</option>
                         <option value="frame_insert">插图笔记</option>

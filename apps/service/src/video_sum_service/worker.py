@@ -445,6 +445,7 @@ class TaskWorker:
                 title=record.page_title or record.task_input.title or "图文笔记",
                 result=current_result,
                 mode=normalized_mode,
+                force=force,
                 on_event=handle_visual_event,
             )
             refreshed = self._repository.get_task(task_id)

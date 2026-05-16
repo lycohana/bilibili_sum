@@ -222,7 +222,8 @@
   }
 
   .settings-tree-grid,
-  .settings-model-summary-grid {
+  .settings-model-summary-grid,
+  .settings-visual-note-presets {
     grid-template-columns: 1fr;
   }
 

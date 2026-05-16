@@ -2109,10 +2109,14 @@ P 数索引：
         title: str,
         result: TaskResult,
         mode: str | None = None,
+        force: bool = False,
         on_event: Callable[[PipelineEvent], None] | None = None,
     ) -> tuple[dict[str, object], Path, Path]:
         task_dir = ensure_directory(self._settings.tasks_dir / task_id)
-        visual_dir = ensure_directory(task_dir / "visual_evidence")
+        visual_dir = task_dir / "visual_evidence"
+        if force and visual_dir.exists():
+            shutil.rmtree(visual_dir)
+        visual_dir = ensure_directory(visual_dir)
         frames_dir = ensure_directory(visual_dir / "frames")
         frame_index_path = visual_dir / "frame_index.json"
         context_path = visual_dir / "visual_context.json"

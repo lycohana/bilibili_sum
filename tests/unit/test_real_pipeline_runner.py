@@ -828,6 +828,34 @@ def test_visual_frame_insert_mode_composes_note_without_vlm(tmp_path: Path, monk
     assert not describe_called
 
 
+def test_visual_evidence_force_rebuild_clears_previous_artifacts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    runner = RealPipelineRunner(PipelineSettings(tasks_dir=tmp_path, visual_note_mode="frame_insert"))
+    visual_dir = tmp_path / "task-force" / "visual_evidence"
+    frames_dir = visual_dir / "frames"
+    frames_dir.mkdir(parents=True)
+    stale_frame = frames_dir / "f9999.jpg"
+    stale_frame.write_bytes(b"stale")
+
+    monkeypatch.setattr(runner, "_prepare_visual_source", lambda task_input, task_dir, title: (None, "url_video", ["missing source"]))
+    monkeypatch.setattr(
+        runner,
+        "_build_visual_keyframe_plan",
+        lambda title, result, mode: {"schema_version": 1, "mode": mode, "keyframes": []},
+    )
+
+    context, _note_path, _ = runner.build_and_export_visual_evidence(
+        task_id="task-force",
+        task_input=TaskInput(input_type=InputType.URL, source="https://example.com/video", title="视频"),
+        title="视频",
+        result=TaskResult(knowledge_note_markdown="# 主题", timeline=[{"title": "主题", "start": 0.0}]),
+        mode="frame_insert",
+        force=True,
+    )
+
+    assert context["status"] == "unsupported"
+    assert not stale_frame.exists()
+
+
 def test_visual_vlm_integrated_mode_uses_observations(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     runner = RealPipelineRunner(PipelineSettings(tasks_dir=tmp_path, visual_note_mode="vlm_integrated"))
     source = tmp_path / "source.mp4"

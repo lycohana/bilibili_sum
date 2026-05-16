@@ -303,6 +303,12 @@ def test_generate_task_visual_evidence_sets_generating_and_dispatches_worker(tmp
     worker = StubWorker()
     app.state.task_repository = repository
     app.state.task_worker = worker
+    settings_manager._settings = ServiceSettings(
+        data_dir=tmp_path / "data",
+        cache_dir=tmp_path / "cache",
+        tasks_dir=tmp_path / "tasks",
+        visual_note_mode="vlm_integrated",
+    )
 
     response = generate_task_visual_evidence(record.task_id)
     refreshed = repository.get_task(record.task_id)
@@ -310,4 +316,5 @@ def test_generate_task_visual_evidence_sets_generating_and_dispatches_worker(tmp
     assert response.status == "generating"
     assert refreshed is not None and refreshed.result is not None
     assert refreshed.result.visual_note_status == "generating"
-    assert worker.calls == [(record.task_id, False, "frame_insert")]
+    assert response.mode == "vlm_integrated"
+    assert worker.calls == [(record.task_id, False, "vlm_integrated")]

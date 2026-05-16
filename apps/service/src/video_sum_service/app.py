@@ -535,7 +535,7 @@ def generate_task_visual_evidence(task_id: str, force: bool = False, mode: str |
     if record.status != TaskStatus.COMPLETED or record.result is None:
         raise HTTPException(status_code=400, detail="仅已完成且有结果的任务可以生成图文笔记。")
 
-    requested_mode = normalize_visual_note_mode(mode or "frame_insert", default="frame_insert")
+    requested_mode = normalize_visual_note_mode(mode or settings_manager.current.visual_note_mode or "frame_insert", default="frame_insert")
     if requested_mode == "text":
         requested_mode = "frame_insert"
     existing_path = record.result.visual_enhanced_note_artifact_path or record.result.visual_note_artifact_path or record.result.artifacts.get("visual_enhanced_note_path") or record.result.artifacts.get("visual_note_path")

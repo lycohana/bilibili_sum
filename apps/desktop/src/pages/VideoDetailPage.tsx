@@ -543,6 +543,32 @@ export function VideoDetailPage({ onRefresh, onOpenCookieSettings, onOpenCookieT
     }
   }
 
+  async function triggerVisualNoteGeneration(taskId: string, options: { force?: boolean; mode?: string } = {}) {
+    setVisualEvidenceLoading((current) => ({ ...current, [taskId]: true }));
+    try {
+      const response = await api.generateTaskVisualEvidence(taskId, { force: options.force, mode: options.mode });
+      setVisualEvidence((current) => ({ ...current, [taskId]: response }));
+      return response;
+    } catch (error) {
+      const failedState: TaskVisualEvidenceResponse = {
+        task_id: taskId,
+        mode: "frame_insert",
+        status: "failed",
+        error_message: error instanceof Error ? error.message : "图文笔记生成失败",
+        updated_at: null,
+        frame_count: 0,
+        insert_count: 0,
+        visual_note_markdown: "",
+        enhanced_note_markdown: "",
+        context: null,
+      };
+      setVisualEvidence((current) => ({ ...current, [taskId]: failedState }));
+      throw error;
+    } finally {
+      setVisualEvidenceLoading((current) => omitRecordKey(current, taskId));
+    }
+  }
+
   async function refreshDetail(options: RefreshDetailOptions = {}) {
     const {
       forceTaskIds = [],
@@ -1115,10 +1141,14 @@ export function VideoDetailPage({ onRefresh, onOpenCookieSettings, onOpenCookieT
   const selectedVisualEvidenceStatus = selectedVisualEvidence?.status || selectedTaskDetail?.result?.visual_note_status || "idle";
   const selectedEnhancedNoteMarkdown = selectedVisualEvidence?.enhanced_note_markdown || selectedVisualEvidence?.visual_note_markdown || "";
   const hasEnhancedKnowledgeNote = Boolean(selectedEnhancedNoteMarkdown.trim());
-  const displayedKnowledgeNoteMarkdown = knowledgeNoteViewMode === "visual" && hasEnhancedKnowledgeNote
+  const effectiveKnowledgeNoteViewMode: KnowledgeNoteViewMode = knowledgeNoteViewMode === "visual" && hasEnhancedKnowledgeNote ? "visual" : "text";
+  const displayedKnowledgeNoteMarkdown = effectiveKnowledgeNoteViewMode === "visual"
     ? selectedEnhancedNoteMarkdown
     : selectedKnowledgeNoteMarkdown;
-  const knowledgeNoteModeLabel = knowledgeNoteViewMode === "visual" ? "图文" : "纯文本";
+  const knowledgeNoteModeLabel = effectiveKnowledgeNoteViewMode === "visual" ? "图文" : "纯文本";
+  const visualKnowledgeNoteUnavailableText = selectedVisualEvidenceStatus === "generating"
+    ? "图文笔记生成中，完成后可选"
+    : "当前任务没有图文笔记";
   const visualEvidenceFrames = useMemo(
     () => buildVisualEvidenceItems(selectedTaskId, selectedVisualEvidence),
     [selectedTaskId, selectedVisualEvidence],
@@ -1179,6 +1209,14 @@ export function VideoDetailPage({ onRefresh, onOpenCookieSettings, onOpenCookieT
     selectedTaskId
     && selectedTaskDetail?.result?.transcript_text?.trim()
     && selectedTaskDetail.result.artifacts?.summary_path,
+  );
+  const canRegenerateVisualNote = Boolean(
+    selectedTaskId
+    && selectedTaskStatus === "completed"
+    && selectedResult?.knowledge_note_markdown?.trim()
+    && !isAggregateSummaryView
+    && selectedVisualEvidenceStatus !== "generating"
+    && !visualEvidenceLoading[selectedTaskId],
   );
   const workspaceStatusLabel = isSelectedTaskLoading
     ? "加载中"
@@ -1417,6 +1455,26 @@ export function VideoDetailPage({ onRefresh, onOpenCookieSettings, onOpenCookieT
       setStatus(force ? "正在重新生成思维导图..." : "正在生成思维导图...");
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "思维导图生成失败");
+    }
+  }
+
+  async function handleGenerateVisualNote(force = false) {
+    if (!selectedTaskId) {
+      return;
+    }
+    setActiveTab("summary");
+    setKnowledgeNoteViewMode("visual");
+    setStatus(force ? "已发起重新生成图文笔记..." : "已发起生成图文笔记...");
+    try {
+      const response = await triggerVisualNoteGeneration(selectedTaskId, { force });
+      await ensureTaskContext(selectedTaskId, { force: true }).catch(() => undefined);
+      if (response.status === "ready" || response.status === "partial") {
+        setStatus("图文笔记已更新");
+        return;
+      }
+      setStatus(force ? "正在重新生成图文笔记..." : "正在生成图文笔记...");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "图文笔记生成失败");
     }
   }
 
@@ -1845,7 +1903,22 @@ export function VideoDetailPage({ onRefresh, onOpenCookieSettings, onOpenCookieT
                               }}
                             >
                               <IconSummaryRefresh className="detail-action-icon" />
-                              <span>仅重跑摘要</span>
+                              <span>重跑文本笔记</span>
+                            </button>
+                            <button
+                              className="detail-action-subitem"
+                              role="menuitem"
+                              type="button"
+                              tabIndex={actionMenuSection === "regenerate" ? 0 : -1}
+                              disabled={!canRegenerateVisualNote}
+                              onClick={async () => {
+                                setActionMenuOpen(false);
+                                setActionMenuSection(null);
+                                await handleGenerateVisualNote(true);
+                              }}
+                            >
+                              <IconCopyImage className="detail-action-icon" />
+                              <span>重跑图文笔记</span>
                             </button>
                             <button
                               className="detail-action-subitem"
@@ -2505,17 +2578,21 @@ export function VideoDetailPage({ onRefresh, onOpenCookieSettings, onOpenCookieT
                             aria-label="选择知识笔记显示形式"
                             title="笔记形式"
                           >
-                            {knowledgeNoteViewMode === "visual" ? <IconCopyImage /> : <IconFileText />}
+                            {effectiveKnowledgeNoteViewMode === "visual" ? <IconCopyImage /> : <IconFileText />}
                             <IconChevronDown className="detail-section-menu-caret" />
                           </button>
                           {knowledgeNoteModeMenuOpen ? (
                             <div className="detail-section-popover detail-note-mode-popover" role="menu" aria-label="知识笔记显示形式">
                               <button
-                                className={`detail-section-menu-item detail-note-mode-option ${knowledgeNoteViewMode === "visual" ? "is-selected" : ""}`}
+                                className={`detail-section-menu-item detail-note-mode-option ${effectiveKnowledgeNoteViewMode === "visual" ? "is-selected" : ""}`}
                                 type="button"
                                 role="menuitemradio"
-                                aria-checked={knowledgeNoteViewMode === "visual"}
+                                aria-checked={effectiveKnowledgeNoteViewMode === "visual"}
+                                disabled={!hasEnhancedKnowledgeNote}
                                 onClick={() => {
+                                  if (!hasEnhancedKnowledgeNote) {
+                                    return;
+                                  }
                                   setKnowledgeNoteViewMode("visual");
                                   setKnowledgeNoteModeMenuOpen(false);
                                 }}
@@ -2525,14 +2602,14 @@ export function VideoDetailPage({ onRefresh, onOpenCookieSettings, onOpenCookieT
                                 </span>
                                 <span className="detail-section-menu-copy">
                                   <strong>图文</strong>
-                                  <small>{hasEnhancedKnowledgeNote ? "显示带图片的整合笔记" : "运行会同时生成，完成后自动可见"}</small>
+                                  <small>{hasEnhancedKnowledgeNote ? "显示带图片的整合笔记" : visualKnowledgeNoteUnavailableText}</small>
                                 </span>
                               </button>
                               <button
-                                className={`detail-section-menu-item detail-note-mode-option ${knowledgeNoteViewMode === "text" ? "is-selected" : ""}`}
+                                className={`detail-section-menu-item detail-note-mode-option ${effectiveKnowledgeNoteViewMode === "text" ? "is-selected" : ""}`}
                                 type="button"
                                 role="menuitemradio"
-                                aria-checked={knowledgeNoteViewMode === "text"}
+                                aria-checked={effectiveKnowledgeNoteViewMode === "text"}
                                 onClick={() => {
                                   setKnowledgeNoteViewMode("text");
                                   setKnowledgeNoteModeMenuOpen(false);
