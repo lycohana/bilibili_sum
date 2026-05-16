@@ -465,7 +465,7 @@ class TaskWorker:
                     },
                     "visual_note_status": status_value,
                     "visual_note_error_message": error_message if status_value in {"failed", "partial", "unsupported"} else None,
-                    "visual_note_artifact_path": str(Path(note_path)),
+                    "visual_note_artifact_path": str(Path(note_path).parent / "visual_note.md"),
                     "visual_enhanced_note_artifact_path": str(Path(note_path)),
                     "visual_note_updated_at": datetime.now(timezone.utc),
                     "visual_note_mode": str(context.get("mode") or normalized_mode),

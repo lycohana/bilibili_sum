@@ -3478,7 +3478,8 @@ P 数索引：
             if not is_heading or not anchor:
                 continue
             heading_text = re.sub(r"^#+\s*", "", stripped).strip()
-            if anchor in heading_text or heading_text in anchor:
+            shorter, longer = sorted((len(anchor), len(heading_text)))
+            if (anchor in heading_text or heading_text in anchor) and shorter >= longer * 0.6:
                 output.extend(self._format_visual_insertion_markdown(current))
                 insertion_index += 1
         return "\n".join(output).strip()

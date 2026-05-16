@@ -1142,6 +1142,12 @@ export function VideoDetailPage({ onRefresh, onOpenCookieSettings, onOpenCookieT
   const selectedEnhancedNoteMarkdown = selectedVisualEvidence?.enhanced_note_markdown || selectedVisualEvidence?.visual_note_markdown || "";
   const hasEnhancedKnowledgeNote = Boolean(selectedEnhancedNoteMarkdown.trim());
   const effectiveKnowledgeNoteViewMode: KnowledgeNoteViewMode = knowledgeNoteViewMode === "visual" && hasEnhancedKnowledgeNote ? "visual" : "text";
+
+  useEffect(() => {
+    if (!hasEnhancedKnowledgeNote && knowledgeNoteViewMode === "visual") {
+      setKnowledgeNoteViewMode("text");
+    }
+  }, [hasEnhancedKnowledgeNote, knowledgeNoteViewMode]);
   const displayedKnowledgeNoteMarkdown = effectiveKnowledgeNoteViewMode === "visual"
     ? selectedEnhancedNoteMarkdown
     : selectedKnowledgeNoteMarkdown;

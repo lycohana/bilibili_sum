@@ -1935,18 +1935,6 @@
   color: var(--text-tertiary);
 }
 
-.detail-inline-select {
-  height: 32px;
-  max-width: min(100%, 168px);
-  border: 1px solid var(--border-subtle);
-  border-radius: 8px;
-  background: var(--surface-elevated);
-  color: var(--text-primary);
-  font: inherit;
-  font-size: 0.86rem;
-  padding: 0 30px 0 10px;
-}
-
 .detail-section-menu {
   position: relative;
   display: inline-flex;
