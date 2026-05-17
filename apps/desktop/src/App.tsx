@@ -438,10 +438,10 @@ export function App() {
       if (!setupAssistantForceRef.current) {
         setSetupAssistantOpen(false);
       }
+      setSetupAssistantDismissed(false);
       return;
     }
     setupAssistantForceRef.current = false;
-    setSetupAssistantDismissed(false);
     if (!setupAssistantDismissed) {
       setSetupAssistantOpen(true);
     }
@@ -475,6 +475,7 @@ export function App() {
   }
 
   function openSettingsFromAssistant() {
+    setupAssistantForceRef.current = false;
     setSetupAssistantOpen(false);
     const targetIssueKey = configHealth.blockingIssues[0]?.key || configHealth.issues[0]?.key;
     if (targetIssueKey) {
