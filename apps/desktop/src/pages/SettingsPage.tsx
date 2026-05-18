@@ -183,6 +183,7 @@ const SETTINGS_SEARCH_ITEMS: SettingsSearchItem[] = [
   { category: "runtime", targetKey: "runtime_status", title: "运行环境状态", description: "检查 Python、Torch、CUDA 与扩展依赖。", keywords: ["运行环境", "环境", "torch", "python", "cuda"] },
   { category: "runtime", targetKey: "local_asr_runtime", title: "本地 ASR 运行环境", description: "安装或检查本地 ASR 依赖。", keywords: ["本地", "asr", "whisper", "安装"] },
   { category: "logs", targetKey: "service_logs", title: "服务日志", description: "查看后端服务日志。", keywords: ["日志", "log", "报错", "服务"] },
+  { category: "logs", targetKey: "developer_mode", title: "开发者模式", description: "允许 F12 打开桌面端开发者工具。", keywords: ["开发者", "devtools", "f12", "调试", "控制台"] },
   { category: "updates", targetKey: "app_updates", title: "应用更新", description: "检查桌面应用新版本。", keywords: ["更新", "版本", "update", "release"] },
 ];
 
@@ -252,6 +253,8 @@ export function SettingsPage({
   const [logOutput, setLogOutput] = useState("");
   const [logPath, setLogPath] = useState(snapshot.systemInfo?.service?.log_file || desktop.logPath || "");
   const [serviceStatus, setServiceStatus] = useState("");
+  const [developerMode, setDeveloperMode] = useState(false);
+  const [developerModeStatus, setDeveloperModeStatus] = useState("");
   const [asrTestStatus, setAsrTestStatus] = useState("");
   const [asrTestBusy, setAsrTestBusy] = useState(false);
   const [llmTestStatus, setLlmTestStatus] = useState("");
@@ -321,6 +324,9 @@ export function SettingsPage({
   useEffect(() => {
     void refreshLogs();
     void refreshRuntimeStatus({ silent: true });
+    void window.desktop?.preferences?.getDeveloperMode?.()
+      .then((enabled) => setDeveloperMode(Boolean(enabled)))
+      .catch(() => undefined);
   }, []);
 
   useEffect(() => {
@@ -401,6 +407,19 @@ export function SettingsPage({
         }
       } catch {}
       setLogOutput(error instanceof Error ? error.message : "读取日志失败");
+    }
+  }
+
+  async function handleDeveloperModeChange(enabled: boolean) {
+    setDeveloperMode(enabled);
+    setDeveloperModeStatus("");
+    try {
+      const saved = await window.desktop?.preferences?.setDeveloperMode?.(enabled);
+      setDeveloperMode(Boolean(saved));
+      setDeveloperModeStatus(saved ? "开发者模式已开启，已打开开发者工具。F12 可切换显示。" : "开发者模式已关闭。");
+    } catch (error) {
+      setDeveloperMode(!enabled);
+      setDeveloperModeStatus(error instanceof Error ? error.message : "开发者模式保存失败。");
     }
   }
 
@@ -3065,6 +3084,20 @@ export function SettingsPage({
                 <div className="setting-row"><span className="setting-label">服务名</span><span className="setting-value">{snapshot.systemInfo?.application?.name || "-"}</span></div>
                 <div className="setting-row"><span className="setting-label">版本</span><span className="setting-value">{snapshot.systemInfo?.application?.version || "-"}</span></div>
                 <div className="setting-row"><span className="setting-label">日志文件</span><span className="setting-value">{effectiveLogPath}</span></div>
+                <div className="setting-row setting-row-with-action" ref={registerFocusTarget("developer_mode") as (node: HTMLDivElement | null) => void}>
+                  <div>
+                    <span className="setting-label">开发者模式</span>
+                    <span className="setting-value">开启后打开桌面端开发者工具，并允许 F12 或 Ctrl+Shift+I 切换。</span>
+                    {developerModeStatus ? <span className="setting-value">{developerModeStatus}</span> : null}
+                  </div>
+                  <button
+                    className={developerMode ? "secondary-button" : "primary-button"}
+                    type="button"
+                    onClick={() => void handleDeveloperModeChange(!developerMode)}
+                  >
+                    {developerMode ? "关闭" : "开启"}
+                  </button>
+                </div>
               </div>
               <div className="desktop-actions">
                 <button className="secondary-button" type="button" onClick={() => void refreshLogs()}>刷新日志</button>

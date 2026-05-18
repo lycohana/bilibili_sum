@@ -101,6 +101,13 @@ type DesktopBridge = {
   bilibili: {
     captureLoginCookies(): Promise<BilibiliCookieExportResult>;
   };
+  bilibiliPlayer?: {
+    show(input: { url: string; bounds: { x: number; y: number; width: number; height: number } }): Promise<{ ready: boolean; url: string }>;
+    setBounds(bounds: { x: number; y: number; width: number; height: number }): Promise<{ ok: boolean }>;
+    seek(seconds: number): Promise<{ ok?: boolean; method?: string; error?: string }>;
+    getSnapshot(): Promise<{ ok?: boolean; currentTime?: number; duration?: number; paused?: boolean; error?: string }>;
+    hide(): Promise<{ ok: boolean }>;
+  };
   shell: {
     openPath(targetPath: string): Promise<string>;
   };
@@ -116,6 +123,8 @@ type DesktopBridge = {
     setCloseBehavior(value: CloseBehavior): Promise<CloseBehavior>;
     resetCloseBehavior(): Promise<CloseBehavior>;
     setTheme(value: ThemePreference): Promise<ThemePreference>;
+    getDeveloperMode(): Promise<boolean>;
+    setDeveloperMode(enabled: boolean): Promise<boolean>;
   };
   update: {
     check(): Promise<UpdateInfo>;

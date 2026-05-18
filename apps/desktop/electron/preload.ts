@@ -142,6 +142,17 @@ const desktop = {
     captureLoginCookies: () =>
       ipcRenderer.invoke("desktop:bilibili:capture-login-cookies") as Promise<BilibiliCookieExportResult>,
   },
+  bilibiliPlayer: {
+    show: (input: { url: string; bounds: { x: number; y: number; width: number; height: number } }) =>
+      ipcRenderer.invoke("desktop:bilibili-player:show", input) as Promise<{ ready: boolean; url: string }>,
+    setBounds: (bounds: { x: number; y: number; width: number; height: number }) =>
+      ipcRenderer.invoke("desktop:bilibili-player:set-bounds", bounds) as Promise<{ ok: boolean }>,
+    seek: (seconds: number) =>
+      ipcRenderer.invoke("desktop:bilibili-player:seek", seconds) as Promise<{ ok?: boolean; method?: string; error?: string }>,
+    getSnapshot: () =>
+      ipcRenderer.invoke("desktop:bilibili-player:get-snapshot") as Promise<{ ok?: boolean; currentTime?: number; duration?: number; paused?: boolean; error?: string }>,
+    hide: () => ipcRenderer.invoke("desktop:bilibili-player:hide") as Promise<{ ok: boolean }>,
+  },
   shell: {
     openPath: (targetPath: string) => ipcRenderer.invoke("desktop:shell:open-path", targetPath) as Promise<string>,
   },
@@ -161,6 +172,9 @@ const desktop = {
     resetCloseBehavior: () => ipcRenderer.invoke("desktop:preferences:reset-close-behavior") as Promise<CloseBehavior>,
     setTheme: (value: ThemePreference) =>
       ipcRenderer.invoke("desktop:preferences:set-theme", value) as Promise<ThemePreference>,
+    getDeveloperMode: () => ipcRenderer.invoke("desktop:preferences:get-developer-mode") as Promise<boolean>,
+    setDeveloperMode: (enabled: boolean) =>
+      ipcRenderer.invoke("desktop:preferences:set-developer-mode", enabled) as Promise<boolean>,
   },
   update: {
     check: () => ipcRenderer.invoke("desktop:update:check") as Promise<UpdateInfo>,

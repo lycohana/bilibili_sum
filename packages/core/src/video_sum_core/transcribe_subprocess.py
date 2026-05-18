@@ -79,6 +79,8 @@ def transcribe(
             "start": round(segment.start, 3),
             "end": round(segment.end, 3),
             "text": segment.text.strip(),
+            "timing_source": "whisper",
+            "timing_accuracy": "exact",
         }
         segments.append(item)
         transcript_lines.append(f"[{format_timestamp(item['start'])}] {item['text']}")

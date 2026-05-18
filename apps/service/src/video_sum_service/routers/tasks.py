@@ -18,6 +18,7 @@ from video_sum_service.schemas import (
     TaskMarkdownExportResponse,
     TaskMindMapResponse,
     TaskProgressResponse,
+    TaskSegmentsResponse,
     TaskSummaryResponse,
     TaskTranscriptExportRequest,
     TaskVisualEvidenceResponse,
@@ -26,6 +27,7 @@ from video_sum_service.context import settings_manager
 from video_sum_service.task_artifacts import (
     cleanup_task_files,
     load_task_mindmap,
+    load_task_segments,
     load_visual_context,
     load_visual_note_markdown,
     resolve_visual_media_path,
@@ -408,3 +410,67 @@ def get_task_progress(task_id: str, request: Request) -> TaskProgressResponse:
         latest_message=latest_event.message if latest_event is not None else None,
         updated_at=record.updated_at,
     )
+
+
+@router.get("/{task_id}/segments", response_model=TaskSegmentsResponse)
+def get_task_segments(task_id: str, request: Request) -> TaskSegmentsResponse:
+    task_store: SqliteTaskRepository = request.app.state.task_repository
+    record = task_store.get_task(task_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Task not found.")
+    if record.result is None:
+        return TaskSegmentsResponse(task_id=task_id, segments=[])
+
+    summary_path = record.result.artifacts.get("summary_path")
+    if not summary_path:
+        return TaskSegmentsResponse(task_id=task_id, segments=[])
+
+    try:
+        raw = load_task_segments(summary_path)
+    except HTTPException:
+        return TaskSegmentsResponse(task_id=task_id, segments=[])
+
+    segments = []
+    for seg in raw:
+        if not isinstance(seg, dict):
+            continue
+        timing_accuracy = str(seg.get("timing_accuracy") or "").strip().lower()
+        if timing_accuracy not in {"exact", "approximate"}:
+            timing_accuracy = None
+        timing_source = str(seg.get("timing_source") or "").strip() or None
+        segments.append(
+            {
+                "start": float(seg.get("start", 0)),
+                "end": float(seg.get("end", 0)),
+                "text": str(seg.get("text", "")),
+                "timing_source": timing_source,
+                "timing_accuracy": timing_accuracy,
+            }
+        )
+    accuracy_values = {segment["timing_accuracy"] for segment in segments if segment.get("timing_accuracy")}
+    if len(accuracy_values) == 1:
+        timing_accuracy = str(next(iter(accuracy_values)))
+    elif len(accuracy_values) > 1:
+        timing_accuracy = "mixed"
+    elif _segments_look_like_estimated_timing(segments):
+        timing_accuracy = "approximate"
+    else:
+        timing_accuracy = "unknown"
+    return TaskSegmentsResponse(task_id=task_id, segments=segments, timing_accuracy=timing_accuracy)
+
+
+def _segments_look_like_estimated_timing(segments: list[dict[str, object]]) -> bool:
+    if len(segments) < 6:
+        return False
+    adjacent_count = 0
+    comparable_count = 0
+    for current, next_segment in zip(segments, segments[1:]):
+        try:
+            current_end = float(current.get("end", 0))
+            next_start = float(next_segment.get("start", 0))
+        except (TypeError, ValueError):
+            continue
+        comparable_count += 1
+        if abs(current_end - next_start) <= 0.05:
+            adjacent_count += 1
+    return comparable_count > 0 and adjacent_count / comparable_count >= 0.9

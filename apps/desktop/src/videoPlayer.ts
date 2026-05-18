@@ -72,6 +72,7 @@ export function buildYouTubeEmbedUrl(sourceUrl?: string | null) {
     const embedUrl = new URL(`https://www.youtube.com/embed/${videoId}`);
     embedUrl.searchParams.set("autoplay", "0");
     embedUrl.searchParams.set("rel", "0");
+    embedUrl.searchParams.set("enablejsapi", "1");
     return embedUrl.toString();
   } catch {
     return null;
@@ -118,4 +119,54 @@ export function buildPlayerEmbedDescriptor(sourceUrl?: string | null): PlayerEmb
   }
 
   return null;
+}
+
+export function buildTimestampedSourceUrl(sourceUrl: string | null | undefined, seconds: number | null) {
+  if (!sourceUrl || seconds == null || !Number.isFinite(seconds) || seconds < 0) {
+    return sourceUrl || "";
+  }
+
+  try {
+    const url = new URL(sourceUrl);
+    url.searchParams.set("t", String(Math.floor(seconds)));
+    return url.toString();
+  } catch {
+    return sourceUrl;
+  }
+}
+
+export function postPlayerSeek(frame: HTMLIFrameElement | null, platform: SupportedVideoPlatform, seconds: number | null) {
+  if (!frame?.contentWindow || seconds == null || !Number.isFinite(seconds) || seconds < 0) {
+    return false;
+  }
+
+  const normalizedSeconds = Math.floor(seconds);
+  const targetOrigin = (() => {
+    try {
+      return new URL(frame.src).origin;
+    } catch {
+      return "*";
+    }
+  })();
+
+  if (platform === "youtube") {
+    frame.contentWindow.postMessage(
+      JSON.stringify({ event: "command", func: "seekTo", args: [normalizedSeconds, true] }),
+      targetOrigin,
+    );
+    frame.contentWindow.postMessage(
+      JSON.stringify({ event: "command", func: "playVideo", args: [] }),
+      targetOrigin,
+    );
+    return true;
+  }
+
+  for (const payload of [
+    { cmd: "seek", param: normalizedSeconds },
+    { command: "seek", value: normalizedSeconds },
+    { event: "seek", value: normalizedSeconds },
+  ]) {
+    frame.contentWindow.postMessage(JSON.stringify(payload), targetOrigin);
+  }
+  return true;
 }

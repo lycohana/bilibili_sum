@@ -193,6 +193,18 @@ def test_build_fallback_segments_from_long_comma_only_transcript_splits_into_mul
     assert rendered.count("[") >= 3
     assert "[00:00]" in rendered
     assert "[01:" not in rendered or float(segments[-1]["end"]) <= 75.0
+    assert segments[0]["timing_accuracy"] == "approximate"
+
+
+def test_build_fallback_segments_uses_known_duration_even_with_many_chunks() -> None:
+    runner = RealPipelineRunner(PipelineSettings(tasks_dir=Path("tests/tmp_tasks")))
+    transcript = "，".join(f"第{index}句内容很多" for index in range(30))
+
+    segments = runner._build_fallback_segments_from_transcript(transcript, duration=10.0)
+
+    assert len(segments) > 1
+    assert float(segments[-1]["end"]) == 10.0
+    assert all(float(segment["end"]) <= 10.0 for segment in segments)
 
 
 def test_transcribe_uses_siliconflow_provider(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -580,6 +592,95 @@ def test_run_from_local_video_file_uses_local_media_pipeline(monkeypatch: pytest
     assert result.overview == "本地概览"
     assert emitted[0][0] == "preparing" or result_events[0].stage == "preparing"
     assert any("本地视频文件" in message for _, _, message, _ in emitted)
+
+
+def test_prepare_local_video_audio_source_rejects_video_without_audio_stream(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    runner = RealPipelineRunner(PipelineSettings(tasks_dir=tmp_path))
+    local_video = tmp_path / "silent.mp4"
+    local_video.write_bytes(b"fake-video")
+    ffmpeg_exe = tmp_path / ("ffmpeg.exe" if os.name == "nt" else "ffmpeg")
+    ffprobe_exe = tmp_path / ("ffprobe.exe" if os.name == "nt" else "ffprobe")
+    ffmpeg_exe.write_text("", encoding="utf-8")
+    ffprobe_exe.write_text("", encoding="utf-8")
+    commands: list[list[str]] = []
+
+    class FakeCompletedProcess:
+        stdout = ""
+        stderr = ""
+        returncode = 0
+
+    def fake_run(command, *args, **kwargs):
+        commands.append([str(item) for item in command])
+        return FakeCompletedProcess()
+
+    monkeypatch.setattr("video_sum_core.pipeline.real.ffmpeg_location", lambda: ffmpeg_exe)
+    monkeypatch.setattr("video_sum_core.pipeline.real.subprocess.run", fake_run)
+
+    with pytest.raises(VideoSumError, match="不包含可转写音轨"):
+        runner._prepare_local_audio_source(
+            source_path=local_video,
+            task_dir=tmp_path,
+            safe_title="silent",
+            input_type=InputType.VIDEO_FILE,
+            emit=lambda *_args, **_kwargs: None,
+        )
+
+    assert commands == [[
+        str(ffprobe_exe),
+        "-v",
+        "error",
+        "-select_streams",
+        "a:0",
+        "-show_entries",
+        "stream=index",
+        "-of",
+        "csv=p=0",
+        str(local_video),
+    ]]
+
+
+def test_prepare_local_video_audio_source_maps_ffmpeg_no_stream_error(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    runner = RealPipelineRunner(PipelineSettings(tasks_dir=tmp_path))
+    local_video = tmp_path / "silent.mp4"
+    local_video.write_bytes(b"fake-video")
+    ffmpeg_exe = tmp_path / ("ffmpeg.exe" if os.name == "nt" else "ffmpeg")
+    ffprobe_exe = tmp_path / ("ffprobe.exe" if os.name == "nt" else "ffprobe")
+    ffmpeg_exe.write_text("", encoding="utf-8")
+    ffprobe_exe.write_text("", encoding="utf-8")
+
+    class FakeCompletedProcess:
+        def __init__(self, stdout: str, stderr: str, returncode: int) -> None:
+            self.stdout = stdout
+            self.stderr = stderr
+            self.returncode = returncode
+
+    def fake_run(command, *args, **kwargs):
+        command = [str(item) for item in command]
+        if command[0] == str(ffprobe_exe):
+            return FakeCompletedProcess(stdout="0\n", stderr="", returncode=0)
+        return FakeCompletedProcess(
+            stdout="",
+            stderr="[out#0/mp3] Output file does not contain any stream",
+            returncode=1,
+        )
+
+    monkeypatch.setattr("video_sum_core.pipeline.real.ffmpeg_location", lambda: ffmpeg_exe)
+    monkeypatch.setattr("video_sum_core.pipeline.real.subprocess.run", fake_run)
+
+    with pytest.raises(VideoSumError, match="不包含可转写音轨"):
+        runner._prepare_local_audio_source(
+            source_path=local_video,
+            task_dir=tmp_path,
+            safe_title="silent",
+            input_type=InputType.VIDEO_FILE,
+            emit=lambda *_args, **_kwargs: None,
+        )
 
 
 def test_run_from_url_rejects_unsupported_url(tmp_path: Path) -> None:

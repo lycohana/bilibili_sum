@@ -418,7 +418,6 @@ def probe_asr_connection(payload: SettingsUpdatePayload | None = None) -> dict[s
 
     if provider == "multimodal":
         return _probe_multimodal_asr(effective_settings)
-
     base_url = str(effective_settings.siliconflow_asr_base_url or "").strip().rstrip("/")
     api_key = str(effective_settings.siliconflow_asr_api_key or "").strip()
     model = str(effective_settings.siliconflow_asr_model or "").strip()

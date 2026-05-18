@@ -152,6 +152,21 @@ class VideoProbeResponse(BaseModel):
     pages: list[VideoPageOptionResponse] = Field(default_factory=list)
 
 
+class VideoDirectMediaResponse(BaseModel):
+    available: bool = False
+    mode: Literal["direct", "split", "muxed", "separate", "local", "unavailable"] = "unavailable"
+    stream_url: str = ""
+    video_url: str = ""
+    audio_url: str = ""
+    format_id: str | None = None
+    ext: str | None = None
+    width: int | None = None
+    height: int | None = None
+    acodec: str | None = None
+    vcodec: str | None = None
+    reason: str = ""
+
+
 class TaskSummaryResponse(BaseModel):
     task_id: str
     video_id: str | None = None
@@ -436,3 +451,17 @@ class KnowledgeStatsResponse(BaseModel):
 
 class KnowledgeRebuildResponse(BaseModel):
     indexed_videos: int
+
+
+class SegmentResponse(BaseModel):
+    start: float
+    end: float
+    text: str
+    timing_source: str | None = None
+    timing_accuracy: Literal["exact", "approximate"] | None = None
+
+
+class TaskSegmentsResponse(BaseModel):
+    task_id: str
+    segments: list[SegmentResponse] = Field(default_factory=list)
+    timing_accuracy: Literal["exact", "approximate", "mixed", "unknown"] = "unknown"
