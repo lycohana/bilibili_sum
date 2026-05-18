@@ -9,6 +9,7 @@ import { Readable } from "node:stream";
 
 import {
   app,
+  BrowserView,
   BrowserWindow,
   clipboard,
   dialog,
@@ -31,6 +32,7 @@ type DesktopPreferences = {
   closeBehavior: CloseBehavior;
   rememberCloseBehavior: boolean;
   autoLaunch: boolean;
+  developerMode?: boolean;
   themePreference?: ThemePreference;
   lastOpenedVersion?: string;
   lastSeenAnnouncementVersion?: string;
@@ -165,6 +167,8 @@ let backendStatus: BackendStatus = {
   lastError: "",
 };
 let desktopAccessToken = "";
+let bilibiliPlayerView: BrowserView | null = null;
+let bilibiliPlayerViewUrl = "";
 
 // 更新管理器状态
 let updateStatus: UpdateInfo = {
@@ -516,6 +520,177 @@ function isPathWithin(parentPath: string, candidatePath: string) {
   return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }
 
+function isAllowedBilibiliPlayerUrl(rawUrl: string) {
+  try {
+    const url = new URL(String(rawUrl || ""));
+    return url.protocol === "https:" && url.hostname === "player.bilibili.com";
+  } catch {
+    return false;
+  }
+}
+
+function buildBilibiliPlayerSeekScript(seconds: number) {
+  return `
+(() => {
+  const seconds = ${JSON.stringify(Math.max(0, Math.floor(seconds)))};
+  const call = (target, names) => {
+    if (!target) return "";
+    for (const name of names) {
+      const fn = target[name];
+      if (typeof fn !== "function") continue;
+      try {
+        fn.call(target, seconds);
+        return name;
+      } catch (_) {}
+    }
+    return "";
+  };
+
+  const video = document.querySelector("video");
+  if (video) {
+    video.currentTime = seconds;
+    try { video.play && video.play(); } catch (_) {}
+    return { ok: true, method: "video.currentTime", currentTime: video.currentTime };
+  }
+
+  const player = window.player;
+  const direct = call(player, ["seek", "setTime", "setCurrentTime", "jump", "goto"]);
+  if (direct) return { ok: true, method: "player." + direct };
+
+  const nested = [player && player.player, player && player.video, player && player.controller, player && player.core];
+  for (const item of nested) {
+    const method = call(item, ["seek", "setTime", "setCurrentTime", "jump", "goto"]);
+    if (method) return { ok: true, method };
+  }
+
+  return {
+    ok: false,
+    hasPlayer: !!player,
+    playerKeys: player ? Object.keys(player).slice(0, 80) : [],
+    videoCount: document.querySelectorAll("video").length,
+  };
+})()
+`;
+}
+
+function buildBilibiliPlayerSnapshotScript() {
+  return `
+(() => {
+  const video = document.querySelector("video");
+  if (video) {
+    return {
+      ok: true,
+      method: "video",
+      currentTime: Number(video.currentTime || 0),
+      duration: Number(video.duration || 0),
+      paused: Boolean(video.paused),
+      readyState: Number(video.readyState || 0),
+    };
+  }
+
+  const player = window.player;
+  const candidates = [
+    [player, "getCurrentTime"],
+    [player, "currentTime"],
+    [player, "getTime"],
+    [player && player.video, "currentTime"],
+    [player && player.player, "currentTime"],
+  ];
+  for (const [target, key] of candidates) {
+    if (!target) continue;
+    try {
+      const raw = typeof target[key] === "function" ? target[key]() : target[key];
+      const currentTime = Number(raw);
+      if (Number.isFinite(currentTime)) {
+        return { ok: true, method: String(key), currentTime };
+      }
+    } catch (_) {}
+  }
+
+  return {
+    ok: false,
+    hasPlayer: !!player,
+    playerKeys: player ? Object.keys(player).slice(0, 80) : [],
+    videoCount: document.querySelectorAll("video").length,
+  };
+})()
+`;
+}
+
+function detachBilibiliPlayerView() {
+  if (mainWindow && bilibiliPlayerView) {
+    try {
+      mainWindow.removeBrowserView(bilibiliPlayerView);
+    } catch {
+      // view may already be detached during shutdown
+    }
+  }
+  if (bilibiliPlayerView && !bilibiliPlayerView.webContents.isDestroyed()) {
+    bilibiliPlayerView.webContents.close();
+  }
+  bilibiliPlayerView = null;
+  bilibiliPlayerViewUrl = "";
+}
+
+async function ensureBilibiliPlayerView(url: string) {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    throw new Error("主窗口不可用。");
+  }
+  if (!isAllowedBilibiliPlayerUrl(url)) {
+    throw new Error("仅允许加载 Bilibili 外链播放器。");
+  }
+  if (!bilibiliPlayerView || bilibiliPlayerView.webContents.isDestroyed()) {
+    bilibiliPlayerView = new BrowserView({
+      webPreferences: {
+        nodeIntegration: false,
+        contextIsolation: true,
+        sandbox: false,
+        javascript: true,
+        webSecurity: true,
+        allowRunningInsecureContent: false,
+        partition: "persist:briefvid-bilibili-login",
+      },
+    });
+    mainWindow.addBrowserView(bilibiliPlayerView);
+    bilibiliPlayerView.webContents.setWindowOpenHandler(({ url: targetUrl }) => {
+      if (isAllowedExternalUrl(targetUrl)) {
+        void shell.openExternal(targetUrl).catch(() => undefined);
+      }
+      return { action: "deny" };
+    });
+    bilibiliPlayerView.webContents.on("will-navigate", (event, targetUrl) => {
+      if (!isAllowedBilibiliPlayerUrl(targetUrl)) {
+        event.preventDefault();
+        if (isAllowedExternalUrl(targetUrl)) {
+          void shell.openExternal(targetUrl).catch(() => undefined);
+        }
+      }
+    });
+  } else if (!mainWindow.getBrowserViews().includes(bilibiliPlayerView)) {
+    mainWindow.addBrowserView(bilibiliPlayerView);
+  }
+
+  if (bilibiliPlayerViewUrl !== url) {
+    bilibiliPlayerViewUrl = url;
+    await bilibiliPlayerView.webContents.loadURL(url);
+  }
+  return bilibiliPlayerView;
+}
+
+function setBilibiliPlayerViewBounds(bounds: { x: number; y: number; width: number; height: number }) {
+  if (!bilibiliPlayerView) {
+    return;
+  }
+  const safeBounds = {
+    x: Math.max(0, Math.round(bounds.x)),
+    y: Math.max(0, Math.round(bounds.y)),
+    width: Math.max(0, Math.round(bounds.width)),
+    height: Math.max(0, Math.round(bounds.height)),
+  };
+  bilibiliPlayerView.setBounds(safeBounds);
+  bilibiliPlayerView.setAutoResize({ width: false, height: false, horizontal: false, vertical: false });
+}
+
 async function getTrustedStorageLocations() {
   const fallbackDataDir = path.join(currentLocalDataRoot(), "data");
   const fallbackCacheDir = path.join(fallbackDataDir, "cache");
@@ -827,6 +1002,7 @@ function loadPreferences(): DesktopPreferences {
       closeBehavior: "ask",
       rememberCloseBehavior: false,
       autoLaunch: false,
+      developerMode: false,
       ...JSON.parse(raw),
     };
   } catch {
@@ -834,6 +1010,7 @@ function loadPreferences(): DesktopPreferences {
       closeBehavior: "ask",
       rememberCloseBehavior: false,
       autoLaunch: false,
+      developerMode: false,
     };
   }
 }
@@ -862,6 +1039,19 @@ function setThemePreference(value: ThemePreference): ThemePreference {
   preferences = { ...preferences, themePreference: value };
   savePreferences();
   return value;
+}
+
+function setDeveloperMode(enabled: boolean): boolean {
+  preferences = { ...preferences, developerMode: enabled };
+  savePreferences();
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    if (enabled) {
+      mainWindow.webContents.openDevTools({ mode: "detach" });
+    } else if (mainWindow.webContents.isDevToolsOpened()) {
+      mainWindow.webContents.closeDevTools();
+    }
+  }
+  return enabled;
 }
 
 function getAnnouncementPath() {
@@ -2076,6 +2266,24 @@ function createWindow() {
     return { action: "deny" };
   });
 
+  mainWindow.webContents.on("before-input-event", (event, input) => {
+    const key = String(input.key || "").toLowerCase();
+    const wantsDevTools = key === "f12" || (input.control && input.shift && key === "i");
+    if (!wantsDevTools) {
+      return;
+    }
+    if (!preferences.developerMode) {
+      event.preventDefault();
+      return;
+    }
+    if (mainWindow?.webContents.isDevToolsOpened()) {
+      mainWindow.webContents.closeDevTools();
+    } else {
+      mainWindow?.webContents.openDevTools({ mode: "detach" });
+    }
+    event.preventDefault();
+  });
+
   // 拦截页面内导航，外部链接在系统浏览器中打开
   mainWindow.webContents.on("will-navigate", (event, url) => {
     if (!mainWindow) {
@@ -2110,7 +2318,14 @@ function createWindow() {
   });
 
   mainWindow.on("closed", () => {
+    detachBilibiliPlayerView();
     mainWindow = null;
+  });
+
+  mainWindow.webContents.once("did-finish-load", () => {
+    if (preferences.developerMode && mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.openDevTools({ mode: "detach" });
+    }
   });
 
   loadSplash();
@@ -2472,6 +2687,41 @@ function registerIpcHandlers() {
     return result.canceled ? null : result.filePaths[0] ?? null;
   });
   ipcMain.handle("desktop:bilibili:capture-login-cookies", async () => openBilibiliLoginAndCaptureCookies());
+  ipcMain.handle("desktop:bilibili-player:show", async (_event, input: { url: string; bounds: { x: number; y: number; width: number; height: number } }) => {
+    const view = await ensureBilibiliPlayerView(input.url);
+    setBilibiliPlayerViewBounds(input.bounds);
+    return { ready: true, url: view.webContents.getURL() || input.url };
+  });
+  ipcMain.handle("desktop:bilibili-player:set-bounds", (_event, bounds: { x: number; y: number; width: number; height: number }) => {
+    setBilibiliPlayerViewBounds(bounds);
+    return { ok: true };
+  });
+  ipcMain.handle("desktop:bilibili-player:seek", async (_event, seconds: number) => {
+    if (!bilibiliPlayerView || bilibiliPlayerView.webContents.isDestroyed()) {
+      return { ok: false, error: "Bilibili player view is not ready." };
+    }
+    try {
+      const result = await bilibiliPlayerView.webContents.executeJavaScript(buildBilibiliPlayerSeekScript(seconds), true);
+      return result;
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : "Bilibili player seek failed." };
+    }
+  });
+  ipcMain.handle("desktop:bilibili-player:get-snapshot", async () => {
+    if (!bilibiliPlayerView || bilibiliPlayerView.webContents.isDestroyed()) {
+      return { ok: false, error: "Bilibili player view is not ready." };
+    }
+    try {
+      const result = await bilibiliPlayerView.webContents.executeJavaScript(buildBilibiliPlayerSnapshotScript(), true);
+      return result;
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : "Bilibili player snapshot failed." };
+    }
+  });
+  ipcMain.handle("desktop:bilibili-player:hide", () => {
+    detachBilibiliPlayerView();
+    return { ok: true };
+  });
   ipcMain.handle("desktop:shell:open-path", (_event, targetPath: string) => shell.openPath(targetPath));
   ipcMain.handle("desktop:dialog:pick-directory", async (_event, defaultPath?: string) => {
     const dialogOptions: OpenDialogOptions = {
@@ -2500,6 +2750,8 @@ function registerIpcHandlers() {
     }
     return setThemePreference(value);
   });
+  ipcMain.handle("desktop:preferences:get-developer-mode", () => Boolean(getPreferences().developerMode));
+  ipcMain.handle("desktop:preferences:set-developer-mode", (_event, enabled: boolean) => setDeveloperMode(Boolean(enabled)));
   
   // 更新相关 IPC
   ipcMain.handle("desktop:update:check", async () => checkForUpdates());

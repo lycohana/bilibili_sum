@@ -986,6 +986,8 @@ def serialize_settings(
         "multimodal_asr_model": current_settings.multimodal_asr_model,
         "multimodal_asr_api_key": "",
         "multimodal_asr_api_key_configured": bool(current_settings.multimodal_asr_api_key),
+        "multimodal_asr_chunk_duration_seconds": current_settings.multimodal_asr_chunk_duration_seconds,
+        "multimodal_asr_max_retries": current_settings.multimodal_asr_max_retries,
         "cuda_variant": current_settings.cuda_variant,
         "runtime_channel": current_settings.runtime_channel,
         "output_dir": str(current_settings.output_dir),

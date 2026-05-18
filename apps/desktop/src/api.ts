@@ -19,10 +19,12 @@ import type {
   TaskEvent,
   TaskMarkdownExportResponse,
   TaskMindMapResponse,
+  TaskSegmentsResponse,
   TaskVisualEvidenceResponse,
   TaskSummary,
   VideoKnowledgeTagListResponse,
   VideoAssetDetail,
+  VideoDirectMediaStatus,
   VideoProbeResult,
   VideoAssetSummary,
   VideoTaskBatchRequest,
@@ -233,6 +235,13 @@ export const api = {
   getVideo(videoId: string) {
     return fetchJson<VideoAssetDetail>(`/api/v1/videos/${videoId}`);
   },
+  getVideoDirectMediaStatus(videoId: string, pageNumber?: number | null) {
+    const url = new URL(`/api/v1/videos/${videoId}/direct-media/status`, window.location.origin);
+    if (pageNumber != null) {
+      url.searchParams.set("page_number", String(pageNumber));
+    }
+    return fetchJson<VideoDirectMediaStatus>(url.toString());
+  },
   setVideoFavorite(videoId: string, payload: { is_favorite: boolean }) {
     return fetchJson<VideoAssetDetail>(`/api/v1/videos/${videoId}/favorite`, {
       method: "POST",
@@ -304,6 +313,9 @@ export const api = {
   },
   getTaskEvents(taskId: string) {
     return fetchJson<TaskEvent[]>(`/api/v1/tasks/${taskId}/events`);
+  },
+  getTaskSegments(taskId: string) {
+    return fetchJson<TaskSegmentsResponse>(`/api/v1/tasks/${taskId}/segments`);
   },
   listTasks() {
     return fetchJson<TaskSummary[]>("/api/v1/tasks");

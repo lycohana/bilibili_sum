@@ -1729,6 +1729,17 @@
   margin-bottom: 16px;
 }
 
+.setting-row-with-action {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 16px;
+}
+
+.setting-row-with-action > div {
+  display: grid;
+  gap: 8px;
+}
+
 .setting-row:last-child {
   margin-bottom: 0;
 }

@@ -1,6 +1,6 @@
 import type { PageAggregateStatus, TaskDetail, TaskMindMapResponse, TaskResult, TaskSummary, TimelineItem, VideoPageBatchOption, VideoPageOption } from "./types";
 
-export type DetailTab = "knowledge" | "summary" | "mindmap";
+export type DetailTab = "knowledge" | "summary" | "captions" | "mindmap";
 export type TaskPanelState = "collapsed" | "expanded";
 export type KnowledgeCardKind = "overview" | "key-point" | "chapter";
 

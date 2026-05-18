@@ -100,6 +100,21 @@ export type VideoAssetDetail = VideoAssetSummary & {
   latest_error_message?: string | null;
 };
 
+export type VideoDirectMediaStatus = {
+  available: boolean;
+  mode: "direct" | "split" | "muxed" | "separate" | "local" | "unavailable";
+  stream_url: string;
+  video_url?: string | null;
+  audio_url?: string | null;
+  format_id?: string | null;
+  ext?: string | null;
+  width?: number | null;
+  height?: number | null;
+  acodec?: string | null;
+  vcodec?: string | null;
+  reason: string;
+};
+
 export type VideoProbeResult = {
   video: VideoAssetSummary;
   cached: boolean;
@@ -126,6 +141,20 @@ export type TaskDetail = TaskSummary & {
   result?: TaskResult | null;
   error_code?: string | null;
   error_message?: string | null;
+};
+
+export type TaskSegment = {
+  start: number;
+  end: number;
+  text: string;
+  timing_source?: string | null;
+  timing_accuracy?: "exact" | "approximate" | null;
+};
+
+export type TaskSegmentsResponse = {
+  task_id: string;
+  segments: TaskSegment[];
+  timing_accuracy?: "exact" | "approximate" | "mixed" | "unknown";
 };
 
 export type VideoTaskBatchOperation = "create" | "resummary";

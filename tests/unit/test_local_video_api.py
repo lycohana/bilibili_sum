@@ -12,6 +12,7 @@ from video_sum_service.routers.videos import (
     create_video_tasks_batch,
     create_video_resummary_tasks_batch,
 )
+from video_sum_service.routers import videos as videos_router
 from video_sum_service.schemas import VideoAssetRecord
 
 
@@ -344,3 +345,54 @@ def test_create_video_tasks_batch_ignores_aggregate_summary_task_conflicts() -> 
     assert response.requires_confirmation is False
     assert len(response.created_tasks) == 1
     assert response.created_tasks[0].page_number == 1
+
+
+def test_direct_media_info_cache_uses_extractor_once(monkeypatch) -> None:
+    calls: list[str] = []
+
+    def fake_extract(source_url: str) -> dict[str, object]:
+        calls.append(source_url)
+        return {"id": "cached", "formats": []}
+
+    monkeypatch.setattr(videos_router, "extract_video_info", fake_extract)
+    videos_router._direct_media_probe_cache.clear()
+
+    first = videos_router._extract_direct_media_info("https://www.bilibili.com/video/BV-cache")
+    second = videos_router._extract_direct_media_info("https://www.bilibili.com/video/BV-cache")
+
+    assert first is second
+    assert calls == ["https://www.bilibili.com/video/BV-cache"]
+
+
+def test_direct_media_mpd_contains_video_and_audio_tracks() -> None:
+    asset = VideoAssetRecord(
+        canonical_id="BV-mpd",
+        platform="bilibili",
+        title="MPD",
+        source_url="https://www.bilibili.com/video/BV-mpd",
+        duration=30.0,
+    )
+    manifest = videos_router._build_direct_media_mpd(
+        video=asset,
+        page_number=1,
+        info={"duration": 30.0},
+        selected_video={
+            "format_id": "video",
+            "url": "https://example.com/video.m4s",
+            "vcodec": "avc1.640028",
+            "width": 1920,
+            "height": 1080,
+            "tbr": 2500,
+        },
+        selected_audio={
+            "format_id": "audio",
+            "url": "https://example.com/audio.m4s",
+            "acodec": "mp4a.40.2",
+            "abr": 128,
+        },
+    )
+
+    assert 'mediaPresentationDuration="PT30.000S"' in manifest
+    assert "/api/v1/videos/" in manifest
+    assert "/direct-media/track/video?page_number=1" in manifest
+    assert "/direct-media/track/audio?page_number=1" in manifest

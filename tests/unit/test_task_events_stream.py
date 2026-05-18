@@ -5,7 +5,7 @@ from pathlib import Path
 from video_sum_core.models.tasks import InputType, TaskInput, TaskResult, TaskStatus
 from video_sum_service.app import app
 from video_sum_service.repository import SqliteTaskRepository
-from video_sum_service.routers.tasks import stream_task_events
+from video_sum_service.routers.tasks import _segments_look_like_estimated_timing, stream_task_events
 
 
 def create_repository() -> SqliteTaskRepository:
@@ -63,3 +63,16 @@ def test_stream_task_events_stops_when_client_disconnects(tmp_path: Path) -> Non
         assert "\"stage\": \"running\"" in chunks[0]
 
     asyncio.run(run())
+
+
+def test_segments_estimated_timing_heuristic_detects_adjacent_synthetic_segments() -> None:
+    segments = [
+        {"start": 0.0, "end": 1.2, "text": "一"},
+        {"start": 1.2, "end": 2.4, "text": "二"},
+        {"start": 2.4, "end": 3.6, "text": "三"},
+        {"start": 3.6, "end": 4.8, "text": "四"},
+        {"start": 4.8, "end": 6.0, "text": "五"},
+        {"start": 6.0, "end": 7.2, "text": "六"},
+    ]
+
+    assert _segments_look_like_estimated_timing(segments)

@@ -100,6 +100,9 @@ def _windows_hidden_subprocess_kwargs() -> dict[str, object]:
     return kwargs
 
 
+_NO_AUDIO_STREAM_ERROR = "本地视频文件不包含可转写音轨，请选择带声音的视频，或先导入已有字幕/转写文本。"
+
+
 def _safe_int(value: object) -> int | None:
     try:
         return int(value) if value is not None else None
@@ -490,6 +493,9 @@ class RealPipelineRunner(PipelineRunner):
         if ffmpeg_exe is None:
             raise VideoSumError("FFmpeg is unavailable, cannot process local media files.")
 
+        if input_type is InputType.VIDEO_FILE and not self._local_media_has_audio_stream(source_path, ffmpeg_exe):
+            raise VideoSumError(_NO_AUDIO_STREAM_ERROR)
+
         emit(
             "downloading",
             20,
@@ -522,6 +528,8 @@ class RealPipelineRunner(PipelineRunner):
         except (OSError, subprocess.SubprocessError) as exc:
             raise VideoSumError("Failed to extract audio from local media file.") from exc
         if result.returncode != 0 or not target_path.exists():
+            if input_type is InputType.VIDEO_FILE and self._ffmpeg_error_indicates_missing_audio(result.stderr):
+                raise VideoSumError(_NO_AUDIO_STREAM_ERROR)
             logger.error(
                 "local media audio extraction failed source=%s returncode=%s stdout=%s stderr=%s",
                 source_path,
@@ -533,6 +541,48 @@ class RealPipelineRunner(PipelineRunner):
 
         emit("downloading", 48, "音频文件已就绪")
         return target_path
+
+    def _local_media_has_audio_stream(self, source_path: Path, ffmpeg_exe: Path) -> bool:
+        ffprobe_exe = ffmpeg_exe.with_name("ffprobe.exe" if os.name == "nt" else "ffprobe")
+        if not ffprobe_exe.is_file():
+            return True
+        try:
+            result = subprocess.run(
+                [
+                    str(ffprobe_exe),
+                    "-v",
+                    "error",
+                    "-select_streams",
+                    "a:0",
+                    "-show_entries",
+                    "stream=index",
+                    "-of",
+                    "csv=p=0",
+                    str(source_path),
+                ],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=30,
+                check=False,
+                **_windows_hidden_subprocess_kwargs(),
+            )
+        except (OSError, subprocess.SubprocessError):
+            return True
+        if result.returncode != 0:
+            logger.warning(
+                "local media audio probe failed source=%s returncode=%s stderr=%s",
+                source_path,
+                result.returncode,
+                result.stderr.strip(),
+            )
+            return True
+        return bool(result.stdout.strip())
+
+    def _ffmpeg_error_indicates_missing_audio(self, stderr: str) -> bool:
+        normalized = str(stderr or "").lower()
+        return "output file does not contain any stream" in normalized or "does not contain any stream" in normalized
 
     def _parse_transcript_payload(
         self,
@@ -1319,7 +1369,9 @@ class RealPipelineRunner(PipelineRunner):
         chunks = self._split_transcript_into_timed_chunks(normalized)
 
         total_chars = sum(len(chunk) for chunk in chunks) or len(normalized)
-        effective_duration = max(float(duration or 0.0), float(len(chunks) * 6))
+        known_duration = float(duration or 0.0)
+        has_known_duration = known_duration > 0
+        effective_duration = known_duration if has_known_duration else float(len(chunks) * 6)
         current = 0.0
         segments: list[dict[str, object]] = []
         for index, chunk in enumerate(chunks):
@@ -1327,9 +1379,17 @@ class RealPipelineRunner(PipelineRunner):
             start = current
             if index == len(chunks) - 1:
                 end = effective_duration
+            elif has_known_duration:
+                end = min(effective_duration, current + (effective_duration * weight))
             else:
                 end = min(effective_duration, current + max(2.0, effective_duration * weight))
-            segments.append({"start": round(start, 3), "end": round(end, 3), "text": chunk})
+            segments.append({
+                "start": round(start, 3),
+                "end": round(end, 3),
+                "text": chunk,
+                "timing_source": "estimated",
+                "timing_accuracy": "approximate",
+            })
             current = end
         return segments
 

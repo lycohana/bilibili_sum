@@ -1,7 +1,7 @@
 import "@xyflow/react/dist/style.css";
 import { Controls, Handle, Position, ReactFlow, type Edge, type Node as FlowNode, type NodeProps } from "@xyflow/react";
 import { toBlob } from "html-to-image";
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type SVGProps } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type MutableRefObject, type PointerEvent as ReactPointerEvent, type SVGProps } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 
 import { progressEventClass, stageLabel, taskStatusClass } from "../appModel";
@@ -29,9 +29,9 @@ import {
   type KnowledgeCard,
   type TaskPanelState,
 } from "../detailModel";
-import type { MindMapNode, TaskDetail, TaskEvent, TaskMarkdownExportResponse, TaskMindMapResponse, TaskStatus, TaskSummary, TaskVisualEvidenceResponse, VideoAssetDetail, VideoPageBatchOption, VideoTaskBatchResponse, VisualEvidenceFrame, VisualEvidenceObservation } from "../types";
+import type { MindMapNode, TaskDetail, TaskEvent, TaskMarkdownExportResponse, TaskMindMapResponse, TaskSegment, TaskStatus, TaskSummary, TaskVisualEvidenceResponse, VideoAssetDetail, VideoDirectMediaStatus, VideoPageBatchOption, VideoTaskBatchResponse, VisualEvidenceFrame, VisualEvidenceObservation } from "../types";
 import { formatDateTime, formatDuration, formatTaskDuration, formatTokenCount, sanitizeMindMapLabel, summarizeEvents, taskStatusLabel } from "../utils";
-import { buildPlayerEmbedDescriptor, withPlayerSeek } from "../videoPlayer";
+import { buildPlayerEmbedDescriptor, buildTimestampedSourceUrl, postPlayerSeek, type SupportedVideoPlatform } from "../videoPlayer";
 
 type TaskContext = {
   detail: TaskDetail;
@@ -149,6 +149,7 @@ const SUMMARY_PREFERENCE_STORAGE_KEY = "bilisum.summaryPreference";
 const detailTabs: Array<{ id: DetailTab; label: string; description: string }> = [
   { id: "knowledge", label: "知识卡片", description: "按概览、要点、章节整理当前任务结果。" },
   { id: "summary", label: "知识笔记", description: "查看当前任务的完整笔记、重点展开和转写全文。" },
+  { id: "captions", label: "动态字幕", description: "按时间轴跟读转写内容，点击字幕跳转播放。" },
   { id: "mindmap", label: "思维导图", description: "预留按主题组织的知识结构视图入口。" },
 ];
 
@@ -316,6 +317,210 @@ function saveKnowledgeNoteViewMode(mode: KnowledgeNoteViewMode) {
   }
 }
 
+function ShakaMediaPlayer({
+  audioUrl,
+  className,
+  manifestUrl,
+  onTimeUpdate,
+  poster,
+  videoRef,
+  videoUrl,
+}: {
+  audioUrl?: string;
+  className: string;
+  manifestUrl: string;
+  onTimeUpdate?: (seconds: number) => void;
+  poster?: string;
+  videoRef: MutableRefObject<HTMLVideoElement | null>;
+  videoUrl?: string;
+}) {
+  const [errorMessage, setErrorMessage] = useState("");
+  const [useFallback, setUseFallback] = useState(false);
+
+  useEffect(() => {
+    if (useFallback) {
+      return;
+    }
+    const video = videoRef.current;
+    if (!video) {
+      return;
+    }
+    let cancelled = false;
+    let player: import("shaka-player").default.Player | null = null;
+    const handleError = (event: Event) => {
+      const detail = (event as CustomEvent).detail as { code?: number; message?: string } | undefined;
+      setErrorMessage(detail?.message || (detail?.code ? `Shaka 播放错误 ${detail.code}` : "Shaka 播放器加载失败"));
+    };
+    const handleTimeUpdate = () => onTimeUpdate?.(video.currentTime || 0);
+    video.addEventListener("timeupdate", handleTimeUpdate);
+
+    void import("shaka-player")
+      .then((module) => {
+        if (cancelled) {
+          return null;
+        }
+        module.default.polyfill.installAll();
+        if (!module.default.Player.isBrowserSupported()) {
+          throw new Error("当前 Chromium 环境不支持 Shaka/MSE 播放。");
+        }
+        player = new module.default.Player(video);
+        player.addEventListener("error", handleError);
+        return player.load(manifestUrl);
+      })
+      .then(() => {
+        if (!cancelled) {
+          setErrorMessage("");
+        }
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          const detail = error as { code?: number; message?: string };
+          setErrorMessage(detail.message || (detail.code ? `Shaka 播放错误 ${detail.code}` : "Shaka 播放器加载失败"));
+          if (videoUrl && audioUrl) {
+            setUseFallback(true);
+          }
+        }
+      });
+
+    return () => {
+      cancelled = true;
+      video.removeEventListener("timeupdate", handleTimeUpdate);
+      if (player) {
+        player.removeEventListener("error", handleError);
+        void player.destroy().catch(() => undefined);
+      }
+    };
+  }, [audioUrl, manifestUrl, onTimeUpdate, useFallback, videoRef, videoUrl]);
+
+  if (useFallback && videoUrl && audioUrl) {
+    return (
+      <SplitMediaFallbackPlayer
+        audioUrl={audioUrl}
+        className={className}
+        onTimeUpdate={onTimeUpdate}
+        poster={poster}
+        videoRef={videoRef}
+        videoUrl={videoUrl}
+      />
+    );
+  }
+
+  return (
+    <>
+      <video
+        ref={videoRef}
+        className={className}
+        controls
+        preload="metadata"
+        poster={poster}
+      />
+      {errorMessage ? (
+        <div className="detail-video-export-mask detail-video-error-mask" aria-live="polite">
+          <div className="detail-video-export-mask-copy">
+            <strong>播放器加载失败</strong>
+            <span>{errorMessage}</span>
+          </div>
+        </div>
+      ) : null}
+    </>
+  );
+}
+
+function SplitMediaFallbackPlayer({
+  audioUrl,
+  className,
+  onTimeUpdate,
+  poster,
+  videoRef,
+  videoUrl,
+}: {
+  audioUrl: string;
+  className: string;
+  onTimeUpdate?: (seconds: number) => void;
+  poster?: string;
+  videoRef: MutableRefObject<HTMLVideoElement | null>;
+  videoUrl: string;
+}) {
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    const audio = audioRef.current;
+    if (!video || !audio) {
+      return;
+    }
+    const sync = (force = false) => {
+      if (force || Math.abs((audio.currentTime || 0) - (video.currentTime || 0)) > 0.35) {
+        audio.currentTime = video.currentTime || 0;
+      }
+      audio.playbackRate = video.playbackRate || 1;
+      audio.muted = video.muted;
+      audio.volume = video.volume;
+    };
+    const playAudio = () => {
+      if (!video.paused && !video.ended) {
+        void audio.play().catch(() => undefined);
+      }
+    };
+    const handlePlay = () => {
+      sync(true);
+      playAudio();
+    };
+    const handlePause = () => audio.pause();
+    const handleSeeked = () => {
+      sync(true);
+      playAudio();
+    };
+    const handleTimeUpdate = () => {
+      sync();
+      playAudio();
+      onTimeUpdate?.(video.currentTime || 0);
+    };
+    const handleChange = () => {
+      sync();
+      playAudio();
+    };
+    const timer = window.setInterval(handleTimeUpdate, 700);
+
+    video.addEventListener("play", handlePlay);
+    video.addEventListener("pause", handlePause);
+    video.addEventListener("seeked", handleSeeked);
+    video.addEventListener("timeupdate", handleTimeUpdate);
+    video.addEventListener("volumechange", handleChange);
+    video.addEventListener("ratechange", handleChange);
+    video.addEventListener("playing", handleChange);
+    return () => {
+      window.clearInterval(timer);
+      video.removeEventListener("play", handlePlay);
+      video.removeEventListener("pause", handlePause);
+      video.removeEventListener("seeked", handleSeeked);
+      video.removeEventListener("timeupdate", handleTimeUpdate);
+      video.removeEventListener("volumechange", handleChange);
+      video.removeEventListener("ratechange", handleChange);
+      video.removeEventListener("playing", handleChange);
+      audio.pause();
+    };
+  }, [audioUrl, onTimeUpdate, videoRef, videoUrl]);
+
+  return (
+    <>
+      <video
+        ref={videoRef}
+        className={className}
+        controls
+        preload="metadata"
+        poster={poster}
+        src={videoUrl}
+      />
+      <audio ref={audioRef} preload="metadata" src={audioUrl} />
+    </>
+  );
+}
+
+function canUseBilibiliBrowserView() {
+  return typeof window !== "undefined" && Boolean(window.desktop?.bilibiliPlayer);
+}
+
 async function loadTaskContext(taskId: string): Promise<TaskContext> {
   const [detail, events] = await Promise.all([api.getTaskResult(taskId), api.getTaskEvents(taskId)]);
   return { detail, events };
@@ -323,8 +528,8 @@ async function loadTaskContext(taskId: string): Promise<TaskContext> {
 
 function IconFavorite(props: SVGProps<SVGSVGElement>) {
   return (
-    <svg fill="currentColor" viewBox="0 0 24 24" {...props}>
-      <path d="M12 18.26 4.95 22l1.35-7.84L.6 8.71l7.87-1.14L12 0.5l3.53 7.07 7.87 1.14-5.7 5.45L19.05 22z" />
+    <svg fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" viewBox="0 0 24 24" {...props}>
+      <path d="M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.12 2.12 0 0 0 1.595 1.16l5.166.756a.53.53 0 0 1 .294.904l-3.736 3.638a2.12 2.12 0 0 0-.611 1.878l.882 5.14a.53.53 0 0 1-.771.56l-4.618-2.428a2.12 2.12 0 0 0-1.973 0L6.396 21.01a.53.53 0 0 1-.77-.56l.881-5.139a2.12 2.12 0 0 0-.611-1.879L2.16 9.795a.53.53 0 0 1 .294-.906l5.165-.755a2.12 2.12 0 0 0 1.597-1.16z" />
     </svg>
   );
 }
@@ -353,6 +558,14 @@ export function VideoDetailPage({ onRefresh, onOpenCookieSettings, onOpenCookieT
   const [mindMapLoading, setMindMapLoading] = useState<Record<string, boolean>>({});
   const [visualEvidence, setVisualEvidence] = useState<Record<string, TaskVisualEvidenceResponse>>({});
   const [visualEvidenceLoading, setVisualEvidenceLoading] = useState<Record<string, boolean>>({});
+  const [taskSegments, setTaskSegments] = useState<Record<string, TaskSegment[]>>({});
+  const [taskSegmentAccuracy, setTaskSegmentAccuracy] = useState<Record<string, "exact" | "approximate" | "mixed" | "unknown">>({});
+  const [taskSegmentsLoading, setTaskSegmentsLoading] = useState<Record<string, boolean>>({});
+  const [taskSegmentsErrors, setTaskSegmentsErrors] = useState<Record<string, string>>({});
+  const [activeCaptionIndex, setActiveCaptionIndex] = useState<number | null>(null);
+  const [bilibiliBrowserViewReady, setBilibiliBrowserViewReady] = useState(false);
+  const [bilibiliBrowserViewFailed, setBilibiliBrowserViewFailed] = useState(false);
+  const [directMediaStatus, setDirectMediaStatus] = useState<Record<string, VideoDirectMediaStatus>>({});
   const [knowledgeNoteViewMode, setKnowledgeNoteViewMode] = useState<KnowledgeNoteViewMode>(() => loadKnowledgeNoteViewMode());
   const [knowledgeNoteModeMenuOpen, setKnowledgeNoteModeMenuOpen] = useState(false);
   const [isExportingKnowledgeCard, setIsExportingKnowledgeCard] = useState(false);
@@ -376,7 +589,16 @@ export function VideoDetailPage({ onRefresh, onOpenCookieSettings, onOpenCookieT
   const pageSwitcherRef = useRef<HTMLDivElement | null>(null);
   const batchSideRef = useRef<HTMLDivElement | null>(null);
   const playerFrameRef = useRef<HTMLDivElement | null>(null);
+  const captionPlayerFrameRef = useRef<HTMLDivElement | null>(null);
+  const playerIframeRef = useRef<HTMLIFrameElement | null>(null);
+  const captionPlayerIframeRef = useRef<HTMLIFrameElement | null>(null);
+  const captionBrowserViewSlotRef = useRef<HTMLDivElement | null>(null);
+  const bilibiliBrowserViewOccludedRef = useRef(false);
+  const captionListRef = useRef<HTMLDivElement | null>(null);
+  const activeCaptionRowRef = useRef<HTMLDivElement | null>(null);
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
+  const captionLocalVideoRef = useRef<HTMLVideoElement | null>(null);
+  const directMediaProbeKeysRef = useRef<Set<string>>(new Set());
   const knowledgeExportRef = useRef<HTMLElement | null>(null);
   const knowledgeNoteModeMenuRef = useRef<HTMLDivElement | null>(null);
   const knowledgeNoteExportMenuRef = useRef<HTMLDivElement | null>(null);
@@ -540,6 +762,26 @@ export function VideoDetailPage({ onRefresh, onOpenCookieSettings, onOpenCookieT
       throw error;
     } finally {
       setVisualEvidenceLoading((current) => omitRecordKey(current, taskId));
+    }
+  }
+
+  async function loadTaskSegments(taskId: string, options: { force?: boolean } = {}) {
+    if (!options.force && taskSegments[taskId]) {
+      return taskSegments[taskId];
+    }
+    setTaskSegmentsLoading((current) => ({ ...current, [taskId]: true }));
+    setTaskSegmentsErrors((current) => omitRecordKey(current, taskId));
+    try {
+      const response = await api.getTaskSegments(taskId);
+      setTaskSegments((current) => ({ ...current, [taskId]: response.segments }));
+      setTaskSegmentAccuracy((current) => ({ ...current, [taskId]: response.timing_accuracy ?? "unknown" }));
+      return response.segments;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "动态字幕加载失败";
+      setTaskSegmentsErrors((current) => ({ ...current, [taskId]: message }));
+      return [];
+    } finally {
+      setTaskSegmentsLoading((current) => omitRecordKey(current, taskId));
     }
   }
 
@@ -775,6 +1017,17 @@ export function VideoDetailPage({ onRefresh, onOpenCookieSettings, onOpenCookieT
     }
     void loadVisualEvidence(selectedTaskId).catch(() => undefined);
   }, [activeTab, selectedTaskId]);
+
+  useEffect(() => {
+    if (!selectedTaskId || activeTab !== "captions") {
+      return;
+    }
+    void loadTaskSegments(selectedTaskId).catch(() => undefined);
+  }, [activeTab, selectedTaskId]);
+
+  useEffect(() => {
+    setActiveCaptionIndex(null);
+  }, [selectedTaskId]);
 
   useEffect(() => {
     saveKnowledgeNoteViewMode(knowledgeNoteViewMode);
@@ -1226,8 +1479,69 @@ export function VideoDetailPage({ onRefresh, onOpenCookieSettings, onOpenCookieT
     if (!playerDescriptor) {
       return null;
     }
-    return withPlayerSeek(playerDescriptor.embedUrl, playerDescriptor.platform, playerSeekTarget.seconds, playerSeekTarget.nonce);
-  }, [playerDescriptor, playerSeekTarget]);
+    return playerDescriptor.embedUrl;
+  }, [playerDescriptor]);
+
+  const directMediaKey = video && !isAggregateSummaryView
+    ? `${video.video_id}:${effectivePageNumber ?? 1}`
+    : "";
+  const selectedDirectMedia = directMediaKey ? directMediaStatus[directMediaKey] ?? null : null;
+  const shakaManifestUrl = selectedDirectMedia?.available
+    && selectedDirectMedia.mode === "split"
+    && selectedDirectMedia.stream_url
+    ? selectedDirectMedia.stream_url
+    : null;
+  const directPlayerUrl = selectedDirectMedia?.available && (selectedDirectMedia.mode === "direct" || selectedDirectMedia.mode === "muxed")
+    ? selectedDirectMedia.stream_url
+    : null;
+  const directMediaDebugLabel = selectedDirectMedia
+    ? [
+        `mode=${selectedDirectMedia.mode}`,
+        selectedDirectMedia.format_id ? `format=${selectedDirectMedia.format_id}` : null,
+        selectedDirectMedia.width && selectedDirectMedia.height ? `${selectedDirectMedia.width}x${selectedDirectMedia.height}` : null,
+        selectedDirectMedia.vcodec ? `v=${selectedDirectMedia.vcodec}` : null,
+        selectedDirectMedia.acodec ? `a=${selectedDirectMedia.acodec}` : null,
+      ].filter(Boolean).join(" / ")
+    : "direct-media=pending";
+
+  useEffect(() => {
+    if (activeTab !== "captions" || !video || isAggregateSummaryView || String(video.platform || "").toLowerCase() !== "bilibili" || !directMediaKey) {
+      return;
+    }
+    if (directMediaProbeKeysRef.current.has(directMediaKey) && directMediaStatus[directMediaKey]) {
+      return;
+    }
+    directMediaProbeKeysRef.current.add(directMediaKey);
+    let cancelled = false;
+    void api.getVideoDirectMediaStatus(video.video_id, effectivePageNumber)
+      .then((response) => {
+        if (!cancelled) {
+          setDirectMediaStatus((current) => ({ ...current, [directMediaKey]: response }));
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setDirectMediaStatus((current) => ({
+            ...current,
+            [directMediaKey]: {
+              available: false,
+              mode: "unavailable",
+              stream_url: "",
+              reason: error instanceof Error ? error.message : "底层流探测失败",
+            },
+          }));
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab, directMediaKey, directMediaStatus, effectivePageNumber, isAggregateSummaryView, video]);
+
+  useEffect(() => {
+    setBilibiliBrowserViewReady(false);
+    setBilibiliBrowserViewFailed(false);
+  }, [playerEmbedUrl]);
+
   const localPlayerUrl = useMemo(() => {
     if (!video || String(video.platform || "").toLowerCase() !== "local") {
       return null;
@@ -1246,7 +1560,191 @@ export function VideoDetailPage({ onRefresh, onOpenCookieSettings, onOpenCookieT
     })();
     return LOCAL_VIDEO_SUFFIXES.has(suffix) ? `/api/v1/videos/${video.video_id}/media` : null;
   }, [currentPage?.source_url, isAggregateSummaryView, video]);
-  const hasSeekablePlayer = Boolean(localPlayerUrl || playerDescriptor);
+  const captionNativePlayerUrl = localPlayerUrl || directPlayerUrl;
+  const usesDirectBilibiliCaptionPlayer = Boolean(directPlayerUrl || shakaManifestUrl);
+  const hasSeekablePlayer = Boolean(
+    localPlayerUrl
+    || (activeTab === "captions" && (directPlayerUrl || shakaManifestUrl))
+    || (playerDescriptor && playerDescriptor.platform !== "bilibili")
+  );
+  const selectedSegments = selectedTaskId ? taskSegments[selectedTaskId] ?? [] : [];
+  const selectedSegmentAccuracy = selectedTaskId ? taskSegmentAccuracy[selectedTaskId] ?? "unknown" : "unknown";
+  const usesApproximateSegmentTiming = selectedSegmentAccuracy === "approximate" || selectedSegmentAccuracy === "mixed";
+  const selectedSegmentsLoading = Boolean(selectedTaskId && taskSegmentsLoading[selectedTaskId]);
+  const selectedSegmentsError = selectedTaskId ? taskSegmentsErrors[selectedTaskId] ?? "" : "";
+  const useBilibiliBrowserView = false;
+  const bilibiliBrowserViewOccluded = Boolean(
+    taskPanelState === "expanded"
+    || actionMenuOpen
+    || pageMenuOpen
+    || knowledgeNoteExportMenuOpen
+    || knowledgeNoteModeMenuOpen
+    || cookieHelpDialogOpen
+    || jumpConfirmPopover?.open
+    || batchDialogOpen
+  );
+
+  useEffect(() => {
+    bilibiliBrowserViewOccludedRef.current = bilibiliBrowserViewOccluded;
+  }, [bilibiliBrowserViewOccluded]);
+
+  useEffect(() => {
+    if (!useBilibiliBrowserView || !playerEmbedUrl || activeTab !== "captions") {
+      void window.desktop?.bilibiliPlayer?.hide?.().catch(() => undefined);
+      return;
+    }
+
+    let cancelled = false;
+    let frame = 0;
+
+    function readBounds() {
+      const slot = captionBrowserViewSlotRef.current;
+      if (!slot) {
+        return null;
+      }
+      const rect = slot.getBoundingClientRect();
+      const visibleWidth = Math.max(0, Math.min(rect.right, window.innerWidth) - Math.max(rect.left, 0));
+      const visibleHeight = Math.max(0, Math.min(rect.bottom, window.innerHeight) - Math.max(rect.top, 0));
+      if (visibleWidth < 20 || visibleHeight < 20) {
+        return { x: 0, y: 0, width: 0, height: 0 };
+      }
+      return {
+        x: Math.max(0, rect.left),
+        y: Math.max(0, rect.top),
+        width: rect.width,
+        height: rect.height,
+      };
+    }
+
+    function syncBounds() {
+      if (cancelled) {
+        return;
+      }
+      const bounds = readBounds();
+      if (!bounds || !window.desktop?.bilibiliPlayer) {
+        return;
+      }
+      if (bilibiliBrowserViewOccludedRef.current) {
+        void window.desktop.bilibiliPlayer.setBounds({ x: 0, y: 0, width: 0, height: 0 }).catch(() => undefined);
+        return;
+      }
+      void window.desktop.bilibiliPlayer.setBounds(bounds).catch(() => undefined);
+    }
+
+    async function showView() {
+      const bounds = readBounds();
+      if (!bounds || !playerEmbedUrl || !window.desktop?.bilibiliPlayer) {
+        return;
+      }
+      try {
+        await window.desktop.bilibiliPlayer.show({ url: playerEmbedUrl, bounds });
+        if (bilibiliBrowserViewOccludedRef.current) {
+          await window.desktop.bilibiliPlayer.setBounds({ x: 0, y: 0, width: 0, height: 0 });
+        }
+        if (!cancelled) {
+          setBilibiliBrowserViewReady(true);
+          setBilibiliBrowserViewFailed(false);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setBilibiliBrowserViewReady(false);
+          setBilibiliBrowserViewFailed(true);
+          const message = error instanceof Error ? error.message : "";
+          setStatus(
+            /No handler registered.*desktop:bilibili-player:show/i.test(message)
+              ? "需要重启桌面端以启用 B 站 BrowserView 播放器，当前已回退普通播放器。"
+              : message || "B 站播放器加载失败，已回退普通播放器。",
+          );
+        }
+      }
+    }
+
+    function scheduleSync() {
+      window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(syncBounds);
+    }
+
+    void showView();
+    window.addEventListener("resize", scheduleSync);
+    window.addEventListener("scroll", scheduleSync, true);
+    const timer = window.setInterval(syncBounds, 600);
+
+    return () => {
+      cancelled = true;
+      window.cancelAnimationFrame(frame);
+      window.removeEventListener("resize", scheduleSync);
+      window.removeEventListener("scroll", scheduleSync, true);
+      window.clearInterval(timer);
+      void window.desktop?.bilibiliPlayer?.hide?.().catch(() => undefined);
+    };
+  }, [activeTab, playerEmbedUrl, useBilibiliBrowserView]);
+
+  useEffect(() => {
+    if (!useBilibiliBrowserView || !bilibiliBrowserViewReady || activeTab !== "captions" || !window.desktop?.bilibiliPlayer?.setBounds) {
+      return;
+    }
+    if (bilibiliBrowserViewOccluded) {
+      void window.desktop.bilibiliPlayer.setBounds({ x: 0, y: 0, width: 0, height: 0 }).catch(() => undefined);
+      return;
+    }
+    const slot = captionBrowserViewSlotRef.current;
+    if (!slot) {
+      return;
+    }
+    const rect = slot.getBoundingClientRect();
+    const visibleWidth = Math.max(0, Math.min(rect.right, window.innerWidth) - Math.max(rect.left, 0));
+    const visibleHeight = Math.max(0, Math.min(rect.bottom, window.innerHeight) - Math.max(rect.top, 0));
+    if (visibleWidth < 20 || visibleHeight < 20) {
+      void window.desktop.bilibiliPlayer.setBounds({ x: 0, y: 0, width: 0, height: 0 }).catch(() => undefined);
+      return;
+    }
+    void window.desktop.bilibiliPlayer.setBounds({
+      x: Math.max(0, rect.left),
+      y: Math.max(0, rect.top),
+      width: rect.width,
+      height: rect.height,
+    }).catch(() => undefined);
+  }, [activeTab, bilibiliBrowserViewOccluded, bilibiliBrowserViewReady, useBilibiliBrowserView]);
+
+  useEffect(() => {
+    if (!useBilibiliBrowserView || !bilibiliBrowserViewReady || activeTab !== "captions") {
+      return;
+    }
+    let busy = false;
+    const timer = window.setInterval(() => {
+      if (busy || bilibiliBrowserViewOccludedRef.current || !window.desktop?.bilibiliPlayer?.getSnapshot) {
+        return;
+      }
+      busy = true;
+      void window.desktop.bilibiliPlayer.getSnapshot()
+        .then((snapshot) => {
+          if (snapshot?.ok && typeof snapshot.currentTime === "number" && Number.isFinite(snapshot.currentTime)) {
+            handleCaptionTimeUpdate(snapshot.currentTime);
+          }
+        })
+        .catch(() => undefined)
+        .finally(() => {
+          busy = false;
+        });
+    }, 500);
+    return () => window.clearInterval(timer);
+  }, [activeTab, bilibiliBrowserViewReady, useBilibiliBrowserView, selectedSegments]);
+
+  useEffect(() => {
+    if (activeCaptionIndex == null || !activeCaptionRowRef.current || !captionListRef.current) {
+      return;
+    }
+    const row = activeCaptionRowRef.current;
+    const list = captionListRef.current;
+    const rowTop = row.offsetTop;
+    const rowBottom = rowTop + row.offsetHeight;
+    const viewportTop = list.scrollTop;
+    const viewportBottom = viewportTop + list.clientHeight;
+    if (rowTop < viewportTop + 12 || rowBottom > viewportBottom - 12) {
+      row.scrollIntoView({ block: "center", behavior: "smooth" });
+    }
+  }, [activeCaptionIndex]);
+
   const readyMindMap = selectedMindMap?.status === "ready" && selectedTaskDetail?.result?.mindmap_status !== "generating"
     ? selectedMindMap.mindmap ?? null
     : null;
@@ -1343,15 +1841,61 @@ export function VideoDetailPage({ onRefresh, onOpenCookieSettings, onOpenCookieT
       return;
     }
     setPlayerSeekTarget((current) => ({ nonce: current.nonce + 1, seconds }));
-    if (activeTab === "knowledge" && localPlayerUrl && localVideoRef.current) {
-      localVideoRef.current.currentTime = seconds;
-      void localVideoRef.current.play().catch(() => {});
+
+    const activeLocalVideo = activeTab === "captions" ? captionLocalVideoRef.current : localVideoRef.current;
+    const activeIframe = activeTab === "captions" ? captionPlayerIframeRef.current : playerIframeRef.current;
+    if (localPlayerUrl && activeLocalVideo) {
+      activeLocalVideo.currentTime = seconds;
+      void activeLocalVideo.play().catch(() => {});
+    } else if (activeTab === "captions" && (directPlayerUrl || shakaManifestUrl) && activeLocalVideo) {
+      activeLocalVideo.currentTime = seconds;
+      void activeLocalVideo.play().catch(() => {});
+    } else if (playerDescriptor && activeIframe && playerDescriptor.platform !== "bilibili") {
+      postPlayerSeek(activeIframe, playerDescriptor.platform, seconds);
+    } else if (playerDescriptor?.platform === "bilibili") {
+      return;
     } else if (!playerDescriptor && !localPlayerUrl) {
       return;
     }
+
     if (activeTab === "knowledge") {
       playerFrameRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    } else if (activeTab === "captions") {
+      captionPlayerFrameRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
     }
+  }
+
+  async function seekBilibiliBrowserView(seconds: number | null) {
+    if (seconds == null) {
+      return false;
+    }
+    if (!window.desktop?.bilibiliPlayer?.seek) {
+      return false;
+    }
+    try {
+      const result = await window.desktop.bilibiliPlayer.seek(seconds);
+      if (typeof result === "object" && result && "ok" in result && !Boolean((result as { ok?: unknown }).ok)) {
+        setStatus("B 站播放器暂未暴露可控制的视频节点，已保留外部打开入口。");
+        return false;
+      }
+      return true;
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "B 站播放器跳转失败");
+      return false;
+    }
+  }
+
+  function handleCaptionTimeUpdate(currentSeconds: number) {
+    if (!selectedSegments.length) {
+      setActiveCaptionIndex(null);
+      return;
+    }
+    const nextIndex = selectedSegments.findIndex((segment, index) => {
+      const nextStart = selectedSegments[index + 1]?.start ?? Number.POSITIVE_INFINITY;
+      const end = segment.end > segment.start ? segment.end : nextStart;
+      return currentSeconds >= segment.start && currentSeconds < end;
+    });
+    setActiveCaptionIndex(nextIndex >= 0 ? nextIndex : null);
   }
 
   function handleJumpToPageSummary(event: React.MouseEvent, pageNumber: number | null) {
@@ -1855,7 +2399,7 @@ export function VideoDetailPage({ onRefresh, onOpenCookieSettings, onOpenCookieT
                           onClick={() => setActionMenuSection((current) => current === "regenerate" ? null : "regenerate")}
                         >
                           <span className="detail-action-menu-item-icon" aria-hidden="true">
-                            <IconSummaryRefresh className="detail-action-icon" />
+                            <IconRegenerateAction className="detail-action-icon" />
                           </span>
                           <span className="detail-action-menu-copy">
                             <strong>重新生成</strong>
@@ -1912,7 +2456,7 @@ export function VideoDetailPage({ onRefresh, onOpenCookieSettings, onOpenCookieT
                                 await handleGenerateMindMap(true);
                               }}
                             >
-                              <IconBrainCircuit className="detail-action-icon" />
+                              <IconMindMap className="detail-action-icon" />
                               <span>重跑思维导图</span>
                             </button>
                             <button
@@ -1944,7 +2488,7 @@ export function VideoDetailPage({ onRefresh, onOpenCookieSettings, onOpenCookieT
                           onClick={() => setActionMenuSection((current) => current === "batch" ? null : "batch")}
                         >
                           <span className="detail-action-menu-item-icon" aria-hidden="true">
-                            <IconTranscriptRefresh className="detail-action-icon" />
+                            <IconBatchProcess className="detail-action-icon" />
                           </span>
                           <span className="detail-action-menu-copy">
                             <strong>批量处理</strong>
@@ -2003,7 +2547,7 @@ export function VideoDetailPage({ onRefresh, onOpenCookieSettings, onOpenCookieT
                           onClick={() => setActionMenuSection((current) => current === "maintenance" ? null : "maintenance")}
                         >
                           <span className="detail-action-menu-item-icon" aria-hidden="true">
-                            <IconRefresh className="detail-action-icon" />
+                            <IconMaintenanceTools className="detail-action-icon" />
                           </span>
                           <span className="detail-action-menu-copy">
                             <strong>更多维护</strong>
@@ -2405,7 +2949,9 @@ export function VideoDetailPage({ onRefresh, onOpenCookieSettings, onOpenCookieT
                         <div className="detail-overview-player" ref={playerFrameRef}>
                           <div className="detail-section-heading">
                             <h3 className="detail-section-label">Player</h3>
-                            <span className="detail-section-meta detail-section-link">本地视频播放器</span>
+                            <span className="detail-section-meta detail-section-link">
+                              本地视频播放器
+                            </span>
                           </div>
                           <div className="detail-video-embed-frame">
                             <video
@@ -2439,6 +2985,7 @@ export function VideoDetailPage({ onRefresh, onOpenCookieSettings, onOpenCookieT
                               allow="accelerometer; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"
                               allowFullScreen
                               className="detail-video-embed"
+                              ref={playerIframeRef}
                               referrerPolicy="strict-origin-when-cross-origin"
                               scrolling="no"
                               src={playerEmbedUrl}
@@ -2716,6 +3263,166 @@ export function VideoDetailPage({ onRefresh, onOpenCookieSettings, onOpenCookieT
               )
             ) : null}
 
+            {activeTab === "captions" ? (
+              contentState ? (
+                <TaskStatePanel cookieHelpActions={cookieHelpActions} state={contentState} />
+              ) : (
+                <section className="detail-tab-panel detail-caption-panel">
+                  <section className="detail-content-section detail-caption-player-section" ref={captionPlayerFrameRef}>
+                    <div className="detail-section-heading">
+                      <h3 className="detail-section-label">Dynamic Captions</h3>
+                      <div className="detail-section-heading-actions">
+                        <span className="detail-section-meta">
+                          {selectedSegmentsLoading
+                            ? "加载字幕中"
+                            : `${selectedSegments.length} 条字幕 · ${
+                              selectedSegmentAccuracy === "exact"
+                                ? "精确时间轴"
+                                : usesApproximateSegmentTiming
+                                  ? "估算时间轴"
+                                  : "时间轴来源未知"
+                            }`}
+                        </span>
+                        {selectedTaskId ? (
+                          <button
+                            className="detail-section-icon-button"
+                            type="button"
+                            disabled={selectedSegmentsLoading}
+                            onClick={() => void loadTaskSegments(selectedTaskId, { force: true })}
+                            aria-label="刷新动态字幕"
+                            title="刷新动态字幕"
+                          >
+                            <IconRefresh />
+                          </button>
+                        ) : null}
+                      </div>
+                    </div>
+                    <div className="detail-caption-workspace">
+                      <div className="detail-caption-player">
+                        {captionNativePlayerUrl || shakaManifestUrl ? (
+                          <div className="detail-video-embed-frame">
+                            {shakaManifestUrl ? (
+                              <ShakaMediaPlayer
+                                audioUrl={selectedDirectMedia?.audio_url || undefined}
+                                className="detail-video-embed detail-local-video"
+                                manifestUrl={shakaManifestUrl}
+                                onTimeUpdate={handleCaptionTimeUpdate}
+                                poster={currentPage?.cover_url || video.cover_url || undefined}
+                                videoRef={captionLocalVideoRef}
+                                videoUrl={selectedDirectMedia?.video_url || undefined}
+                              />
+                            ) : (
+                              <video
+                                ref={captionLocalVideoRef}
+                                className="detail-video-embed detail-local-video"
+                                controls
+                                preload="metadata"
+                                src={captionNativePlayerUrl || undefined}
+                                poster={currentPage?.cover_url || video.cover_url || undefined}
+                                onTimeUpdate={(event) => handleCaptionTimeUpdate(event.currentTarget.currentTime)}
+                              />
+                            )}
+                          </div>
+                        ) : playerEmbedUrl && playerDescriptor ? (
+                          <div className="detail-video-embed-frame">
+                            {useBilibiliBrowserView ? (
+                              <div
+                                className="detail-video-embed detail-bilibili-browser-view-slot"
+                                ref={captionBrowserViewSlotRef}
+                                aria-label={`${video.title} Bilibili 播放器`}
+                              >
+                                {!bilibiliBrowserViewReady ? (
+                                  <span>正在加载 B 站播放器...</span>
+                                ) : null}
+                              </div>
+                            ) : (
+                              <iframe
+                                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"
+                                allowFullScreen
+                                className="detail-video-embed"
+                                ref={captionPlayerIframeRef}
+                                referrerPolicy="strict-origin-when-cross-origin"
+                                scrolling="no"
+                                src={playerEmbedUrl}
+                                title={`${video.title} 动态字幕播放器`}
+                              />
+                            )}
+                          </div>
+                        ) : (
+                          <div className="empty-placeholder">当前视频没有可用播放器。</div>
+                        )}
+                        {playerDescriptor?.platform === "bilibili" ? (
+                          <p className="detail-caption-player-note">
+                            {usesDirectBilibiliCaptionPlayer
+                              ? shakaManifestUrl
+                                ? `正在使用 Shaka DASH 播放器，可在应用内拖动进度并跟踪动态字幕。${directMediaDebugLabel}`
+                                : `正在使用 Bilibili 底层流播放器，可在应用内拖动进度并跟踪动态字幕。${directMediaDebugLabel}`
+                              : useBilibiliBrowserView
+                              ? bilibiliBrowserViewReady
+                                ? "桌面端正在使用 BrowserView B 站播放器。若站点改版导致跳转失败，可使用字幕行右侧入口外部打开。"
+                                : "B 站播放器正在加载，若失败会自动回退到普通播放器。"
+                              : selectedDirectMedia?.reason
+                                ? `底层流未启用：${selectedDirectMedia.reason}`
+                                : "B 站外链播放器不支持可靠的应用内时间跳转。点击字幕行右侧入口可在 Bilibili 打开对应时间点。"}
+                          </p>
+                        ) : null}
+                        {usesApproximateSegmentTiming ? (
+                          <p className="detail-caption-timing-note">
+                            当前转写接口只返回全文文本，字幕时间由文本长度按音频时长估算，可能与实际播放进度有偏差。需要更准同步时请在设置里切换到本地 ASR 后重新转写。
+                          </p>
+                        ) : null}
+                      </div>
+                      <div className="detail-caption-list" role="list" aria-label="动态字幕列表" ref={captionListRef}>
+                        {selectedSegmentsError ? (
+                          <div className="empty-placeholder">{selectedSegmentsError}</div>
+                        ) : selectedSegmentsLoading && !selectedSegments.length ? (
+                          <div className="empty-placeholder">正在加载动态字幕...</div>
+                        ) : selectedSegments.length ? (
+                          selectedSegments.map((segment, index) => (
+                            <div
+                              className={`detail-caption-row ${activeCaptionIndex === index ? "is-active" : ""}`}
+                              key={`${segment.start}-${index}`}
+                              ref={activeCaptionIndex === index ? activeCaptionRowRef : null}
+                              role="listitem"
+                            >
+                              <button
+                                className="detail-caption-main"
+                                type="button"
+                                onClick={() => {
+                                  setActiveCaptionIndex(index);
+                                  if (useBilibiliBrowserView) {
+                                    void seekBilibiliBrowserView(segment.start);
+                                    return;
+                                  }
+                                  handleSeekToChapter(segment.start);
+                                }}
+                              >
+                                <span className="detail-caption-time">{formatDuration(segment.start)}</span>
+                                <span className="detail-caption-copy">{segment.text || "..."}</span>
+                              </button>
+                              {playerDescriptor?.platform === "bilibili" ? (
+                                <a
+                                  className="detail-caption-open-link"
+                                  href={buildTimestampedSourceUrl(playerDescriptor.sourceUrl, segment.start)}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  onClick={() => setActiveCaptionIndex(index)}
+                                >
+                                  打开
+                                </a>
+                              ) : null}
+                            </div>
+                          ))
+                        ) : (
+                          <div className="empty-placeholder">当前任务还没有可展示的时间轴字幕。</div>
+                        )}
+                      </div>
+                    </div>
+                  </section>
+                </section>
+              )
+            ) : null}
+
             {activeTab === "mindmap" ? (
               <section className="detail-tab-panel">
                 <section className="detail-content-section detail-content-section-last">
@@ -2913,6 +3620,8 @@ export function VideoDetailPage({ onRefresh, onOpenCookieSettings, onOpenCookieT
                 embedUrl={playerEmbedUrl}
                 localVideoUrl={localPlayerUrl}
                 openLabel={playerDescriptor?.openLabel}
+                platform={playerDescriptor?.platform}
+                poster={currentPage?.cover_url || video.cover_url || undefined}
                 sourceUrl={playerDescriptor?.sourceUrl}
                 seekTarget={playerSeekTarget}
                 title={video.title}
@@ -3458,19 +4167,29 @@ const mindMapNodeTypes = {
 };
 
 function FloatingVideoPlayer({
+  audioUrl,
   embedUrl,
   localVideoUrl,
+  manifestUrl,
   openLabel,
+  platform,
+  poster,
   sourceUrl,
   seekTarget,
   title,
+  videoUrl,
 }: {
+  audioUrl?: string;
   embedUrl: string | null;
   localVideoUrl: string | null;
+  manifestUrl?: string | null;
   openLabel?: string | null;
+  platform?: SupportedVideoPlatform | null;
+  poster?: string;
   sourceUrl?: string | null;
   seekTarget: PlayerSeekTarget;
   title: string;
+  videoUrl?: string;
 }) {
   const pointerStateRef = useRef<{
     mode: "drag" | "resize";
@@ -3485,6 +4204,7 @@ function FloatingVideoPlayer({
     return createDefaultFloatingPlayerLayout(window.innerWidth, window.innerHeight);
   });
   const localFloatingVideoRef = useRef<HTMLVideoElement | null>(null);
+  const floatingIframeRef = useRef<HTMLIFrameElement | null>(null);
 
   useEffect(() => {
     function handleViewportResize() {
@@ -3534,12 +4254,18 @@ function FloatingVideoPlayer({
   }, []);
 
   useEffect(() => {
-    if (!localVideoUrl || !localFloatingVideoRef.current || seekTarget.seconds == null) {
+    if (seekTarget.seconds == null) {
       return;
     }
-    localFloatingVideoRef.current.currentTime = seekTarget.seconds;
-    void localFloatingVideoRef.current.play().catch(() => {});
-  }, [localVideoUrl, seekTarget]);
+    if ((localVideoUrl || manifestUrl) && localFloatingVideoRef.current) {
+      localFloatingVideoRef.current.currentTime = seekTarget.seconds;
+      void localFloatingVideoRef.current.play().catch(() => {});
+      return;
+    }
+    if (platform && platform !== "bilibili" && floatingIframeRef.current) {
+      postPlayerSeek(floatingIframeRef.current, platform, seekTarget.seconds);
+    }
+  }, [localVideoUrl, manifestUrl, platform, seekTarget]);
 
   function handlePointerStart(mode: "drag" | "resize", event: ReactPointerEvent<HTMLElement>) {
     if (event.button !== 0) {
@@ -3589,19 +4315,30 @@ function FloatingVideoPlayer({
         ) : null}
       </div>
       <div className="detail-video-embed-frame detail-video-embed-frame-floating">
-        {localVideoUrl ? (
+        {manifestUrl ? (
+          <ShakaMediaPlayer
+            audioUrl={audioUrl}
+            className="detail-video-embed detail-local-video"
+            manifestUrl={manifestUrl}
+            poster={poster}
+            videoRef={localFloatingVideoRef}
+            videoUrl={videoUrl}
+          />
+        ) : localVideoUrl ? (
           <video
             ref={localFloatingVideoRef}
             className="detail-video-embed detail-local-video"
             controls
             preload="metadata"
             src={localVideoUrl}
+            poster={poster}
           />
         ) : embedUrl ? (
           <iframe
             allow="accelerometer; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"
             allowFullScreen
             className="detail-video-embed"
+            ref={floatingIframeRef}
             referrerPolicy="strict-origin-when-cross-origin"
             scrolling="no"
             src={embedUrl}
@@ -3651,17 +4388,20 @@ function TaskStatePanel({
 function DetailTabIcon({ active, tab }: { active: boolean; tab: DetailTab }) {
   const className = `detail-tab-icon ${active ? "is-active" : ""}`;
   if (tab === "knowledge") {
-    return <IconBrainCircuit className={className} />;
+    return <IconSparkles className={className} />;
   }
   if (tab === "summary") {
     return <IconFileText className={className} />;
   }
-  return <IconShare className={className} />;
+  if (tab === "captions") {
+    return <IconTranscriptRefresh className={className} />;
+  }
+  return <IconMindMap className={className} />;
 }
 
 function IconChevronLeft(props: SVGProps<SVGSVGElement>) {
   return (
-    <svg fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" viewBox="0 0 24 24" {...props}>
+    <svg fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" viewBox="0 0 24 24" {...props}>
       <path d="m15 18-6-6 6-6" />
     </svg>
   );
@@ -3669,7 +4409,7 @@ function IconChevronLeft(props: SVGProps<SVGSVGElement>) {
 
 function IconChevronDown(props: SVGProps<SVGSVGElement>) {
   return (
-    <svg fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" viewBox="0 0 24 24" {...props}>
+    <svg fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" viewBox="0 0 24 24" {...props}>
       <path d="m6 9 6 6 6-6" />
     </svg>
   );
@@ -3677,9 +4417,9 @@ function IconChevronDown(props: SVGProps<SVGSVGElement>) {
 
 function IconPlayCircle(props: SVGProps<SVGSVGElement>) {
   return (
-    <svg fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" viewBox="0 0 24 24" {...props}>
-      <circle cx="12" cy="12" r="9" />
-      <path d="m10 8 6 4-6 4z" />
+    <svg fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" viewBox="0 0 24 24" {...props}>
+      <path d="M9 9.003a1 1 0 0 1 1.517-.859l4.997 2.997a1 1 0 0 1 0 1.718l-4.997 2.997A1 1 0 0 1 9 14.996z" />
+      <circle cx="12" cy="12" r="10" />
     </svg>
   );
 }
@@ -3695,66 +4435,99 @@ function IconClock(props: SVGProps<SVGSVGElement>) {
 
 function IconTrash(props: SVGProps<SVGSVGElement>) {
   return (
-    <svg fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" viewBox="0 0 24 24" {...props}>
+    <svg fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" viewBox="0 0 24 24" {...props}>
+      <path d="M10 11v6" />
+      <path d="M14 11v6" />
+      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
       <path d="M3 6h18" />
-      <path d="M8 6V4h8v2" />
-      <path d="M19 6l-1 14H6L5 6" />
-      <path d="M10 11v6M14 11v6" />
+      <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
     </svg>
   );
 }
 
 function IconRefresh(props: SVGProps<SVGSVGElement>) {
   return (
-    <svg fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" viewBox="0 0 24 24" {...props}>
-      <path d="M20 4v6h-6" />
-      <path d="M4 20v-6h6" />
-      <path d="M7 17a8 8 0 0 0 13-5" />
-      <path d="M17 7A8 8 0 0 0 4 12" />
+    <svg fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" viewBox="0 0 24 24" {...props}>
+      <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
+      <path d="M21 3v5h-5" />
+      <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" />
+      <path d="M8 16H3v5" />
     </svg>
   );
 }
 
 function IconFileText(props: SVGProps<SVGSVGElement>) {
   return (
-    <svg fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" viewBox="0 0 24 24" {...props}>
-      <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />
-      <path d="M14 3v5h5" />
-      <path d="M9 13h6M9 17h6M9 9h2" />
+    <svg fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" viewBox="0 0 24 24" {...props}>
+      <path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z" />
+      <path d="M14 2v5a1 1 0 0 0 1 1h5" />
+      <path d="M10 9H8" />
+      <path d="M16 13H8" />
+      <path d="M16 17H8" />
     </svg>
   );
 }
 
 function IconSummaryRefresh(props: SVGProps<SVGSVGElement>) {
   return (
-    <svg fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" viewBox="0 0 24 24" {...props}>
-      <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />
-      <path d="M14 3v5h5" />
-      <path d="M9 9h2M9 13h6" />
-      <path d="M9 17a3 3 0 1 0 3-3" />
-      <path d="M13.75 15.5H12v-1.75" />
+    <svg fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" viewBox="0 0 24 24" {...props}>
+      <path d="M16 22h2a2 2 0 0 0 2-2V8a2.4 2.4 0 0 0-.706-1.706l-3.588-3.588A2.4 2.4 0 0 0 14 2H6a2 2 0 0 0-2 2v2.85" />
+      <path d="M14 2v5a1 1 0 0 0 1 1h5" />
+      <path d="M8 14v2.2l1.6 1" />
+      <circle cx="8" cy="16" r="6" />
+    </svg>
+  );
+}
+
+function IconRegenerateAction(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" viewBox="0 0 24 24" {...props}>
+      <path d="M16 22h2a2 2 0 0 0 2-2V8a2.4 2.4 0 0 0-.706-1.706l-3.588-3.588A2.4 2.4 0 0 0 14 2H6a2 2 0 0 0-2 2v2.85" />
+      <path d="M14 2v5a1 1 0 0 0 1 1h5" />
+      <path d="M8 14v2.2l1.6 1" />
+      <circle cx="8" cy="16" r="6" />
+    </svg>
+  );
+}
+
+function IconBatchProcess(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" viewBox="0 0 24 24" {...props}>
+      <path d="M13 5h8" />
+      <path d="M13 12h8" />
+      <path d="M13 19h8" />
+      <path d="m3 17 2 2 4-4" />
+      <path d="m3 7 2 2 4-4" />
+    </svg>
+  );
+}
+
+function IconMaintenanceTools(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" viewBox="0 0 24 24" {...props}>
+      <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.106-3.105c.32-.322.863-.22.983.218a6 6 0 0 1-8.259 7.057l-7.91 7.91a1 1 0 0 1-2.999-3l7.91-7.91a6 6 0 0 1 7.057-8.259c.438.12.54.662.219.984z" />
     </svg>
   );
 }
 
 function IconTranscriptRefresh(props: SVGProps<SVGSVGElement>) {
   return (
-    <svg fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" viewBox="0 0 24 24" {...props}>
-      <path d="M4 12a8 8 0 0 1 13-6" />
-      <path d="M20 12a8 8 0 0 1-13 6" />
-      <path d="M17 3v5h-5" />
-      <path d="M7 21v-5h5" />
-      <path d="M9 10.5a3 3 0 0 1 6 0c0 2.2-3 2.2-3 4.5" />
-      <path d="M12 18h.01" />
+    <svg fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" viewBox="0 0 24 24" {...props}>
+      <path d="M2 10v3" />
+      <path d="M6 6v11" />
+      <path d="M10 3v18" />
+      <path d="M14 8v7" />
+      <path d="M18 5v13" />
+      <path d="M22 10v3" />
     </svg>
   );
 }
 
 function IconSettings(props: SVGProps<SVGSVGElement>) {
   return (
-    <svg fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" viewBox="0 0 24 24" {...props}>
-      <path d="M12 3.75a1.5 1.5 0 0 1 1.471 1.206l.167.835a6.954 6.954 0 0 1 1.309.544l.716-.46a1.5 1.5 0 0 1 1.867.195l.8.8a1.5 1.5 0 0 1 .195 1.867l-.46.716c.224.417.406.856.544 1.309l.835.167A1.5 1.5 0 0 1 20.25 12a1.5 1.5 0 0 1-1.206 1.471l-.835.167a6.954 6.954 0 0 1-.544 1.309l.46.716a1.5 1.5 0 0 1-.195 1.867l-.8.8a1.5 1.5 0 0 1-1.867.195l-.716-.46a6.954 6.954 0 0 1-1.309.544l-.167.835A1.5 1.5 0 0 1 12 20.25a1.5 1.5 0 0 1-1.471-1.206l-.167-.835a6.954 6.954 0 0 1-1.309-.544l-.716.46a1.5 1.5 0 0 1-1.867-.195l-.8-.8a1.5 1.5 0 0 1-.195-1.867l.46-.716a6.954 6.954 0 0 1-.544-1.309l-.835-.167A1.5 1.5 0 0 1 3.75 12a1.5 1.5 0 0 1 1.206-1.471l.835-.167c.138-.453.32-.892.544-1.309l-.46-.716a1.5 1.5 0 0 1 .195-1.867l.8-.8a1.5 1.5 0 0 1 1.867-.195l.716.46a6.954 6.954 0 0 1 1.309-.544l.167-.835A1.5 1.5 0 0 1 12 3.75Z" />
-      <circle cx="12" cy="12" r="3.25" />
+    <svg fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" viewBox="0 0 24 24" {...props}>
+      <path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915" />
+      <circle cx="12" cy="12" r="3" />
     </svg>
   );
 }
@@ -3771,53 +4544,61 @@ function IconShare(props: SVGProps<SVGSVGElement>) {
 
 function IconExportNote(props: SVGProps<SVGSVGElement>) {
   return (
-    <svg fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" viewBox="0 0 24 24" {...props}>
-      <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />
-      <path d="M14 3v5h5" />
-      <path d="M12 12V6" />
-      <path d="m9.5 9.5 2.5-2.5 2.5 2.5" />
-      <path d="M9 16h6" />
+    <svg fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" viewBox="0 0 24 24" {...props}>
+      <path d="M12 15V3" />
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+      <path d="m7 10 5 5 5-5" />
     </svg>
   );
 }
 
 function IconFolderOpen(props: SVGProps<SVGSVGElement>) {
   return (
-    <svg fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" viewBox="0 0 24 24" {...props}>
-      <path d="M3 7.5A1.5 1.5 0 0 1 4.5 6h4l1.6 2H19.5A1.5 1.5 0 0 1 21 9.5v7A1.5 1.5 0 0 1 19.5 18h-15A1.5 1.5 0 0 1 3 16.5z" />
-      <path d="M3 10h18" />
-      <path d="m13 14 2-2 2 2" />
-      <path d="M17 12v5" />
+    <svg fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" viewBox="0 0 24 24" {...props}>
+      <path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2" />
     </svg>
   );
 }
 
 function IconCopyImage(props: SVGProps<SVGSVGElement>) {
   return (
-    <svg fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" viewBox="0 0 24 24" {...props}>
-      <rect x="3.5" y="6.5" width="13" height="13" rx="2.5" />
-      <path d="M9 6V5.5A2.5 2.5 0 0 1 11.5 3H18a2.5 2.5 0 0 1 2.5 2.5V12" />
-      <path d="m6.5 16.5 3.4-3.4a1.3 1.3 0 0 1 1.84 0l1.26 1.26" />
-      <path d="m12.5 15.5 1.4-1.4a1.3 1.3 0 0 1 1.84 0l.76.76" />
-      <circle cx="11" cy="10.5" r="1.1" />
+    <svg fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" viewBox="0 0 24 24" {...props}>
+      <path d="m22 11-1.296-1.296a2.4 2.4 0 0 0-3.408 0L11 16" />
+      <path d="M4 8a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2" />
+      <circle cx="13" cy="7" r="1" fill="currentColor" stroke="none" />
+      <rect width="14" height="14" x="8" y="2" rx="2" />
     </svg>
   );
 }
 
-function IconBrainCircuit(props: SVGProps<SVGSVGElement>) {
+function IconSparkles(props: SVGProps<SVGSVGElement>) {
   return (
-    <svg fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" viewBox="0 0 24 24" {...props}>
-      <path d="M12 5a3 3 0 0 0-3 3v1H8a3 3 0 0 0 0 6h1v1a3 3 0 0 0 6 0v-1h1a3 3 0 0 0 0-6h-1V8a3 3 0 0 0-3-3Z" />
-      <path d="M12 2v3M12 19v3M4.5 12H8M16 12h3.5" />
+    <svg fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" viewBox="0 0 24 24" {...props}>
+      <path d="M11.017 2.814a1 1 0 0 1 1.966 0l1.051 5.558a2 2 0 0 0 1.594 1.594l5.558 1.051a1 1 0 0 1 0 1.966l-5.558 1.051a2 2 0 0 0-1.594 1.594l-1.051 5.558a1 1 0 0 1-1.966 0l-1.051-5.558a2 2 0 0 0-1.594-1.594l-5.558-1.051a1 1 0 0 1 0-1.966l5.558-1.051a2 2 0 0 0 1.594-1.594z" />
+      <path d="M20 2v4" />
+      <path d="M22 4h-4" />
+      <circle cx="4" cy="20" r="2" />
+    </svg>
+  );
+}
+
+function IconMindMap(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" viewBox="0 0 24 24" {...props}>
+      <circle cx="6" cy="6" r="3" />
+      <circle cx="18" cy="6" r="3" />
+      <circle cx="12" cy="18" r="3" />
+      <path d="M6 9v2a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1V9" />
+      <path d="M12 12v3" />
     </svg>
   );
 }
 
 function IconArrowRight(props: SVGProps<SVGSVGElement>) {
   return (
-    <svg fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" viewBox="0 0 24 24" {...props}>
+    <svg fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" viewBox="0 0 24 24" {...props}>
       <path d="M5 12h14" />
-      <path d="m13 6 6 6-6 6" />
+      <path d="m12 5 7 7-7 7" />
     </svg>
   );
 }
