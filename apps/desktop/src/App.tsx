@@ -465,6 +465,20 @@ export function App() {
     navigate("/settings");
   }
 
+  async function updatePromptRouterMode(mode: "auto" | "confirm") {
+    const response = await api.updateSettings({ prompt_router_mode: mode });
+    setSnapshot((current) => ({
+      ...current,
+      settings: response.settings,
+      systemInfo: current.systemInfo
+        ? {
+            ...current.systemInfo,
+            settings: response.settings,
+          }
+        : current.systemInfo,
+    }));
+  }
+
   function openConfigAssist(issueKey?: string) {
     if (issueKey) {
       navigateToConfigIssue(issueKey);
@@ -935,6 +949,7 @@ export function App() {
                     onImportLocalFiles={handleLocalFilesSelected}
                     canImportLocalVideo={canImportLocalVideo}
                     promptRouterMode={snapshot.settings?.prompt_router_mode || "confirm"}
+                    onPromptRouterModeChange={updatePromptRouterMode}
                     onOpenSetupAssistant={openConfigAssist}
                     onOpenConfigIssue={navigateToConfigIssue}
                     onEditPromptPreset={navigateToPromptPreset}

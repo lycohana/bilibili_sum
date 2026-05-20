@@ -101,6 +101,8 @@ run("home prompt router calls match API and filters hidden presets", () => {
   const homePageSource = readFileSync(join(projectRoot, "src/pages/HomePage.tsx"), "utf8");
   assert.ok(homePageSource.includes("api.matchPrompt(title)"), "home page should ask backend to match a prompt for the current input");
   assert.ok(homePageSource.includes("promptRouterMode === \"auto\""), "auto prompt routing should apply the matched preset");
+  assert.ok(homePageSource.includes("AI 识别场景"), "home page should expose AI scene recognition mode");
+  assert.ok(homePageSource.includes("onPromptRouterModeChange(mode)"), "home page prompt mode selector should persist router mode");
   assert.ok(homePageSource.includes("hiddenPromptPresetIds.has(result.preset.id)"), "hidden matched presets should not be recommended or auto-selected");
   assert.ok(homePageSource.includes("selectablePromptPresets.map"), "home prompt dropdown should only render visible presets");
 });

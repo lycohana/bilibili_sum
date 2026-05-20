@@ -20,6 +20,7 @@ type HomePageProps = {
   onImportLocalFiles(files: File[]): Promise<void>;
   canImportLocalVideo: boolean;
   promptRouterMode: string;
+  onPromptRouterModeChange(mode: "auto" | "confirm"): Promise<void>;
   onOpenSetupAssistant(issueKey?: string): void;
   onOpenConfigIssue(issueKey: string): void;
   onEditPromptPreset(presetId: string): void;
@@ -163,6 +164,7 @@ export function HomePage({
   onImportLocalFiles,
   canImportLocalVideo,
   promptRouterMode,
+  onPromptRouterModeChange,
   onOpenSetupAssistant,
   onOpenConfigIssue,
   onEditPromptPreset,
@@ -187,6 +189,7 @@ export function HomePage({
   const [promptContextMenu, setPromptContextMenu] = useState<{ x: number; y: number; presetId: string } | null>(null);
   const [promptLoading, setPromptLoading] = useState(false);
   const [promptStatus, setPromptStatus] = useState("");
+  const [promptModeSaving, setPromptModeSaving] = useState(false);
   const [isDragActive, setIsDragActive] = useState(false);
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const [batchUploading, setBatchUploading] = useState(false);
@@ -360,6 +363,22 @@ export function HomePage({
     setPromptContextMenu(null);
   }
 
+  async function changePromptRouterMode(mode: "auto" | "confirm") {
+    if (mode === promptRouterMode || promptModeSaving) {
+      return;
+    }
+    setPromptModeSaving(true);
+    setPromptStatus(mode === "auto" ? "正在启用 AI 场景识别..." : "正在切换为手动选择...");
+    try {
+      await onPromptRouterModeChange(mode);
+      setPromptStatus(mode === "auto" ? "已启用 AI 场景识别，会根据标题自动选择摘要提示词。" : "已切换为手动选择 Prompt。");
+    } catch (error) {
+      setPromptStatus(error instanceof Error ? error.message : "Prompt 模式保存失败");
+    } finally {
+      setPromptModeSaving(false);
+    }
+  }
+
   function collectMediaFiles(files: Iterable<File>) {
     return Array.from(files).filter(isSupportedLocalMediaFile);
   }
@@ -423,7 +442,7 @@ export function HomePage({
   const selectablePromptPresets = promptPresets.filter((preset) => !hiddenPromptPresetIds.has(preset.id));
   const selectedPrompt = selectablePromptPresets.find((preset) => preset.id === promptPresetId) || selectablePromptPresets[0] || null;
   const recommendedPrompt = selectablePromptPresets.find((preset) => preset.id === recommendedPromptId) || null;
-  const promptModeLabel = promptRouterMode === "auto" ? "自动" : "确认";
+  const promptModeLabel = promptRouterMode === "auto" ? "AI 识别场景" : "手动选择";
 
   return (
     <section className="home-page">
@@ -542,7 +561,25 @@ export function HomePage({
               </select>
             </label>
             <div className="home-prompt-meta">
-              <span className="helper-chip">路由 {promptModeLabel}</span>
+              <div className="home-prompt-mode" role="group" aria-label="Prompt 模式选择">
+                <button
+                  className={`home-prompt-mode-option ${promptRouterMode !== "auto" ? "is-active" : ""}`}
+                  type="button"
+                  disabled={promptModeSaving}
+                  onClick={() => void changePromptRouterMode("confirm")}
+                >
+                  手动选择
+                </button>
+                <button
+                  className={`home-prompt-mode-option ${promptRouterMode === "auto" ? "is-active" : ""}`}
+                  type="button"
+                  disabled={promptModeSaving}
+                  onClick={() => void changePromptRouterMode("auto")}
+                >
+                  AI 识别场景
+                </button>
+              </div>
+              <span className="helper-chip">模式 {promptModeLabel}</span>
               {recommendedPrompt ? (
                 <button
                   className="home-prompt-recommendation"
