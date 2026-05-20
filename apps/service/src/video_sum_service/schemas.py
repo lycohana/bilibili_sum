@@ -3,7 +3,6 @@ from typing import Literal
 from uuid import uuid4
 
 from pydantic import BaseModel, Field
-
 from video_sum_core.models.tasks import MindMapNode, TaskInput, TaskMindMap, TaskResult, TaskStatus
 from video_sum_core.utils import extract_bilibili_page
 
@@ -20,6 +19,7 @@ class ResummaryRequest(BaseModel):
 class VideoTaskCreateRequest(BaseModel):
     page_number: int | None = None
     visual_note_mode: str | None = None
+    prompt_preset_id: str | None = None
 
 
 class VideoTaskBatchRequest(BaseModel):
@@ -39,6 +39,37 @@ class TaskMarkdownExportRequest(BaseModel):
 
 class TaskTranscriptExportRequest(BaseModel):
     output_dir: str | None = None
+
+
+class PromptPresetResponse(BaseModel):
+    id: str
+    name: str
+    description: str | None = None
+    category: str | None = None
+    icon: str | None = None
+    system_prompt: str
+    user_prompt_template: str
+    auto_match_keywords: list[str] = Field(default_factory=list)
+    is_builtin: bool = False
+
+
+class PromptMatchRequest(BaseModel):
+    title: str
+
+
+class PromptMatchResponse(BaseModel):
+    preset: PromptPresetResponse
+    match_type: str
+    confidence: float
+
+
+class PromptPresetCreateRequest(BaseModel):
+    name: str
+    system_prompt: str
+    user_prompt_template: str
+    description: str | None = None
+    category: str | None = None
+    auto_match_keywords: list[str] = Field(default_factory=list)
 
 
 class VideoTaskBatchPageResponse(BaseModel):

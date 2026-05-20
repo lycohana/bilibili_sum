@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
 import logging
 import math
@@ -8,15 +10,37 @@ import re
 import shutil
 import subprocess
 import time
-import base64
-import hashlib
-from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, NoReturn
 
 import httpx
+from video_sum_infra.config import (
+    DEFAULT_KNOWLEDGE_NOTE_SYSTEM_PROMPT,
+    DEFAULT_KNOWLEDGE_NOTE_USER_PROMPT_TEMPLATE,
+    DEFAULT_SUMMARY_SYSTEM_PROMPT,
+    DEFAULT_SUMMARY_USER_PROMPT_TEMPLATE,
+    normalize_visual_note_mode,
+)
+from video_sum_infra.llm import (
+    ANTHROPIC_API_VERSION,
+    anthropic_messages_url,
+    build_anthropic_messages_payload,
+    extract_llm_message_content,
+    is_anthropic_llm,
+    normalize_openai_compatible_model_name,
+    openai_chat_completions_url,
+)
+from video_sum_infra.prompt_library import load_presets
+from video_sum_infra.runtime import (
+    ffmpeg_location,
+    runtime_library_dirs,
+    runtime_python_executable,
+    runtime_pythonpath_dirs,
+    sanitized_subprocess_dll_search,
+)
 
 from video_sum_core.errors import (
     LLMAuthenticationError,
@@ -27,29 +51,13 @@ from video_sum_core.errors import (
     VideoSumError,
 )
 from video_sum_core.models.tasks import InputType, MindMapNode, TaskInput, TaskMindMap, TaskResult
-from video_sum_core.pipeline.base import PipelineContext, PipelineEvent, PipelineEventReporter, PipelineRunner
+from video_sum_core.pipeline.base import (
+    PipelineContext,
+    PipelineEvent,
+    PipelineEventReporter,
+    PipelineRunner,
+)
 from video_sum_core.utils import ensure_directory, normalize_video_url, sanitize_filename
-from video_sum_infra.llm import (
-    ANTHROPIC_API_VERSION,
-    anthropic_messages_url,
-    build_anthropic_messages_payload,
-    extract_llm_message_content,
-    is_anthropic_llm,
-    normalize_openai_compatible_model_name,
-    openai_chat_completions_url,
-)
-from video_sum_infra.config import (
-    DEFAULT_KNOWLEDGE_NOTE_SYSTEM_PROMPT,
-    DEFAULT_KNOWLEDGE_NOTE_USER_PROMPT_TEMPLATE,
-    normalize_visual_note_mode,
-)
-from video_sum_infra.runtime import (
-    ffmpeg_location,
-    runtime_library_dirs,
-    runtime_python_executable,
-    runtime_pythonpath_dirs,
-    sanitized_subprocess_dll_search,
-)
 
 logger = logging.getLogger("video_sum_core.pipeline.real")
 YoutubeDL = None
@@ -175,6 +183,7 @@ def _should_retry_llm_transport_error(error: Exception) -> bool:
 @dataclass(slots=True)
 class PipelineSettings:
     tasks_dir: Path
+    data_dir: Path | str | None = None
     runtime_channel: str = "base"
     transcription_provider: str = "siliconflow"
     whisper_model: str = "tiny"
@@ -218,6 +227,7 @@ class PipelineSettings:
     visual_vlm_prompt: str = ""
     summary_system_prompt: str = ""
     summary_user_prompt_template: str = ""
+    prompt_presets_path: str = ""
     knowledge_note_system_prompt: str = ""
     knowledge_note_user_prompt_template: str = ""
     mindmap_system_prompt: str = ""
@@ -339,7 +349,13 @@ class RealPipelineRunner(PipelineRunner):
                 "result_scope": "transcript",
             },
         )
-        summary = self._summarize(transcript, segments, title, emit)
+        summary = self._summarize(
+            transcript,
+            segments,
+            title,
+            emit,
+            prompt_preset_id=task_input.options.prompt_preset_id,
+        )
         emit("exporting", 97, "正在导出任务结果")
         result = self._export_result(task_dir, title, transcript, segments, summary)
         emit(
@@ -385,7 +401,14 @@ class RealPipelineRunner(PipelineRunner):
             "已跳过重新转写，直接复用分 P 摘要素材" if is_aggregate_series else "已跳过重新转写，直接复用当前版本文本",
             {"transcript_chars": len(transcript), "segment_count": len(segments)},
         )
-        summary = self._summarize(transcript, segments, title, emit, source_kind=source_kind)
+        summary = self._summarize(
+            transcript,
+            segments,
+            title,
+            emit,
+            source_kind=source_kind,
+            prompt_preset_id=context.task_input.options.prompt_preset_id,
+        )
         emit("exporting", 97, "正在导出新的摘要结果")
         result = self._export_result(task_dir, title, transcript, segments, summary)
         emit(
@@ -446,7 +469,13 @@ class RealPipelineRunner(PipelineRunner):
                 "result_scope": "transcript",
             },
         )
-        summary = self._summarize(transcript, segments, title, emit)
+        summary = self._summarize(
+            transcript,
+            segments,
+            title,
+            emit,
+            prompt_preset_id=task_input.options.prompt_preset_id,
+        )
         emit("exporting", 97, "正在导出任务结果")
         result = self._export_result(task_dir, title, transcript, segments, summary)
         emit(
@@ -1598,6 +1627,7 @@ class RealPipelineRunner(PipelineRunner):
         title: str,
         emit: Callable[[str, int, str, dict[str, object] | None], None],
         source_kind: str | None = None,
+        prompt_preset_id: str | None = None,
     ) -> dict[str, object]:
         emit(
             "summarizing",
@@ -1616,13 +1646,23 @@ class RealPipelineRunner(PipelineRunner):
                 len(segments),
             )
             try:
-                summary = self._summarize_with_llm(
-                    transcript,
-                    segments,
-                    title,
-                    emit,
-                    source_kind=source_kind,
-                )
+                if str(prompt_preset_id or "").strip():
+                    summary = self._summarize_with_llm(
+                        transcript,
+                        segments,
+                        title,
+                        emit,
+                        source_kind=source_kind,
+                        prompt_preset_id=prompt_preset_id,
+                    )
+                else:
+                    summary = self._summarize_with_llm(
+                        transcript,
+                        segments,
+                        title,
+                        emit,
+                        source_kind=source_kind,
+                    )
                 used_llm_summary = True
             except (LLMAuthenticationError, LLMConfigurationError) as exc:
                 logger.warning("llm unavailable, fallback to rule summary reason=%s", exc)
@@ -1709,12 +1749,14 @@ class RealPipelineRunner(PipelineRunner):
         title: str,
         emit: Callable[[str, int, str, dict[str, object] | None], None],
         source_kind: str | None = None,
+        prompt_preset_id: str | None = None,
     ) -> dict[str, object]:
         base_url = (self._settings.llm_base_url or "").rstrip("/")
         if not base_url or not self._settings.llm_model:
             raise LLMConfigurationError("LLM 配置不完整，请检查 Base URL 和模型名。")
         if source_kind == "aggregate_series":
             return self._summarize_aggregate_series_with_llm(base_url, transcript, segments, title, emit)
+        system_prompt_override, user_prompt_override = self._resolve_prompt(prompt_preset_id)
         chunks = self._build_summary_chunks(segments)
         if not chunks:
             chunks = [
@@ -1746,7 +1788,16 @@ class RealPipelineRunner(PipelineRunner):
         failures: list[str] = []
         with ThreadPoolExecutor(max_workers=concurrency) as executor:
             future_map = {
-                executor.submit(self._request_llm_summary_chunk, base_url, title, chunk, chunk_count, retry_count): chunk
+                executor.submit(
+                    self._request_llm_summary_chunk,
+                    base_url,
+                    title,
+                    chunk,
+                    chunk_count,
+                    retry_count,
+                    system_prompt_override,
+                    user_prompt_override,
+                ): chunk
                 for chunk in chunks
             }
             for future in as_completed(future_map):
@@ -1810,6 +1861,8 @@ class RealPipelineRunner(PipelineRunner):
                 title=title,
                 transcript_excerpt=aggregate_transcript,
                 segments_excerpt=aggregate_segments,
+                system_prompt_override=system_prompt_override,
+                user_prompt_override=user_prompt_override,
             ),
         )
         merged = self._merge_structured_summary(
@@ -1868,6 +1921,8 @@ class RealPipelineRunner(PipelineRunner):
         chunk: dict[str, object],
         chunk_count: int,
         retry_count: int,
+        system_prompt_override: str | None = None,
+        user_prompt_override: str | None = None,
     ) -> dict[str, object]:
         chunk_index = int(chunk["index"])
         last_error: Exception | None = None
@@ -1888,6 +1943,8 @@ class RealPipelineRunner(PipelineRunner):
                         title=f"{title} - 分块 {chunk_index}",
                         transcript_excerpt=str(chunk["transcript"]),
                         segments_excerpt=str(chunk["segments_json"]),
+                        system_prompt_override=system_prompt_override,
+                        user_prompt_override=user_prompt_override,
                     ),
                 )
                 partial["chunk_index"] = chunk_index
@@ -2064,8 +2121,16 @@ class RealPipelineRunner(PipelineRunner):
         title: str,
         transcript_excerpt: str,
         segments_excerpt: str,
+        system_prompt_override: str | None = None,
+        user_prompt_override: str | None = None,
     ) -> dict[str, object]:
-        messages = self._build_summary_messages(title, transcript_excerpt, segments_excerpt)
+        messages = self._build_summary_messages(
+            title,
+            transcript_excerpt,
+            segments_excerpt,
+            system_prompt_override=system_prompt_override,
+            user_prompt_override=user_prompt_override,
+        )
         messages = self._ensure_json_keyword_in_messages(messages)
         # Qwen mixed-thinking models may reject json_object mode when thinking is enabled.
         return {
@@ -2160,21 +2225,21 @@ P 数索引：
         title: str,
         transcript_excerpt: str,
         segments_excerpt: str,
+        system_prompt_override: str | None = None,
+        user_prompt_override: str | None = None,
     ) -> list[dict[str, str]]:
         system_prompt = (
-            self._settings.summary_system_prompt.strip()
-            if self._settings.summary_system_prompt.strip()
-            else (
-                "你是一名严谨、克制、信息密度优先的中文视频内容编辑。"
-                "你的任务不是泛泛总结，而是基于转写和分段信息，产出可以直接用于“知识卡片”页面的结构化内容。"
-                "所有内容都必须忠实原文，不得编造，不得补充外部资料，不得输出 JSON 以外的任何文字。"
-                "You must return valid json only."
-            )
+            str(system_prompt_override or "").strip()
+            or self._settings.summary_system_prompt.strip()
+            or DEFAULT_SUMMARY_SYSTEM_PROMPT
         )
         user_template = (
-            self._settings.summary_user_prompt_template.strip()
-            if self._settings.summary_user_prompt_template.strip()
-            else """请阅读下面的视频资料，并输出一个 JSON 对象。
+            str(user_prompt_override or "").strip()
+            or self._settings.summary_user_prompt_template.strip()
+            or DEFAULT_SUMMARY_USER_PROMPT_TEMPLATE
+        )
+        if not user_template:
+            user_template = """请阅读下面的视频资料，并输出一个 JSON 对象。
 注意：你必须返回合法的 json 对象，且只返回 json。
 
 目标：
@@ -2230,7 +2295,6 @@ P 数索引：
 
 分段数据节选：
 {segments_json}"""
-        )
         return [
             {
                 "role": "system",
@@ -2246,6 +2310,20 @@ P 数索引：
                 ),
             },
         ]
+
+    def _resolve_prompt(self, preset_id: str | None) -> tuple[str | None, str | None]:
+        normalized_id = str(preset_id or "").strip()
+        if not normalized_id:
+            return None, None
+        presets = load_presets(
+            data_dir=self._settings.data_dir,
+            prompt_presets_path=self._settings.prompt_presets_path,
+        )
+        for preset in presets:
+            if preset.id == normalized_id:
+                return preset.system_prompt, preset.user_prompt_template
+        logger.warning("prompt preset not found, fallback to settings prompt preset_id=%s", normalized_id)
+        return None, None
 
     def _build_knowledge_note_messages(
         self,

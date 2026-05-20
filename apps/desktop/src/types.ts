@@ -107,6 +107,33 @@ export type VideoProbeResult = {
   pages: VideoPageOption[];
 };
 
+export type PromptPreset = {
+  id: string;
+  name: string;
+  description?: string | null;
+  category?: string | null;
+  icon?: string | null;
+  system_prompt: string;
+  user_prompt_template: string;
+  auto_match_keywords: string[];
+  is_builtin: boolean;
+};
+
+export type PromptPresetCreateRequest = {
+  name: string;
+  system_prompt: string;
+  user_prompt_template: string;
+  description?: string | null;
+  category?: string | null;
+  auto_match_keywords?: string[];
+};
+
+export type PromptMatchResult = {
+  preset: PromptPreset;
+  match_type: "keyword" | "fallback" | string;
+  confidence: number;
+};
+
 export type TaskSummary = {
   task_id: string;
   video_id?: string | null;
@@ -318,6 +345,8 @@ export type ServiceSettings = {
   enable_cache: boolean;
   language: string;
   summary_mode: string;
+  prompt_router_mode: "auto" | "confirm" | string;
+  prompt_presets_path: string;
   llm_enabled: boolean;
   auto_generate_mindmap: boolean;
   visual_note_mode: VisualNoteMode;
@@ -374,6 +403,8 @@ export type ServiceSettings = {
     visual_note_user_prompt_template?: string;
     visual_frame_planning_prompt?: string;
     visual_vlm_prompt?: string;
+    summary_system_prompt?: string;
+    summary_user_prompt_template?: string;
   };
 };
 

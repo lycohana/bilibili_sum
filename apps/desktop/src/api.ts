@@ -12,6 +12,9 @@ import type {
   KnowledgeTagListResponse,
   KnowledgeToolTrace,
   LlmTestResponse,
+  PromptMatchResult,
+  PromptPreset,
+  PromptPresetCreateRequest,
   ServiceSettings,
   SystemLogResponse,
   SystemInfo,
@@ -187,6 +190,29 @@ export const api = {
   getAppUpdate() {
     return fetchJsonWithAuth<AppUpdateInfo>("/api/v1/app/update");
   },
+  listPromptPresets() {
+    return fetchJsonWithAuth<PromptPreset[]>("/api/v1/prompts/presets");
+  },
+  createPromptPreset(payload: PromptPresetCreateRequest) {
+    return fetchJsonWithAuth<PromptPreset>("/api/v1/prompts/presets", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+  },
+  deletePromptPreset(presetId: string) {
+    return fetchJsonWithAuth<{ deleted: boolean; preset_id: string }>(
+      `/api/v1/prompts/presets/${encodeURIComponent(presetId)}`,
+      { method: "DELETE" },
+    );
+  },
+  matchPrompt(title: string) {
+    return fetchJsonWithAuth<PromptMatchResult>("/api/v1/prompts/match", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title }),
+    });
+  },
   updateSettings(payload: Partial<ServiceSettings>) {
     return fetchJson<UpdateSettingsResponse>("/api/v1/settings", {
       method: "PUT",
@@ -261,10 +287,27 @@ export const api = {
       body: file,
     });
   },
+  uploadBatchVideos(files: File[] | FileList) {
+    const form = new FormData();
+    Array.from(files).forEach((file) => {
+      form.append("files", file, file.name);
+    });
+    return fetchJson<VideoProbeResult[]>("/api/v1/videos/upload/batch", {
+      method: "POST",
+      body: form,
+    });
+  },
   getVideoTasks(videoId: string) {
     return fetchJson<TaskSummary[]>(`/api/v1/videos/${videoId}/tasks`);
   },
-  createVideoTask(videoId: string, payload?: { page_number?: number | null; visual_note_mode?: string | null }) {
+  createVideoTask(
+    videoId: string,
+    payload?: {
+      page_number?: number | null;
+      visual_note_mode?: string | null;
+      prompt_preset_id?: string | null;
+    },
+  ) {
     return fetchJson<TaskDetail>(`/api/v1/videos/${videoId}/tasks`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },

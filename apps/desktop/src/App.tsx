@@ -30,6 +30,8 @@ import { SettingsPage } from "./pages/SettingsPage";
 import { VideoDetailPage } from "./pages/VideoDetailPage";
 import type { VideoAssetSummary, VideoPageBatchOption } from "./types";
 
+const PROMPT_PRESET_STORAGE_KEY = "bilisum.promptPresetId";
+
 function isAuthRequiredError(error: unknown): error is AuthRequiredError {
   return error instanceof AuthRequiredError
     || (error instanceof Error && error.name === "AuthRequiredError")
@@ -551,6 +553,23 @@ export function App() {
     }
   }
 
+  function resolvePromptPresetIdFromPreference(): string | null {
+    try {
+      const value = window.localStorage.getItem(PROMPT_PRESET_STORAGE_KEY)?.trim();
+      return value && value !== "general" ? value : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function buildCreateTaskPayload(pageNumber?: number | null) {
+    return {
+      page_number: pageNumber ?? null,
+      visual_note_mode: resolveVisualNoteModeFromPreference(),
+      prompt_preset_id: resolvePromptPresetIdFromPreference(),
+    };
+  }
+
   async function handleProbe(event: FormEvent) {
     event.preventDefault();
     if (!probeUrl.trim()) {
@@ -578,7 +597,7 @@ export function App() {
         setSubmitStatus(`检测到 ${response.pages.length} 个分 P，请先勾选要处理的内容`);
         return;
       }
-      await api.createVideoTask(response.video.video_id, { visual_note_mode: resolveVisualNoteModeFromPreference() });
+      await api.createVideoTask(response.video.video_id, buildCreateTaskPayload());
       setSubmitStatus(response.cached ? "已从视频库读取并开始总结" : "视频已加入本地库并开始总结");
       setProbeUrl("");
       setRefreshSeed((value) => value + 1);
@@ -615,7 +634,7 @@ export function App() {
       try {
         const response = await api.probeVideo({ url: filePath, force_refresh: false });
         setProbePreview(response.video);
-        await api.createVideoTask(response.video.video_id, { visual_note_mode: resolveVisualNoteModeFromPreference() });
+        await api.createVideoTask(response.video.video_id, buildCreateTaskPayload());
         setProbeUrl("");
         setSubmitStatus(response.cached ? "已从本地视频库读取并开始总结" : "本地视频已加入视频库并开始总结");
         setRefreshSeed((value) => value + 1);
@@ -635,21 +654,53 @@ export function App() {
   }
 
   async function handleWebLocalVideoPicked(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
+    const files = Array.from(event.target.files || []);
     event.target.value = "";
-    if (!file) {
+    if (!files.length) {
       return;
     }
 
-    setSubmitStatus("正在上传本地视频并准备开始总结...");
+    await handleLocalFilesSelected(files);
+  }
+
+  async function handleLocalFilesSelected(files: File[]) {
+    if (!files.length) {
+      return;
+    }
+    if (configHealth.hasBlockingIssues) {
+      setSubmitStatus(`当前缺少必需配置：${configHealth.blockingIssues.map((item) => item.title).join("、")}。请先完成设置。`);
+      if (shouldShowSetupAssistant(configHealth, snapshot.settings)) {
+        setSetupAssistantDismissed(false);
+        setSetupAssistantOpen(true);
+      } else {
+        navigate("/settings");
+      }
+      return;
+    }
+
+    setSubmitStatus(
+      files.length > 1 ? `正在上传 ${files.length} 个本地文件并创建任务...` : "正在上传本地视频并准备开始总结...",
+    );
     try {
-      const response = await api.uploadLocalVideo(file);
-      setProbePreview(response.video);
-      await api.createVideoTask(response.video.video_id, { visual_note_mode: resolveVisualNoteModeFromPreference() });
+      const responses = files.length > 1
+        ? await api.uploadBatchVideos(files)
+        : [await api.uploadLocalVideo(files[0])];
+      const firstResponse = responses[0];
+      if (!firstResponse) {
+        throw new Error("未返回上传结果。");
+      }
+      setProbePreview(firstResponse.video);
+      for (const response of responses) {
+        await api.createVideoTask(response.video.video_id, buildCreateTaskPayload());
+      }
       setProbeUrl("");
-      setSubmitStatus(response.cached ? "已从本地视频库读取并开始总结" : "本地视频已加入视频库并开始总结");
+      setSubmitStatus(
+        responses.length > 1
+          ? `已创建 ${responses.length} 个本地视频摘要任务`
+          : firstResponse.cached ? "已从本地视频库读取并开始总结" : "本地视频已加入视频库并开始总结",
+      );
       setRefreshSeed((value) => value + 1);
-      navigate(`/videos/${response.video.video_id}`);
+      navigate(`/videos/${firstResponse.video.video_id}`);
     } catch (error) {
       const message = error instanceof Error ? error.message : "导入本地视频失败";
       if (isBilibiliCookieHelpError(message)) {
@@ -744,6 +795,7 @@ export function App() {
       <input
         ref={localVideoInputRef}
         type="file"
+        multiple
         accept="video/mp4,video/quicktime,video/x-matroska,video/x-msvideo,video/x-ms-wmv,video/webm,video/x-flv,video/mp2t,video/mpeg,.mp4,.mov,.mkv,.avi,.wmv,.webm,.flv,.m4v,.ts,.mpeg,.mpg"
         style={{ display: "none" }}
         onChange={(event) => void handleWebLocalVideoPicked(event)}
@@ -872,7 +924,9 @@ export function App() {
                     submitStatus={submitStatus}
                     onProbe={handleProbe}
                     onImportLocalVideo={handleImportLocalVideo}
+                    onImportLocalFiles={handleLocalFilesSelected}
                     canImportLocalVideo={canImportLocalVideo}
+                    promptRouterMode={snapshot.settings?.prompt_router_mode || "confirm"}
                     onOpenSetupAssistant={openConfigAssist}
                     onOpenConfigIssue={navigateToConfigIssue}
                     favoriteVideos={favoriteVideos}

@@ -8,9 +8,9 @@ from video_sum_service.app import app
 from video_sum_service.repository import SqliteTaskRepository
 from video_sum_service.routers.videos import (
     create_video_aggregate_summary_task,
+    create_video_resummary_tasks_batch,
     create_video_task,
     create_video_tasks_batch,
-    create_video_resummary_tasks_batch,
 )
 from video_sum_service.schemas import VideoAssetRecord
 
@@ -138,6 +138,29 @@ def test_create_video_task_does_not_reprobe_page_metadata_before_submit(monkeypa
         "https://www.bilibili.com/video/BV-no-reprobe?p=1"
     )
     assert response.page_number == 1
+
+
+def test_create_video_task_applies_prompt_preset_id() -> None:
+    repository = create_repository()
+    worker = FakeTaskWorker()
+    asset = repository.upsert_video_asset(
+        VideoAssetRecord(
+            canonical_id="BV-prompt",
+            platform="bilibili",
+            title="Prompt 视频",
+            source_url="https://www.bilibili.com/video/BV-prompt",
+        )
+    )
+    app.state.task_repository = repository
+    app.state.task_worker = worker
+
+    create_video_task(
+        type("Request", (), {"app": app})(),
+        asset.video_id,
+        type("Body", (), {"prompt_preset_id": "technical_tutorial"})(),
+    )
+
+    assert worker.submitted[0].task_input.options.prompt_preset_id == "technical_tutorial"
 
 
 def test_create_video_tasks_batch_requires_confirmation_for_completed_pages() -> None:

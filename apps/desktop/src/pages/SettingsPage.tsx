@@ -1,4 +1,4 @@
-import { type FocusEvent, type FormEvent, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { type FocusEvent, type FormEvent, type PointerEvent, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import QRCode from "qrcode";
 
 import {
@@ -18,7 +18,7 @@ import {
 import { api } from "../api";
 import { SearchIcon } from "../components/AppIcons";
 import { FloatingNoticeStack } from "../components/FloatingNoticeStack";
-import type { EnvironmentInfo, RuntimeStatus, ServiceSettings, StorageLocationKind, StorageDirectoryStat, StorageOverview, TaskSummary } from "../types";
+import type { EnvironmentInfo, PromptPreset, PromptPresetCreateRequest, RuntimeStatus, ServiceSettings, StorageLocationKind, StorageDirectoryStat, StorageOverview, TaskSummary } from "../types";
 import { formatDateTime, taskStatusLabel } from "../utils";
 import { settingsCategories, type SettingsCategory } from "./settingsConfig";
 
@@ -148,6 +148,7 @@ const SETTINGS_SEARCH_ITEMS: SettingsSearchItem[] = [
   { category: "transcription", targetKey: "fixed_model", title: "Whisper 固定模型", description: "本地 Whisper 模型大小。", keywords: ["whisper", "tiny", "base", "small", "medium", "large"] },
   { category: "generation", targetKey: "llm_enabled", title: "启用 LLM 摘要", description: "打开或关闭大模型摘要。", keywords: ["llm", "摘要", "开启", "关闭"] },
   { category: "generation", targetKey: "auto_generate_mindmap", title: "自动生成思维导图", description: "摘要完成后自动生成导图。", keywords: ["导图", "mindmap", "自动", "思维导图"] },
+  { category: "generation", targetKey: "prompt_router_mode", title: "Prompt 路由模式", description: "选择自动套用推荐 Prompt，或每次确认后使用。", keywords: ["prompt", "提示词", "路由", "自动", "确认"] },
   { category: "generation", targetKey: "visual_note_mode", title: "图文笔记形式", description: "选择纯文本、插图笔记或 VLM 理解型图文笔记。", keywords: ["视觉", "图片", "截图", "图文笔记", "vlm"] },
   { category: "generation", targetKey: "visual_download_resolution", title: "图文视频分辨率", description: "图文笔记专用视频下载清晰度。", keywords: ["图文", "分辨率", "下载", "截图"] },
   { category: "generation", targetKey: "visual_multimodal_enabled", title: "多模态理解", description: "是否调用 VLM 理解截图。", keywords: ["vlm", "多模态", "视觉", "图片理解"] },
@@ -166,6 +167,8 @@ const SETTINGS_SEARCH_ITEMS: SettingsSearchItem[] = [
   { category: "generation", targetKey: "summary_chunk_target_chars", title: "分块目标字符数", description: "LLM 分块处理的目标长度。", keywords: ["分块", "chunk", "字符", "长度"] },
   { category: "generation", targetKey: "summary_chunk_overlap_segments", title: "分块重叠段数", description: "摘要分块之间保留的重叠段落。", keywords: ["重叠", "overlap", "分块"] },
   { category: "generation", targetKey: "summary_chunk_retry_count", title: "重试次数", description: "摘要 API 失败后的重试次数。", keywords: ["重试", "retry", "失败"] },
+  { category: "prompts", targetKey: "summary_system_prompt", title: "摘要 System Prompt", description: "控制视频摘要生成的角色、风格和整体约束。", keywords: ["摘要", "prompt", "system", "提示词", "风格"] },
+  { category: "prompts", targetKey: "summary_user_prompt_template", title: "摘要 User Template", description: "控制摘要变量、结构和输出格式。", keywords: ["摘要", "template", "模板", "格式", "transcript"] },
   { category: "prompts", targetKey: "knowledge_note_system_prompt", title: "知识笔记 System Prompt", description: "控制知识笔记角色、风格和整体约束。", keywords: ["知识笔记", "prompt", "system", "提示词", "风格"] },
   { category: "prompts", targetKey: "knowledge_note_user_prompt_template", title: "知识笔记 User Template", description: "控制知识笔记变量、结构和 Markdown 格式。", keywords: ["知识笔记", "template", "模板", "格式", "summary_json", "transcript"] },
   { category: "prompts", targetKey: "visual_note_system_prompt", title: "图文笔记 System Prompt", description: "控制 VLM 图文笔记整合风格。", keywords: ["图文笔记", "prompt", "vlm", "图片"] },
@@ -276,9 +279,282 @@ export function SettingsPage({
   const [taskListError, setTaskListError] = useState("");
   const [taskList, setTaskList] = useState<TaskSummary[]>([]);
   const settingsNavRef = useRef<HTMLElement | null>(null);
+  const settingsContentScrollRef = useRef<HTMLDivElement | null>(null);
+  const promptDetailsRefs = useRef<Record<string, HTMLDetailsElement | null>>({});
   const focusTargetRefs = useRef<Record<string, HTMLElement | null>>({});
   const lastHandledExternalFocusNonce = useRef<number | null>(null);
   const silentModelCheckRunId = useRef(0);
+  const [promptPresets, setPromptPresets] = useState<PromptPreset[]>([]);
+  const [promptPresetsLoading, setPromptPresetsLoading] = useState(false);
+  const [expandedPresetIds, setExpandedPresetIds] = useState<Set<string>>(new Set());
+  const [showNewPresetForm, setShowNewPresetForm] = useState(false);
+  const [presetForm, setPresetForm] = useState<PromptPresetCreateRequest>(() => emptyPresetForm());
+  const [presetSaveBusy, setPresetSaveBusy] = useState(false);
+  const [presetStatus, setPresetStatus] = useState("");
+  const [presetDeleteConfirm, setPresetDeleteConfirm] = useState<string | null>(null);
+  const [presetsSectionOpen, setPresetsSectionOpen] = useState(false);
+  const [undoPromptValues, setUndoPromptValues] = useState<Record<string, string> | null>(null);
+  const [promptToolbarClosed, setPromptToolbarClosed] = useState(false);
+  const [promptToolbarTop, setPromptToolbarTop] = useState(96);
+  const promptToolbarDragRef = useRef<{ pointerId: number; startY: number; startTop: number } | null>(null);
+
+  function emptyPresetForm(): PromptPresetCreateRequest {
+    return { name: "", system_prompt: "", user_prompt_template: "", description: "", category: "", auto_match_keywords: [] };
+  }
+
+  function loadPromptPresets() {
+    setPromptPresetsLoading(true);
+    api.listPromptPresets().then((list) => setPromptPresets(list)).catch(() => {}).finally(() => setPromptPresetsLoading(false));
+  }
+
+  function togglePreset(presetId: string, preset: PromptPreset) {
+    setExpandedPresetIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(presetId)) {
+        next.delete(presetId);
+      } else {
+        next.add(presetId);
+        setPresetForm({
+          name: preset.name,
+          system_prompt: preset.system_prompt,
+          user_prompt_template: preset.user_prompt_template,
+          description: preset.description || "",
+          category: preset.category || "",
+          auto_match_keywords: preset.auto_match_keywords || [],
+        });
+        setShowNewPresetForm(false);
+        setPresetStatus("");
+        setPresetDeleteConfirm(null);
+      }
+      return next;
+    });
+  }
+
+  function startNewPreset() {
+    setPresetForm(emptyPresetForm());
+    setShowNewPresetForm(true);
+    setPresetStatus("");
+  }
+
+  function cancelPresetEdit() {
+    setExpandedPresetIds(new Set());
+    setShowNewPresetForm(false);
+    setPresetForm(emptyPresetForm());
+    setPresetStatus("");
+    setPresetDeleteConfirm(null);
+  }
+
+  function closeOnePreset(presetId: string) {
+    setExpandedPresetIds((prev) => {
+      const next = new Set(prev);
+      next.delete(presetId);
+      return next;
+    });
+  }
+
+  function savePreset() {
+    if (!presetForm.name.trim() || !presetForm.system_prompt.trim() || !presetForm.user_prompt_template.trim()) return;
+    setPresetSaveBusy(true);
+    setPresetStatus("保存中...");
+    api.createPromptPreset(presetForm).then(() => {
+      setPresetStatus("保存成功");
+      setShowNewPresetForm(false);
+      setExpandedPresetIds(new Set());
+      loadPromptPresets();
+    }).catch((err) => {
+      setPresetStatus("保存失败: " + (err?.message || String(err)));
+    }).finally(() => setPresetSaveBusy(false));
+  }
+
+  function deletePreset(presetId: string) {
+    setPresetSaveBusy(true);
+    setPresetStatus("删除中...");
+    api.deletePromptPreset(presetId).then(() => {
+      setPresetStatus("删除成功");
+      setPresetDeleteConfirm(null);
+      setExpandedPresetIds(new Set());
+      setShowNewPresetForm(false);
+      loadPromptPresets();
+    }).catch((err) => {
+      setPresetStatus("删除失败: " + (err?.message || String(err)));
+    }).finally(() => setPresetSaveBusy(false));
+  }
+
+  function collapseAllPrompts() {
+    setExpandedPresetIds(new Set());
+    setShowNewPresetForm(false);
+    setPresetDeleteConfirm(null);
+  }
+
+  function collapseAllAndCloseSection() {
+    collapseAllPrompts();
+    setPresetsSectionOpen(false);
+  }
+
+  const builtinPresetCount = promptPresets.filter((p) => p.is_builtin).length;
+  const customPresetCount = promptPresets.length - builtinPresetCount;
+  const visiblePresets = promptPresets;
+
+  function renderPresetCard(preset: PromptPreset) {
+    const isExpanded = expandedPresetIds.has(preset.id);
+    return (
+      <div key={preset.id} className={`settings-preset-card${preset.is_builtin ? " builtin" : ""}`}>
+        <div className="settings-preset-card-header" onClick={() => togglePreset(preset.id, preset)}>
+          <span className="settings-preset-name">
+            {preset.name}
+            {preset.is_builtin && <span className="settings-preset-badge builtin">内置</span>}
+          </span>
+          <span className="settings-preset-meta">
+            {preset.category && <span className="settings-preset-category">{preset.category}</span>}
+            <span className="settings-preset-keywords">{preset.auto_match_keywords?.join("、") || "无匹配关键词"}</span>
+          </span>
+          <span className="settings-preset-expand-hint">{isExpanded ? "收起 ▲" : preset.is_builtin ? "查看内容 ▼" : "展开编辑 ▼"}</span>
+        </div>
+        {(isExpanded && !preset.is_builtin) && (
+          <div className="settings-preset-edit-body">
+            {presetDeleteConfirm === preset.id ? (
+              <div className="settings-preset-delete-confirm">
+                <strong>确定删除「{preset.name}」？</strong>
+                <button className="secondary-button" type="button" onClick={() => setPresetDeleteConfirm(null)}>取消</button>
+                <button className="primary-button danger" type="button" disabled={presetSaveBusy} onClick={() => deletePreset(preset.id)}>
+                  {presetSaveBusy ? "删除中..." : "确认删除"}
+                </button>
+              </div>
+            ) : (
+              <>
+                <label className="settings-input-group settings-preset-field">
+                  <span className="settings-input-label">名称</span>
+                  <input className="settings-input-field" value={presetForm.name} onChange={(e) => setPresetForm({ ...presetForm, name: e.target.value })} />
+                </label>
+                <label className="settings-input-group settings-preset-field">
+                  <span className="settings-input-label">描述</span>
+                  <input className="settings-input-field" value={presetForm.description || ""} onChange={(e) => setPresetForm({ ...presetForm, description: e.target.value })} />
+                </label>
+                <label className="settings-input-group settings-preset-field">
+                  <span className="settings-input-label">分类</span>
+                  <input className="settings-input-field" value={presetForm.category || ""} onChange={(e) => setPresetForm({ ...presetForm, category: e.target.value })} placeholder="例如: 教程、会议、娱乐" />
+                </label>
+                <label className="settings-input-group settings-preset-field">
+                  <span className="settings-input-label">自动匹配关键词（逗号分隔）</span>
+                  <input className="settings-input-field" value={presetForm.auto_match_keywords?.join("、") || ""} onChange={(e) => setPresetForm({ ...presetForm, auto_match_keywords: e.target.value.split(/[,，、]/).map((s) => s.trim()).filter(Boolean) })} placeholder="例如: 教程、教学、入门、实操" />
+                </label>
+                <label className="settings-input-group settings-preset-field">
+                  <span className="settings-input-label">System Prompt</span>
+                  <textarea className="textarea-field" rows={4} value={presetForm.system_prompt} onChange={(e) => setPresetForm({ ...presetForm, system_prompt: e.target.value })} />
+                </label>
+                <label className="settings-input-group settings-preset-field">
+                  <span className="settings-input-label">User Template</span>
+                  <textarea className="textarea-field" rows={10} value={presetForm.user_prompt_template} onChange={(e) => setPresetForm({ ...presetForm, user_prompt_template: e.target.value })} />
+                  <span className="settings-input-caption">可用变量：{"{title}"}、{"{transcript}"}、{"{segments_json}"}。</span>
+                </label>
+                <div className="settings-preset-actions">
+                  <button className="primary-button" type="button" disabled={presetSaveBusy} onClick={savePreset}>
+                    {presetSaveBusy ? "保存中..." : "保存修改"}
+                  </button>
+                  <button className="secondary-button" type="button" onClick={() => closeOnePreset(preset.id)}>收起</button>
+                  <button className="secondary-button danger" type="button" onClick={() => setPresetDeleteConfirm(preset.id)}>删除</button>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+        {(isExpanded && preset.is_builtin) && (
+          <div className="settings-preset-view-body">
+            <p className="settings-preset-desc">{preset.description || "（无描述）"}</p>
+            <pre className="settings-preset-preview"><strong>System:</strong>{"\n"}{preset.system_prompt}{"\n\n"}<strong>User Template:</strong>{"\n"}{preset.user_prompt_template}</pre>
+            <button className="secondary-button" type="button" onClick={() => closeOnePreset(preset.id)}>收起</button>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // Track outermost <details> open state for sticky header
+  const [outerSectionsOpen, setOuterSectionsOpen] = useState<Set<string>>(new Set());
+  const hasOuterSectionsOpen = outerSectionsOpen.size > 0;
+
+  function collapseAllOuter() {
+    Object.values(promptDetailsRefs.current).forEach((node) => {
+      if (node) {
+        node.open = false;
+      }
+    });
+    setOuterSectionsOpen(new Set());
+    setPresetsSectionOpen(false);
+    collapseAllPrompts();
+  }
+
+  function scrollSettingsToTop() {
+    const target = settingsContentScrollRef.current;
+    target?.scrollIntoView({ behavior: "smooth", block: "start" });
+    target?.scrollTo({ top: 0, behavior: "smooth" });
+    target?.closest(".settings-content")?.scrollTo({ top: 0, behavior: "smooth" });
+    document.querySelector(".app-main")?.scrollTo({ top: 0, behavior: "smooth" });
+    document.querySelector(".app-content")?.scrollTo({ top: 0, behavior: "smooth" });
+    document.scrollingElement?.scrollTo({ top: 0, behavior: "smooth" });
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  function clampPromptToolbarTop(value: number) {
+    if (typeof window === "undefined") {
+      return value;
+    }
+    return Math.max(64, Math.min(value, window.innerHeight - 96));
+  }
+
+  function startPromptToolbarDrag(event: PointerEvent<HTMLDivElement>) {
+    if (event.button !== 0) {
+      return;
+    }
+    event.currentTarget.setPointerCapture(event.pointerId);
+    promptToolbarDragRef.current = {
+      pointerId: event.pointerId,
+      startY: event.clientY,
+      startTop: promptToolbarTop,
+    };
+  }
+
+  function movePromptToolbarDrag(event: PointerEvent<HTMLDivElement>) {
+    const drag = promptToolbarDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) {
+      return;
+    }
+    setPromptToolbarTop(clampPromptToolbarTop(drag.startTop + event.clientY - drag.startY));
+  }
+
+  function endPromptToolbarDrag(event: PointerEvent<HTMLDivElement>) {
+    const drag = promptToolbarDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) {
+      return;
+    }
+    promptToolbarDragRef.current = null;
+    try {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    } catch {}
+  }
+
+  function handleOuterToggle(name: string, e: React.SyntheticEvent<HTMLDetailsElement>) {
+    const open = (e.target as HTMLDetailsElement).open;
+    setOuterSectionsOpen((prev) => {
+      const next = new Set(prev);
+      if (open) next.add(name);
+      else next.delete(name);
+      return next;
+    });
+  }
+
+  function handlePresetsSectionToggle() {
+    setPresetsSectionOpen((v) => {
+      const next = !v;
+      setOuterSectionsOpen((prev) => {
+        const n = new Set(prev);
+        if (next) n.add("presets");
+        else n.delete("presets");
+        return n;
+      });
+      return next;
+    });
+  }
 
   useLayoutEffect(() => {
     const node = settingsNavRef.current;
@@ -328,6 +604,21 @@ export function SettingsPage({
       void refreshRuntimeStatus({ silent: true });
     }, 30 * 60 * 1000);
     return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    if (activeCategory === "prompts") {
+      setPromptToolbarClosed(false);
+      loadPromptPresets();
+    }
+  }, [activeCategory]);
+
+  useEffect(() => {
+    function handleResize() {
+      setPromptToolbarTop((top) => clampPromptToolbarTop(top));
+    }
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
   }, []);
 
   useEffect(() => {
@@ -789,18 +1080,59 @@ export function SettingsPage({
     });
   }
 
+  function updateUndoPromptValues(oldValues: Record<string, string>) {
+    if (Object.keys(oldValues).length === 0) {
+      setUndoPromptValues(null);
+      return;
+    }
+    setUndoPromptValues((prev) => ({ ...(prev || {}), ...oldValues }));
+  }
+
+  function undoPromptReset() {
+    if (!form || !undoPromptValues) return;
+    updateForm({ ...form, ...undoPromptValues });
+    setUndoPromptValues(null);
+  }
+
+  function resetSummaryPrompt(field: "system" | "template") {
+    if (!form) return;
+    const defaultSystemPrompt = form.defaults?.summary_system_prompt || "";
+    const defaultUserTemplate = form.defaults?.summary_user_prompt_template || "";
+    const newSystemPrompt = field === "system" ? (defaultSystemPrompt || form.summary_system_prompt) : form.summary_system_prompt;
+    const newUserTemplate = field === "template" ? (defaultUserTemplate || form.summary_user_prompt_template) : form.summary_user_prompt_template;
+    const oldValues: Record<string, string> = {};
+    if (field === "system" && form.summary_system_prompt !== newSystemPrompt) {
+      oldValues.summary_system_prompt = form.summary_system_prompt || "";
+    }
+    if (field === "template" && form.summary_user_prompt_template !== newUserTemplate) {
+      oldValues.summary_user_prompt_template = form.summary_user_prompt_template || "";
+    }
+    updateUndoPromptValues(oldValues);
+    updateForm({
+      ...form,
+      summary_system_prompt: newSystemPrompt,
+      summary_user_prompt_template: newUserTemplate,
+    });
+  }
+
   function resetKnowledgeNotePrompt(field: "system" | "template") {
     if (!form) return;
     const defaultSystemPrompt = form.defaults?.knowledge_note_system_prompt || form.knowledge_note_system_prompt;
     const defaultUserTemplate = form.defaults?.knowledge_note_user_prompt_template || form.knowledge_note_user_prompt_template;
+    const newSystemPrompt = field === "system" ? defaultSystemPrompt : form.knowledge_note_system_prompt;
+    const newUserTemplate = field === "template" ? defaultUserTemplate : form.knowledge_note_user_prompt_template;
+    const oldValues: Record<string, string> = {};
+    if (field === "system" && form.knowledge_note_system_prompt !== newSystemPrompt) {
+      oldValues.knowledge_note_system_prompt = form.knowledge_note_system_prompt || "";
+    }
+    if (field === "template" && form.knowledge_note_user_prompt_template !== newUserTemplate) {
+      oldValues.knowledge_note_user_prompt_template = form.knowledge_note_user_prompt_template || "";
+    }
+    updateUndoPromptValues(oldValues);
     updateForm({
       ...form,
-      knowledge_note_system_prompt: field === "system"
-        ? defaultSystemPrompt
-        : form.knowledge_note_system_prompt,
-      knowledge_note_user_prompt_template: field === "template"
-        ? defaultUserTemplate
-        : form.knowledge_note_user_prompt_template,
+      knowledge_note_system_prompt: newSystemPrompt,
+      knowledge_note_user_prompt_template: newUserTemplate,
     });
   }
 
@@ -810,20 +1142,30 @@ export function SettingsPage({
     const defaultUserTemplate = form.defaults?.visual_note_user_prompt_template || form.visual_note_user_prompt_template;
     const defaultPlanningPrompt = form.defaults?.visual_frame_planning_prompt || form.visual_frame_planning_prompt;
     const defaultVlmPrompt = form.defaults?.visual_vlm_prompt || form.visual_vlm_prompt;
+    const newSystemPrompt = field === "system" ? defaultSystemPrompt : form.visual_note_system_prompt;
+    const newUserTemplate = field === "template" ? defaultUserTemplate : form.visual_note_user_prompt_template;
+    const newPlanningPrompt = field === "planning" ? defaultPlanningPrompt : form.visual_frame_planning_prompt;
+    const newVlmPrompt = field === "vlm" ? defaultVlmPrompt : form.visual_vlm_prompt;
+    const oldValues: Record<string, string> = {};
+    if (field === "system" && form.visual_note_system_prompt !== newSystemPrompt) {
+      oldValues.visual_note_system_prompt = form.visual_note_system_prompt || "";
+    }
+    if (field === "template" && form.visual_note_user_prompt_template !== newUserTemplate) {
+      oldValues.visual_note_user_prompt_template = form.visual_note_user_prompt_template || "";
+    }
+    if (field === "planning" && form.visual_frame_planning_prompt !== newPlanningPrompt) {
+      oldValues.visual_frame_planning_prompt = form.visual_frame_planning_prompt || "";
+    }
+    if (field === "vlm" && form.visual_vlm_prompt !== newVlmPrompt) {
+      oldValues.visual_vlm_prompt = form.visual_vlm_prompt || "";
+    }
+    updateUndoPromptValues(oldValues);
     updateForm({
       ...form,
-      visual_note_system_prompt: field === "system"
-        ? defaultSystemPrompt
-        : form.visual_note_system_prompt,
-      visual_note_user_prompt_template: field === "template"
-        ? defaultUserTemplate
-        : form.visual_note_user_prompt_template,
-      visual_frame_planning_prompt: field === "planning"
-        ? defaultPlanningPrompt
-        : form.visual_frame_planning_prompt,
-      visual_vlm_prompt: field === "vlm"
-        ? defaultVlmPrompt
-        : form.visual_vlm_prompt,
+      visual_note_system_prompt: newSystemPrompt,
+      visual_note_user_prompt_template: newUserTemplate,
+      visual_frame_planning_prompt: newPlanningPrompt,
+      visual_vlm_prompt: newVlmPrompt,
     });
   }
 
@@ -878,6 +1220,78 @@ export function SettingsPage({
         message: "请先填写 LLM API Base URL。",
         category: "generation",
         targetKey: "llm_base_url",
+      };
+    }
+    const promptValidationError = validatePromptTemplates(nextForm);
+    if (promptValidationError) {
+      return promptValidationError;
+    }
+    return null;
+  }
+
+  function hasAllPromptTokens(template: string, tokens: string[]) {
+    return tokens.every((token) => template.includes(token));
+  }
+
+  function validatePromptTemplates(nextForm: ServiceSettings): { message: string; category: SettingsCategory; targetKey: string } | null {
+    const summaryTemplate = String(nextForm.summary_user_prompt_template || "");
+    if (!hasAllPromptTokens(summaryTemplate, ["{title}", "{transcript}", "{segments_json}"])) {
+      return {
+        message: "摘要 User Template 需要保留 {title}、{transcript}、{segments_json} 变量，否则任务无法稳定生成摘要。",
+        category: "prompts",
+        targetKey: "summary_user_prompt_template",
+      };
+    }
+    for (const fieldName of ["title", "overview", "bulletPoints", "chapters", "chapterGroups"]) {
+      if (!summaryTemplate.includes(fieldName)) {
+        return {
+          message: `摘要 User Template 需要保留 ${fieldName} 输出字段约束。`,
+          category: "prompts",
+          targetKey: "summary_user_prompt_template",
+        };
+      }
+    }
+
+    const knowledgeTemplate = String(nextForm.knowledge_note_user_prompt_template || "");
+    if (!hasAllPromptTokens(knowledgeTemplate, ["{title}", "{summary_json}"])) {
+      return {
+        message: "知识笔记 User Template 至少需要保留 {title} 与 {summary_json} 变量。",
+        category: "prompts",
+        targetKey: "knowledge_note_user_prompt_template",
+      };
+    }
+    if (!knowledgeTemplate.includes("knowledgeNoteMarkdown")) {
+      return {
+        message: "知识笔记 User Template 需要保留 knowledgeNoteMarkdown 输出字段，否则任务会解析失败。",
+        category: "prompts",
+        targetKey: "knowledge_note_user_prompt_template",
+      };
+    }
+
+    const visualPlanningPrompt = String(nextForm.visual_frame_planning_prompt || "");
+    if (!hasAllPromptTokens(visualPlanningPrompt, ["{title}", "{summary_json}", "{max_frames}"])) {
+      return {
+        message: "捕获帧规划 Prompt 需要保留 {title}、{summary_json}、{max_frames} 变量。",
+        category: "prompts",
+        targetKey: "visual_frame_planning_prompt",
+      };
+    }
+
+    const visualVlmPrompt = String(nextForm.visual_vlm_prompt || "");
+    if (!hasAllPromptTokens(visualVlmPrompt, ["{title}", "{timestamp}", "{context}"])) {
+      return {
+        message: "画面理解 Prompt 需要保留 {title}、{timestamp}、{context} 变量。",
+        category: "prompts",
+        targetKey: "visual_vlm_prompt",
+      };
+    }
+
+    const visualNoteTemplate = String(nextForm.visual_note_user_prompt_template || "");
+    if (!hasAllPromptTokens(visualNoteTemplate, ["{title}", "{knowledge_note_markdown}", "{visual_observations_json}"])) {
+      return {
+        message: "图文笔记 User Template 需要保留 {title}、{knowledge_note_markdown}、{visual_observations_json} 变量。",
+        category: "prompts",
+        targetKey: "visual_note_user_prompt_template",
       };
     }
     return null;
@@ -1431,7 +1845,7 @@ export function SettingsPage({
       </aside>
 
       <main className="settings-content">
-        <div className="settings-content-scroll">
+        <div className="settings-content-scroll" ref={settingsContentScrollRef}>
           <section className="settings-search-panel" aria-label="搜索设置">
             <div className="settings-search-box">
               <SearchIcon className="settings-search-icon" aria-hidden="true" />
@@ -2301,6 +2715,18 @@ export function SettingsPage({
                       </select>
                       <span className="settings-input-caption">关闭后仍可在详情页手动生成。</span>
                     </label>
+                    <label className="settings-input-group" ref={registerFocusTarget("prompt_router_mode") as (node: HTMLLabelElement | null) => void}>
+                      <span className="settings-input-label">Prompt 路由模式</span>
+                      <select
+                        className="settings-select-field"
+                        value={form.prompt_router_mode || "confirm"}
+                        onChange={(e) => updateForm({ ...form, prompt_router_mode: e.target.value })}
+                      >
+                        <option value="confirm">确认后使用推荐</option>
+                        <option value="auto">自动套用推荐</option>
+                      </select>
+                      <span className="settings-input-caption">首页会根据标题推荐摘要 Prompt。</span>
+                    </label>
                     <label className="settings-input-group" ref={registerFocusTarget("visual_note_mode") as (node: HTMLLabelElement | null) => void}>
                       <span className="settings-input-label">知识笔记形式</span>
                       <select
@@ -2607,49 +3033,214 @@ export function SettingsPage({
                 <h2>提示词</h2>
                 <p>这里属于高级个性化区域。想改变知识笔记风格时再调整，日常使用保持默认即可。</p>
               </header>
-              <div className="settings-form-group">
-                <label className="settings-input-group" ref={registerFocusTarget("knowledge_note_system_prompt") as (node: HTMLLabelElement | null) => void}>
-                  <span className="settings-input-label">知识笔记 System Prompt</span>
-                  <textarea
-                    className="textarea-field"
-                    rows={5}
-                    value={form.knowledge_note_system_prompt || ""}
-                    onChange={(e) => updateForm({ ...form, knowledge_note_system_prompt: e.target.value })}
-                  />
-                  <div className="settings-inline-actions">
-                    <button className="secondary-button" type="button" onClick={() => resetKnowledgeNotePrompt("system")}>
-                      恢复默认
-                    </button>
-                    <span className="settings-input-caption">控制知识笔记生成时的角色、风格和整体约束。</span>
-                  </div>
-                </label>
-                <label className="settings-input-group" ref={registerFocusTarget("knowledge_note_user_prompt_template") as (node: HTMLLabelElement | null) => void}>
-                  <span className="settings-input-label">知识笔记 User Template</span>
-                  <textarea
-                    className="textarea-field"
-                    rows={14}
-                    value={form.knowledge_note_user_prompt_template || ""}
-                    onChange={(e) => updateForm({ ...form, knowledge_note_user_prompt_template: e.target.value })}
-                  />
-                  <div className="settings-inline-actions">
-                    <button className="secondary-button" type="button" onClick={() => resetKnowledgeNotePrompt("template")}>
-                      恢复默认
-                    </button>
-                    <span className="settings-input-caption">
-                      可用变量：{"{title}"}、{"{transcript_excerpt}"}、{"{segments_excerpt}"}、{"{summary_json}"}。
-                    </span>
-                  </div>
-                </label>
-                <div className="settings-guide-card">
-                  <div>
-                    <strong>想调整知识笔记样式？</strong>
-                    <span>查看变量、默认结构和常见改法，避免破坏 JSON 输出格式。</span>
-                  </div>
-                  <button className="secondary-button" type="button" onClick={() => setKnowledgePromptGuideOpen(true)}>
-                    打开教程
+              <div className="settings-inline-alert info settings-prompt-scope-alert">
+                <strong>生效范围</strong>
+                <span>首页选择的 Prompt 预设只影响摘要生成；知识笔记和图文笔记使用下方全局模板。恢复默认或修改模板后，需要点击左侧“保存设置”才会生效。</span>
+              </div>
+              {hasOuterSectionsOpen && !promptToolbarClosed && (
+                <div className="settings-prompt-global-sticky" style={{ top: promptToolbarTop }}>
+                  <button
+                    className="settings-prompt-toolbar-close"
+                    type="button"
+                    aria-label="关闭提示词悬浮栏"
+                    title="关闭提示词悬浮栏"
+                    onClick={() => setPromptToolbarClosed(true)}
+                  >
+                    ×
                   </button>
+                  <div
+                    className="settings-prompt-toolbar-drag"
+                    role="separator"
+                    aria-orientation="vertical"
+                    aria-label="拖动提示词悬浮栏"
+                    title="上下拖动"
+                    onPointerDown={startPromptToolbarDrag}
+                    onPointerMove={movePromptToolbarDrag}
+                    onPointerUp={endPromptToolbarDrag}
+                    onPointerCancel={endPromptToolbarDrag}
+                  >
+                    <span aria-hidden="true" />
+                    <span aria-hidden="true" />
+                    <span aria-hidden="true" />
+                  </div>
+                  <span className="settings-prompt-toolbar-title">提示词 — {outerSectionsOpen.size} 个分类已展开</span>
+                  <button className="secondary-button" type="button" onClick={(e) => { e.preventDefault(); collapseAllOuter(); }}>折叠所有</button>
                 </div>
-                <label className="settings-input-group" ref={registerFocusTarget("visual_note_system_prompt") as (node: HTMLLabelElement | null) => void}>
+              )}
+              <details className="settings-prompt-collapse" ref={(node) => { promptDetailsRefs.current.summary = node; }} onToggle={(e) => handleOuterToggle("summary", e)}>
+                <summary className="settings-prompt-collapse-summary">摘要 Prompt（核心）— 控制视频摘要生成，点击展开</summary>
+                <div className="settings-form-group">
+                  <label className="settings-input-group" ref={registerFocusTarget("summary_system_prompt") as (node: HTMLLabelElement | null) => void}>
+                    <span className="settings-input-label">摘要 System Prompt</span>
+                    <textarea
+                      className="textarea-field"
+                      rows={5}
+                      value={form.summary_system_prompt || ""}
+                      onChange={(e) => updateForm({ ...form, summary_system_prompt: e.target.value })}
+                    />
+                    <div className="settings-inline-actions">
+                      <button className="secondary-button" type="button" onClick={() => resetSummaryPrompt("system")}>
+                        恢复默认
+                      </button>
+                      {undoPromptValues?.summary_system_prompt !== undefined && (
+                        <button className="secondary-button" type="button" onClick={undoPromptReset}>回退设置</button>
+                      )}
+                      <span className="settings-input-caption">控制视频摘要生成时的角色、风格和整体约束。</span>
+                    </div>
+                  </label>
+                  <label className="settings-input-group" ref={registerFocusTarget("summary_user_prompt_template") as (node: HTMLLabelElement | null) => void}>
+                    <span className="settings-input-label">摘要 User Template</span>
+                    <textarea
+                      className="textarea-field"
+                      rows={14}
+                      value={form.summary_user_prompt_template || ""}
+                      onChange={(e) => updateForm({ ...form, summary_user_prompt_template: e.target.value })}
+                    />
+                    <div className="settings-inline-actions">
+                      <button className="secondary-button" type="button" onClick={() => resetSummaryPrompt("template")}>
+                        恢复默认
+                      </button>
+                      {undoPromptValues?.summary_user_prompt_template !== undefined && (
+                        <button className="secondary-button" type="button" onClick={undoPromptReset}>回退设置</button>
+                      )}
+                      <span className="settings-input-caption">
+                        可用变量：{"{title}"}、{"{transcript}"}、{"{segments_json}"}。生成 JSON 包含 title/overview/bulletPoints/chapters/chapterGroups。
+                      </span>
+                    </div>
+                  </label>
+                </div>
+              </details>
+
+              {/* Custom collapse for presets section (no native <details> — breaks position:sticky) */}
+              <div className={`settings-prompt-collapse${presetsSectionOpen ? " open" : ""}`}>
+                <div
+                  className="settings-prompt-collapse-summary"
+                  role="button"
+                  tabIndex={0}
+                  onClick={handlePresetsSectionToggle}
+                  onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); handlePresetsSectionToggle(); }}}
+                >
+                  Prompt 预设库（内置 {builtinPresetCount} 个 / 自定义 {customPresetCount} 个），点击展开
+                </div>
+                {presetsSectionOpen && (
+                  <div className="settings-form-group" style={{ position: "relative" }}>
+                    <div className="settings-inline-alert info">
+                      <strong>摘要预设</strong>
+                      <span>这些预设用于首页 Prompt 下拉框和自动推荐，只替换摘要 System Prompt / User Template。内置预设可查看内容，自定义预设可编辑或删除。</span>
+                    </div>
+                    {promptPresetsLoading ? (
+                      <span className="settings-input-caption">加载中...</span>
+                    ) : promptPresets.length === 0 ? (
+                      <span className="settings-input-caption">暂无预设</span>
+                    ) : (
+                      <>
+                        {visiblePresets.map(renderPresetCard)}
+                      </>
+                    )}
+                    {showNewPresetForm && (
+                      <div className="settings-preset-card new">
+                        <div className="settings-preset-edit-body">
+                          <h4>新建预设</h4>
+                          <label className="settings-input-group settings-preset-field">
+                            <span className="settings-input-label">名称 *</span>
+                            <input className="settings-input-field" value={presetForm.name} onChange={(e) => setPresetForm({ ...presetForm, name: e.target.value })} placeholder="预设名称（用作 ID）" />
+                          </label>
+                          <label className="settings-input-group settings-preset-field">
+                            <span className="settings-input-label">描述</span>
+                            <input className="settings-input-field" value={presetForm.description || ""} onChange={(e) => setPresetForm({ ...presetForm, description: e.target.value })} />
+                          </label>
+                          <label className="settings-input-group settings-preset-field">
+                            <span className="settings-input-label">分类</span>
+                            <input className="settings-input-field" value={presetForm.category || ""} onChange={(e) => setPresetForm({ ...presetForm, category: e.target.value })} placeholder="例如: 教程、会议、娱乐" />
+                          </label>
+                          <label className="settings-input-group settings-preset-field">
+                            <span className="settings-input-label">自动匹配关键词（逗号分隔）</span>
+                            <input className="settings-input-field" value={presetForm.auto_match_keywords?.join("、") || ""} onChange={(e) => setPresetForm({ ...presetForm, auto_match_keywords: e.target.value.split(/[,，、]/).map((s) => s.trim()).filter(Boolean) })} placeholder="例如: 教程、教学、入门" />
+                          </label>
+                          <label className="settings-input-group settings-preset-field">
+                            <span className="settings-input-label">System Prompt *</span>
+                            <textarea className="textarea-field" rows={4} value={presetForm.system_prompt} onChange={(e) => setPresetForm({ ...presetForm, system_prompt: e.target.value })} />
+                          </label>
+                          <label className="settings-input-group settings-preset-field">
+                            <span className="settings-input-label">User Template *</span>
+                            <textarea className="textarea-field" rows={10} value={presetForm.user_prompt_template} onChange={(e) => setPresetForm({ ...presetForm, user_prompt_template: e.target.value })} />
+                          </label>
+                          <div className="settings-preset-actions">
+                            <button className="primary-button" type="button" disabled={presetSaveBusy} onClick={savePreset}>
+                              {presetSaveBusy ? "创建中..." : "创建预设"}
+                            </button>
+                            <button className="secondary-button" type="button" onClick={cancelPresetEdit}>取消</button>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                    {presetStatus && <p className="settings-input-caption" style={{ marginTop: 8, color: presetStatus.includes("失败") ? "var(--danger)" : "var(--success)" }}>{presetStatus}</p>}
+                    {!showNewPresetForm && !promptPresetsLoading && (
+                      <button className="secondary-button" type="button" onClick={startNewPreset} style={{ marginTop: 12 }}>
+                        + 新建预设
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              <details className="settings-prompt-collapse" ref={(node) => { promptDetailsRefs.current.knowledge = node; }} onToggle={(e) => handleOuterToggle("knowledge", e)}>
+                <summary className="settings-prompt-collapse-summary">知识笔记 Prompt — 控制知识笔记生成风格，点击展开</summary>
+                <div className="settings-form-group">
+                  <label className="settings-input-group" ref={registerFocusTarget("knowledge_note_system_prompt") as (node: HTMLLabelElement | null) => void}>
+                    <span className="settings-input-label">知识笔记 System Prompt</span>
+                    <textarea
+                      className="textarea-field"
+                      rows={5}
+                      value={form.knowledge_note_system_prompt || ""}
+                      onChange={(e) => updateForm({ ...form, knowledge_note_system_prompt: e.target.value })}
+                    />
+                    <div className="settings-inline-actions">
+                      <button className="secondary-button" type="button" onClick={() => resetKnowledgeNotePrompt("system")}>
+                        恢复默认
+                      </button>
+                      {undoPromptValues?.knowledge_note_system_prompt !== undefined && (
+                        <button className="secondary-button" type="button" onClick={undoPromptReset}>回退设置</button>
+                      )}
+                      <span className="settings-input-caption">控制知识笔记生成时的角色、风格和整体约束。</span>
+                    </div>
+                  </label>
+                  <label className="settings-input-group" ref={registerFocusTarget("knowledge_note_user_prompt_template") as (node: HTMLLabelElement | null) => void}>
+                    <span className="settings-input-label">知识笔记 User Template</span>
+                    <textarea
+                      className="textarea-field"
+                      rows={14}
+                      value={form.knowledge_note_user_prompt_template || ""}
+                      onChange={(e) => updateForm({ ...form, knowledge_note_user_prompt_template: e.target.value })}
+                    />
+                    <div className="settings-inline-actions">
+                      <button className="secondary-button" type="button" onClick={() => resetKnowledgeNotePrompt("template")}>
+                        恢复默认
+                      </button>
+                      {undoPromptValues?.knowledge_note_user_prompt_template !== undefined && (
+                        <button className="secondary-button" type="button" onClick={undoPromptReset}>回退设置</button>
+                      )}
+                      <span className="settings-input-caption">
+                        可用变量：{"{title}"}、{"{transcript_excerpt}"}、{"{segments_excerpt}"}、{"{summary_json}"}。
+                      </span>
+                    </div>
+                  </label>
+                  <div className="settings-guide-card">
+                    <div>
+                      <strong>想调整知识笔记样式？</strong>
+                      <span>查看变量、默认结构和常见改法，避免破坏 JSON 输出格式。</span>
+                    </div>
+                    <button className="secondary-button" type="button" onClick={() => setKnowledgePromptGuideOpen(true)}>
+                      打开教程
+                    </button>
+                  </div>
+                </div>
+              </details>
+
+              <details className="settings-prompt-collapse" ref={(node) => { promptDetailsRefs.current.visual = node; }} onToggle={(e) => handleOuterToggle("visual", e)}>
+                <summary className="settings-prompt-collapse-summary">图文笔记 Prompt — 控制 VLM 图文笔记和关键帧解析，点击展开</summary>
+                <div className="settings-form-group">
+                  <label className="settings-input-group" ref={registerFocusTarget("visual_note_system_prompt") as (node: HTMLLabelElement | null) => void}>
                   <span className="settings-input-label">图文笔记 System Prompt</span>
                   <textarea
                     className="textarea-field"
@@ -2661,6 +3252,9 @@ export function SettingsPage({
                     <button className="secondary-button" type="button" onClick={() => resetVisualNotePrompt("system")}>
                       恢复默认
                     </button>
+                    {undoPromptValues?.visual_note_system_prompt !== undefined && (
+                      <button className="secondary-button" type="button" onClick={undoPromptReset}>回退设置</button>
+                    )}
                     <span className="settings-input-caption">控制理解型图文笔记如何把图片解析整合进正文。</span>
                   </div>
                 </label>
@@ -2676,6 +3270,9 @@ export function SettingsPage({
                     <button className="secondary-button" type="button" onClick={() => resetVisualNotePrompt("planning")}>
                       恢复默认
                     </button>
+                    {undoPromptValues?.visual_frame_planning_prompt !== undefined && (
+                      <button className="secondary-button" type="button" onClick={undoPromptReset}>回退设置</button>
+                    )}
                     <span className="settings-input-caption">
                       可用变量：{"{title}"}、{"{summary_json}"}、{"{knowledge_note_markdown}"}、{"{segments_excerpt}"}、{"{max_frames}"}。
                     </span>
@@ -2693,6 +3290,9 @@ export function SettingsPage({
                     <button className="secondary-button" type="button" onClick={() => resetVisualNotePrompt("vlm")}>
                       恢复默认
                     </button>
+                    {undoPromptValues?.visual_vlm_prompt !== undefined && (
+                      <button className="secondary-button" type="button" onClick={undoPromptReset}>回退设置</button>
+                    )}
                     <span className="settings-input-caption">
                       可用变量：{"{title}"}、{"{timestamp}"}、{"{context}"}。
                     </span>
@@ -2710,12 +3310,17 @@ export function SettingsPage({
                     <button className="secondary-button" type="button" onClick={() => resetVisualNotePrompt("template")}>
                       恢复默认
                     </button>
+                    {undoPromptValues?.visual_note_user_prompt_template !== undefined && (
+                      <button className="secondary-button" type="button" onClick={undoPromptReset}>回退设置</button>
+                    )}
                     <span className="settings-input-caption">
                       可用变量：{"{title}"}、{"{knowledge_note_markdown}"}、{"{visual_observations_json}"}。
                     </span>
                   </div>
                 </label>
-              </div>
+                </div>
+              </details>
+
             </section>
           )}
 
@@ -3242,6 +3847,15 @@ export function SettingsPage({
               </div>
             </section>
           )}
+          <button
+            className="settings-collapse-all-fab"
+            type="button"
+            aria-label="回到顶部"
+            onClick={(e) => { e.preventDefault(); scrollSettingsToTop(); }}
+            title="回到顶部"
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="18 15 12 9 6 15"/><line x1="12" y1="9" x2="12" y2="21"/><line x1="6" y1="3" x2="18" y2="3"/></svg>
+          </button>
         </div>
       </main>
       {generationModelDialog ? (

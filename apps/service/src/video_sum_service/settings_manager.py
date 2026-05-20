@@ -5,16 +5,15 @@ from pathlib import Path
 from typing import Literal
 
 from pydantic import BaseModel
-
 from video_sum_infra.config import (
-    DEFAULT_VISUAL_FRAME_PLANNING_PROMPT,
     DEFAULT_KNOWLEDGE_NOTE_SYSTEM_PROMPT,
     DEFAULT_KNOWLEDGE_NOTE_USER_PROMPT_TEMPLATE,
     DEFAULT_SUMMARY_SYSTEM_PROMPT,
     DEFAULT_SUMMARY_USER_PROMPT_TEMPLATE,
-    DEFAULT_VISUAL_VLM_PROMPT,
+    DEFAULT_VISUAL_FRAME_PLANNING_PROMPT,
     DEFAULT_VISUAL_NOTE_SYSTEM_PROMPT,
     DEFAULT_VISUAL_NOTE_USER_PROMPT_TEMPLATE,
+    DEFAULT_VISUAL_VLM_PROMPT,
     LEGACY_SUMMARY_SYSTEM_PROMPT,
     LEGACY_SUMMARY_USER_PROMPT_TEMPLATE,
     PREVIOUS_DEFAULT_SUMMARY_SYSTEM_PROMPT,
@@ -71,6 +70,8 @@ class SettingsUpdatePayload(BaseModel):
     enable_cache: bool | None = None
     language: str | None = None
     summary_mode: str | None = None
+    prompt_router_mode: str | None = None
+    prompt_presets_path: str | None = None
     llm_enabled: bool | None = None
     auto_generate_mindmap: bool | None = None
     visual_note_mode: str | None = None

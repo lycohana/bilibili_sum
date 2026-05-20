@@ -832,6 +832,285 @@
   border: 1px solid var(--settings-border);
 }
 
+.settings-prompt-collapse {
+  margin-bottom: 18px;
+}
+
+.settings-prompt-collapse > summary,
+.settings-prompt-collapse-summary {
+  cursor: pointer;
+  padding: 14px 20px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+  background: var(--settings-muted-bg);
+  border: 1px solid var(--settings-border);
+  border-radius: 12px;
+  user-select: none;
+  transition: background 0.15s;
+}
+
+.settings-prompt-collapse > summary:hover,
+.settings-prompt-collapse-summary:hover {
+  background: var(--settings-hover-bg, var(--settings-border));
+}
+
+.settings-prompt-collapse[open] > summary,
+.settings-prompt-collapse.open > .settings-prompt-collapse-summary {
+  border-radius: 12px 12px 0 0;
+  border-bottom: 1px dashed var(--settings-border);
+  margin-bottom: 0;
+}
+
+.settings-prompt-collapse .settings-form-group {
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+  border-top: none;
+  overflow: visible;
+}
+
+/* ---- Prompt Preset Cards ---- */
+.settings-preset-card {
+  border: 1px solid var(--settings-border);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--bg);
+  transition: border-color 0.15s;
+}
+.settings-preset-card.new {
+  border-color: var(--primary);
+  border-style: dashed;
+}
+.settings-preset-card-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.12s;
+}
+.settings-preset-card-header:hover {
+  background: var(--settings-muted-bg);
+}
+.settings-preset-name {
+  font-weight: 600;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 100px;
+}
+.settings-preset-badge {
+  font-size: 11px;
+  font-weight: 500;
+  padding: 1px 7px;
+  border-radius: 6px;
+  line-height: 1.5;
+}
+.settings-preset-badge.builtin {
+  background: var(--primary-muted, #e8f0fe);
+  color: var(--primary);
+}
+.settings-preset-badge.custom {
+  background: var(--success-muted, #e6f4ea);
+  color: var(--success, #1e8e3e);
+}
+.settings-preset-meta {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  overflow: hidden;
+}
+.settings-preset-category {
+  background: var(--settings-muted-bg);
+  padding: 1px 8px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+.settings-preset-keywords {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.settings-preset-expand-hint {
+  font-size: 12px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+.settings-preset-edit-body,
+.settings-preset-view-body {
+  padding: 16px;
+  border-top: 1px solid var(--settings-border);
+  background: var(--settings-muted-bg);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.settings-preset-view-body {
+  background: var(--bg);
+}
+.settings-preset-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.settings-preset-preview {
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  max-height: 300px;
+  overflow-y: auto;
+  background: var(--settings-muted-bg);
+  padding: 12px;
+  border-radius: 6px;
+  margin: 0;
+}
+.settings-preset-desc {
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin: 0;
+}
+.settings-preset-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.settings-preset-actions .secondary-button.danger {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+.settings-preset-delete-confirm {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0;
+}
+.settings-preset-delete-confirm strong {
+  font-size: 14px;
+  color: var(--danger);
+}
+
+/* Hidden builtins nested details */
+.settings-preset-hidden-builtins {
+  margin-top: 4px;
+}
+.settings-preset-hidden-builtins > summary {
+  cursor: pointer;
+  padding: 8px 14px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  background: var(--settings-muted-bg);
+  border: 1px dashed var(--settings-border);
+  border-radius: 8px;
+  user-select: none;
+}
+.settings-preset-hidden-builtins > summary:hover {
+  color: var(--text-primary);
+}
+.settings-preset-hidden-builtins[open] > summary {
+  border-radius: 8px 8px 0 0;
+  margin-bottom: 0;
+}
+
+/* Draggable floating toolbar for prompt groups */
+.settings-prompt-global-sticky {
+  position: fixed;
+  top: 96px;
+  right: 36px;
+  z-index: 120;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: min(420px, calc(100vw - 56px));
+  max-width: calc(100vw - 56px);
+  padding: 8px 10px;
+  background: var(--settings-elevated-bg);
+  border: 1px solid var(--settings-border);
+  border-radius: 12px;
+  box-shadow: var(--settings-shadow);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.settings-prompt-toolbar-close {
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--settings-border);
+  border-radius: 8px;
+  background: var(--settings-muted-bg);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 20px;
+  line-height: 1;
+}
+
+.settings-prompt-toolbar-close:hover {
+  color: var(--danger);
+  border-color: var(--danger-border);
+  background: var(--bg-danger);
+}
+
+.settings-prompt-toolbar-drag {
+  display: grid;
+  place-items: center;
+  gap: 3px;
+  flex: 0 0 auto;
+  width: 18px;
+  height: 30px;
+  cursor: ns-resize;
+  touch-action: none;
+}
+
+.settings-prompt-toolbar-drag span {
+  width: 12px;
+  height: 2px;
+  border-radius: 999px;
+  background: var(--settings-border-strong);
+}
+
+.settings-prompt-toolbar-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* FAB: Collapse all */
+.settings-collapse-all-fab {
+  position: fixed;
+  right: 32px;
+  bottom: 32px;
+  z-index: 100;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: 1px solid var(--settings-border);
+  background: var(--bg);
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.12);
+  transition: transform 0.15s, box-shadow 0.15s;
+}
+.settings-collapse-all-fab:hover {
+  transform: scale(1.08);
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.18);
+}
+.settings-collapse-all-fab:active {
+  transform: scale(0.96);
+}
+
 .generation-settings-section {
   gap: 22px;
 }

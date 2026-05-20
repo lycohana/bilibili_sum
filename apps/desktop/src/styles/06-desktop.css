@@ -661,6 +661,139 @@
   background: var(--border-subtle);
 }
 
+.home-prompt-row {
+  display: grid;
+  grid-template-columns: minmax(220px, 320px) 1fr;
+  gap: 12px;
+  align-items: center;
+}
+
+.home-prompt-selector {
+  display: grid;
+  gap: 6px;
+}
+
+.home-prompt-label {
+  font-size: 0.75rem;
+  font-weight: 750;
+  color: var(--text-tertiary);
+}
+
+.home-prompt-select {
+  min-height: 40px;
+}
+
+.home-prompt-meta {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.home-prompt-recommendation {
+  min-height: 30px;
+  padding: 0 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(251, 114, 153, 0.18);
+  background: rgba(251, 114, 153, 0.07);
+  color: var(--brand-700);
+  font-size: 0.8rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.home-prompt-recommendation:hover,
+.home-prompt-recommendation:focus-visible {
+  outline: none;
+  background: rgba(251, 114, 153, 0.12);
+}
+
+.home-prompt-description {
+  min-width: 0;
+  color: var(--text-tertiary);
+  font-size: 0.82rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.drag-drop-zone {
+  min-height: 86px;
+  display: grid;
+  grid-template-columns: 42px 1fr auto;
+  gap: 14px;
+  align-items: center;
+  margin-top: 14px;
+  padding: 14px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--bg-subtle);
+  color: var(--text-secondary);
+  transition: border-color var(--transition-fast), background-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.drag-drop-zone.is-active,
+.drag-drop-zone:focus-visible {
+  outline: none;
+  border-color: var(--brand-500);
+  background: rgba(251, 114, 153, 0.06);
+  box-shadow: 0 0 0 3px rgba(251, 114, 153, 0.12);
+}
+
+.drag-drop-zone > svg {
+  width: 32px;
+  height: 32px;
+  color: var(--brand-600);
+}
+
+.drag-drop-zone strong {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--text-primary);
+}
+
+.drag-drop-zone span {
+  font-size: 0.86rem;
+  color: var(--text-tertiary);
+}
+
+.batch-import-panel {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+  padding: 14px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  background: var(--bg-elevated);
+}
+
+.batch-import-head,
+.batch-import-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.batch-import-list {
+  display: grid;
+  gap: 6px;
+  max-height: 140px;
+  overflow: auto;
+}
+
+.batch-import-list span {
+  padding: 7px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-subtle);
+  color: var(--text-secondary);
+  font-size: 0.84rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* ── HomeTour first-time onboarding ── */
 
 .home-tour-overlay {

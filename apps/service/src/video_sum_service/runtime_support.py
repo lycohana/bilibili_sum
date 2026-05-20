@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import json
 import os
 import shutil
@@ -7,20 +8,20 @@ import subprocess
 import sys
 import textwrap
 import venv
-import importlib
 from dataclasses import fields
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from fastapi import HTTPException
-
 from video_sum_infra.config import (
-    DEFAULT_VISUAL_FRAME_PLANNING_PROMPT,
     DEFAULT_KNOWLEDGE_NOTE_SYSTEM_PROMPT,
     DEFAULT_KNOWLEDGE_NOTE_USER_PROMPT_TEMPLATE,
-    DEFAULT_VISUAL_VLM_PROMPT,
+    DEFAULT_SUMMARY_SYSTEM_PROMPT,
+    DEFAULT_SUMMARY_USER_PROMPT_TEMPLATE,
+    DEFAULT_VISUAL_FRAME_PLANNING_PROMPT,
     DEFAULT_VISUAL_NOTE_SYSTEM_PROMPT,
     DEFAULT_VISUAL_NOTE_USER_PROMPT_TEMPLATE,
+    DEFAULT_VISUAL_VLM_PROMPT,
     ServiceSettings,
 )
 from video_sum_infra.runtime import (
@@ -28,8 +29,8 @@ from video_sum_infra.runtime import (
     bootstrap_managed_runtime,
     ffmpeg_location,
     is_frozen,
-    managed_runtime_root,
     managed_runtime_dir,
+    managed_runtime_root,
     prepend_runtime_path,
     read_runtime_metadata,
     repo_root,
@@ -856,6 +857,7 @@ def build_worker(
     environment_info: dict[str, object] | None = None,
 ) -> TaskWorker:
     from video_sum_core.pipeline.real import PipelineSettings, RealPipelineRunner
+
     from video_sum_service.worker import TaskWorker
 
     selected_runtime_channel = current_settings.runtime_channel
@@ -993,6 +995,8 @@ def serialize_settings(
         "enable_cache": current_settings.enable_cache,
         "language": current_settings.language,
         "summary_mode": current_settings.summary_mode,
+        "prompt_router_mode": current_settings.prompt_router_mode,
+        "prompt_presets_path": current_settings.prompt_presets_path,
         "llm_enabled": current_settings.llm_enabled,
         "auto_generate_mindmap": current_settings.auto_generate_mindmap,
         "visual_note_mode": current_settings.visual_note_mode,
@@ -1049,6 +1053,8 @@ def serialize_settings(
             "visual_note_user_prompt_template": DEFAULT_VISUAL_NOTE_USER_PROMPT_TEMPLATE,
             "visual_frame_planning_prompt": DEFAULT_VISUAL_FRAME_PLANNING_PROMPT,
             "visual_vlm_prompt": DEFAULT_VISUAL_VLM_PROMPT,
+            "summary_system_prompt": DEFAULT_SUMMARY_SYSTEM_PROMPT,
+            "summary_user_prompt_template": DEFAULT_SUMMARY_USER_PROMPT_TEMPLATE,
         },
     }
 

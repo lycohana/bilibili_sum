@@ -186,6 +186,17 @@
     grid-template-columns: 1fr;
   }
 
+  .home-prompt-row,
+  .drag-drop-zone {
+    grid-template-columns: 1fr;
+  }
+
+  .drag-drop-zone .secondary-button,
+  .batch-import-actions .primary-button,
+  .batch-import-actions .secondary-button {
+    width: 100%;
+  }
+
   .summary-submit-control,
   .summary-split-button {
     width: 100%;

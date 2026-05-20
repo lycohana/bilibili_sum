@@ -1,11 +1,11 @@
 import hashlib
 import json
+from collections.abc import AsyncIterator
 from pathlib import Path
 from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Query, Request, status
 from fastapi.responses import FileResponse
-
 from video_sum_core.models.tasks import InputType, TaskInput
 
 from video_sum_service.context import LOCAL_MEDIA_UPLOAD_DIR, logger, settings_manager
@@ -17,8 +17,8 @@ from video_sum_service.schemas import (
     TaskDetailResponse,
     TaskSummaryResponse,
     VideoAssetDetailResponse,
-    VideoAssetSummaryResponse,
     VideoAssetRecord,
+    VideoAssetSummaryResponse,
     VideoProbeRequest,
     VideoProbeResponse,
     VideoTaskBatchPageResponse,
@@ -268,6 +268,7 @@ def _create_video_task_record(
     video: VideoAssetRecord,
     page_number: int | None = None,
     visual_note_mode: str | None = None,
+    prompt_preset_id: str | None = None,
 ):
     page = resolve_video_page(video, page_number)
     if video.pages and page_number is not None and page is None:
@@ -276,12 +277,13 @@ def _create_video_task_record(
     source_url = page.source_url if page else video.source_url
     title = page.title if page else video.title
     logger.info(
-        "create video task video_id=%s page=%s title=%s source=%s visual_note_mode=%s",
+        "create video task video_id=%s page=%s title=%s source=%s visual_note_mode=%s prompt_preset_id=%s",
         video.video_id,
         page.page if page else None,
         title,
         source_url,
         visual_note_mode,
+        prompt_preset_id,
     )
     input_type = InputType.URL
     if str(video.platform or "").lower() == "local":
@@ -289,6 +291,8 @@ def _create_video_task_record(
     task_input = TaskInput(input_type=input_type, source=source_url, title=title, platform_hint=video.platform)
     if visual_note_mode is not None:
         task_input.options.visual_note_mode = visual_note_mode
+    if prompt_preset_id is not None:
+        task_input.options.prompt_preset_id = prompt_preset_id
     record = task_store.create_task(
         task_input,
         video_id=video.video_id,
@@ -361,7 +365,10 @@ def normalize_uploaded_media_filename(filename: str) -> tuple[str, str]:
     return title, suffix
 
 
-async def cache_uploaded_media_file(request: Request, filename: str) -> tuple[Path, str, str]:
+async def _cache_uploaded_media_chunks(
+    filename: str,
+    chunks: AsyncIterator[bytes | str],
+) -> tuple[Path, str, str]:
     title, suffix = normalize_uploaded_media_filename(filename)
     LOCAL_MEDIA_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     temp_path = LOCAL_MEDIA_UPLOAD_DIR / f"{uuid4().hex}.upload"
@@ -369,7 +376,7 @@ async def cache_uploaded_media_file(request: Request, filename: str) -> tuple[Pa
     total_bytes = 0
     try:
         with temp_path.open("wb") as handle:
-            async for chunk in request.stream():
+            async for chunk in chunks:
                 if not chunk:
                     continue
                 if isinstance(chunk, str):
@@ -400,6 +407,41 @@ async def cache_uploaded_media_file(request: Request, filename: str) -> tuple[Pa
         except OSError as exc:
             raise HTTPException(status_code=500, detail="整理上传视频文件时失败。") from exc
     return final_path.resolve(), title, content_hash
+
+
+async def cache_uploaded_media_file(request: Request, filename: str) -> tuple[Path, str, str]:
+    return await _cache_uploaded_media_chunks(filename, request.stream())
+
+
+async def _iter_upload_form_file(upload_file) -> AsyncIterator[bytes]:
+    while True:
+        chunk = await upload_file.read(1024 * 1024)
+        if not chunk:
+            break
+        yield chunk
+
+
+def _upsert_local_upload_response(
+    task_store: SqliteTaskRepository,
+    saved_path: Path,
+    title: str,
+    content_hash: str,
+) -> VideoProbeResponse:
+    probed = probe_local_video_asset(
+        saved_path,
+        title_override=title,
+        canonical_id_override=f"local-upload-{content_hash[:24]}",
+    )
+    existing = task_store.get_video_asset_by_canonical_id(probed.canonical_id)
+    cached = existing is not None
+    asset = existing if cached else task_store.upsert_video_asset(probed)
+    asset = localize_video_cover(task_store, asset)
+    return VideoProbeResponse(
+        video=asset.to_summary(),
+        cached=cached,
+        requires_selection=False,
+        pages=[],
+    )
 
 
 @router.post("/{video_id}/favorite", response_model=VideoAssetDetailResponse)
@@ -436,21 +478,37 @@ async def upload_local_video(
     task_store: SqliteTaskRepository = request.app.state.task_repository
     saved_path, title, content_hash = await cache_uploaded_media_file(request, filename)
     logger.info("upload local media filename=%s saved_path=%s", filename, saved_path)
-    probed = probe_local_video_asset(
-        saved_path,
-        title_override=title,
-        canonical_id_override=f"local-upload-{content_hash[:24]}",
-    )
-    existing = task_store.get_video_asset_by_canonical_id(probed.canonical_id)
-    cached = existing is not None
-    asset = existing if cached else task_store.upsert_video_asset(probed)
-    asset = localize_video_cover(task_store, asset)
-    return VideoProbeResponse(
-        video=asset.to_summary(),
-        cached=cached,
-        requires_selection=False,
-        pages=[],
-    )
+    return _upsert_local_upload_response(task_store, saved_path, title, content_hash)
+
+
+@router.post("/upload/batch", response_model=list[VideoProbeResponse])
+async def upload_local_videos_batch(request: Request) -> list[VideoProbeResponse]:
+    task_store: SqliteTaskRepository = request.app.state.task_repository
+    form = await request.form()
+    upload_files = [
+        item
+        for item in form.values()
+        if hasattr(item, "filename") and hasattr(item, "read")
+    ]
+    if not upload_files:
+        raise HTTPException(status_code=400, detail="至少上传一个本地视频或音频文件。")
+
+    responses: list[VideoProbeResponse] = []
+    for upload_file in upload_files:
+        filename = str(getattr(upload_file, "filename", "") or "")
+        saved_path, title, content_hash = await _cache_uploaded_media_chunks(
+            filename,
+            _iter_upload_form_file(upload_file),
+        )
+        logger.info(
+            "batch upload local media filename=%s saved_path=%s",
+            filename,
+            saved_path,
+        )
+        responses.append(
+            _upsert_local_upload_response(task_store, saved_path, title, content_hash)
+        )
+    return responses
 
 
 @router.get("", response_model=list[VideoAssetSummaryResponse])
@@ -537,8 +595,9 @@ def create_video_task(
         app_state=request.app.state,
         task_store=task_store,
         video=video,
-        page_number=request_body.page_number if request_body else None,
-        visual_note_mode=request_body.visual_note_mode if request_body else None,
+        page_number=getattr(request_body, "page_number", None) if request_body else None,
+        visual_note_mode=getattr(request_body, "visual_note_mode", None) if request_body else None,
+        prompt_preset_id=getattr(request_body, "prompt_preset_id", None) if request_body else None,
     )
     return refreshed.to_detail()
 

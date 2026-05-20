@@ -123,7 +123,7 @@ wheels = [
 
 [[package]]
 name = "bilisum-workspace"
-version = "1.16.0"
+version = "1.16.2"
 source = { virtual = "." }
 
 [package.dev-dependencies]
@@ -1593,6 +1593,15 @@ wheels = [
 ]
 
 [[package]]
+name = "python-multipart"
+version = "0.0.29"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/4e/fe/70bd71a6738b09a0bdf6480ca6436b167469ca4578b2a0efbe390b4b0e70/python_multipart-0.0.29.tar.gz", hash = "sha256:643e93849196645e2dbdd81a0f8829a23123ad7f797a84a364c6fb3563f18904", size = 45678, upload-time = "2026-05-17T17:29:47.654Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/8f/cb/769cfc37177252872a45a71f3fbdde9d51b471a3f3c14bfe95dde3407386/python_multipart-0.0.29-py3-none-any.whl", hash = "sha256:2ddcc971cef266225f54f552d8fa10bcfbb1f14446caec199060daac59ff2d69", size = 29640, upload-time = "2026-05-17T17:29:45.69Z" },
+]
+
+[[package]]
 name = "pyyaml"
 version = "6.0.3"
 source = { registry = "https://pypi.org/simple" }
@@ -2299,7 +2308,7 @@ wheels = [
 
 [[package]]
 name = "video-sum-core"
-version = "1.16.0"
+version = "1.16.2"
 source = { editable = "packages/core" }
 dependencies = [
     { name = "httpx" },
@@ -2318,7 +2327,7 @@ requires-dist = [
 
 [[package]]
 name = "video-sum-infra"
-version = "1.16.0"
+version = "1.16.2"
 source = { editable = "packages/infra" }
 dependencies = [
     { name = "pydantic" },
@@ -2333,11 +2342,12 @@ requires-dist = [
 
 [[package]]
 name = "video-sum-service"
-version = "1.16.0"
+version = "1.16.2"
 source = { editable = "apps/service" }
 dependencies = [
     { name = "fastapi" },
     { name = "pydantic" },
+    { name = "python-multipart" },
     { name = "uvicorn", extra = ["standard"] },
     { name = "video-sum-core" },
     { name = "video-sum-infra" },
@@ -2354,6 +2364,7 @@ requires-dist = [
     { name = "chromadb", marker = "extra == 'knowledge'", specifier = ">=1.0.0" },
     { name = "fastapi", specifier = ">=0.115,<1.0" },
     { name = "pydantic", specifier = ">=2.10,<3.0" },
+    { name = "python-multipart", specifier = ">=0.0.9,<1.0" },
     { name = "sentence-transformers", marker = "extra == 'knowledge'", specifier = ">=3.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.34,<1.0" },
     { name = "video-sum-core", editable = "packages/core" },

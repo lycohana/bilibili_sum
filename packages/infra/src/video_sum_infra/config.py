@@ -1,4 +1,5 @@
 from pathlib import Path
+
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -380,6 +381,14 @@ VISUAL_DOWNLOAD_RESOLUTION_ALIASES = {
     "1080p": "1080p",
 }
 
+PROMPT_ROUTER_MODE_ALIASES = {
+    "auto": "auto",
+    "automatic": "auto",
+    "confirm": "confirm",
+    "manual": "confirm",
+    "ask": "confirm",
+}
+
 
 def normalize_device_preference(value: str | None, default: str = "cpu") -> str:
     normalized = str(value or "").strip().lower()
@@ -414,6 +423,13 @@ def normalize_visual_download_resolution(value: str | None, default: str = "auto
     if not normalized:
         return default
     return VISUAL_DOWNLOAD_RESOLUTION_ALIASES.get(normalized, default)
+
+
+def normalize_prompt_router_mode(value: str | None, default: str = "confirm") -> str:
+    normalized = str(value or "").strip().lower()
+    if not normalized:
+        return default
+    return PROMPT_ROUTER_MODE_ALIASES.get(normalized, default)
 
 
 def recommend_task_concurrency(settings: "ServiceSettings", *, cuda_available: bool | None = None) -> int:
@@ -483,6 +499,8 @@ class ServiceSettings(BaseSettings):
     enable_cache: bool = True
     language: str = "zh"
     summary_mode: str = "llm"
+    prompt_router_mode: str = "confirm"
+    prompt_presets_path: str = ""
     llm_enabled: bool = False
     auto_generate_mindmap: bool = False
     visual_note_mode: str = "text"
@@ -561,6 +579,11 @@ class ServiceSettings(BaseSettings):
     @classmethod
     def _normalize_visual_download_resolution(cls, value: str | None) -> str:
         return normalize_visual_download_resolution(value)
+
+    @field_validator("prompt_router_mode", mode="before")
+    @classmethod
+    def _normalize_prompt_router_mode(cls, value: str | None) -> str:
+        return normalize_prompt_router_mode(value)
 
     @field_validator("knowledge_index_auto_rebuild", mode="before")
     @classmethod
