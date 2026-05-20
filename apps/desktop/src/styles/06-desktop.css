@@ -662,6 +662,7 @@
 }
 
 .home-prompt-row {
+  position: relative;
   display: grid;
   grid-template-columns: minmax(220px, 320px) 1fr;
   gap: 12px;
@@ -718,6 +719,37 @@
   white-space: nowrap;
 }
 
+
+.home-prompt-context-menu {
+  position: fixed;
+  z-index: 90;
+  min-width: 112px;
+  padding: 6px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--surface-elevated);
+  box-shadow: var(--shadow-lg);
+}
+
+.home-prompt-context-menu button {
+  width: 100%;
+  min-height: 32px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 0.86rem;
+  font-weight: 700;
+  text-align: left;
+  cursor: pointer;
+}
+
+.home-prompt-context-menu button:hover,
+.home-prompt-context-menu button:focus-visible {
+  outline: none;
+  background: var(--surface-muted);
+}
 .drag-drop-zone {
   min-height: 86px;
   display: grid;

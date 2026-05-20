@@ -40,7 +40,7 @@ def test_pipeline_resolves_prompt_preset_overrides(tmp_path: Path) -> None:
     save_custom_preset(
         PromptPreset(
             id="custom_summary",
-            name="自定义摘要",
+            name="个人摘要",
             description="",
             category="custom",
             system_prompt="custom system",

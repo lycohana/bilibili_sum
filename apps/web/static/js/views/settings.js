@@ -276,7 +276,7 @@ export function renderSettingsView(state) {
               { value: "openai-compatible", label: "OpenAI Compatible" },
               { value: "openai", label: "OpenAI" },
               { value: "anthropic", label: "Anthropic" },
-              { value: "custom", label: "自定义" }
+              { value: "custom", label: "自建端点" }
             ])}
             ${renderInput("knowledge_llm_base_url", "API Base URL", settings.knowledge_llm_base_url || "", "text", "https://api.openai.com/v1")}
             ${renderInput("knowledge_llm_model", "模型名称", settings.knowledge_llm_model || "", "text", "gpt-4o-mini / claude-3-haiku")}

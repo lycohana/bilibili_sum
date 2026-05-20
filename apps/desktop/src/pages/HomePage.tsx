@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ClipboardEvent, type CSSProperties, type DragEvent, type FormEvent } from "react";
+import { useEffect, useRef, useState, type ClipboardEvent, type CSSProperties, type DragEvent, type FormEvent, type MouseEvent } from "react";
 
 import { api } from "../api";
 import type { ConfigHealth } from "../appModel";
@@ -22,6 +22,7 @@ type HomePageProps = {
   promptRouterMode: string;
   onOpenSetupAssistant(issueKey?: string): void;
   onOpenConfigIssue(issueKey: string): void;
+  onEditPromptPreset(presetId: string): void;
   favoriteVideos: VideoAssetSummary[];
   recentVideos: VideoAssetSummary[];
   onToggleFavorite(videoId: string, nextFavorite: boolean): Promise<void>;
@@ -164,11 +165,13 @@ export function HomePage({
   promptRouterMode,
   onOpenSetupAssistant,
   onOpenConfigIssue,
+  onEditPromptPreset,
   favoriteVideos,
   recentVideos,
   onToggleFavorite,
 }: HomePageProps) {
   const preferenceMenuRef = useRef<HTMLDivElement | null>(null);
+  const promptMenuRef = useRef<HTMLDivElement | null>(null);
   const [summaryPreference, setSummaryPreference] = useState<SummaryPreference>(() => loadSummaryPreference());
   const [preferenceMenuOpen, setPreferenceMenuOpen] = useState(false);
   const [preferenceHintDismissed, setPreferenceHintDismissed] = useState(() => {
@@ -181,6 +184,7 @@ export function HomePage({
   const [hiddenPromptPresetIds, setHiddenPromptPresetIds] = useState<Set<string>>(() => loadHiddenPromptPresetIds());
   const [promptPresetId, setPromptPresetId] = useState(() => loadPromptPresetId());
   const [recommendedPromptId, setRecommendedPromptId] = useState<string | null>(null);
+  const [promptContextMenu, setPromptContextMenu] = useState<{ x: number; y: number; presetId: string } | null>(null);
   const [promptLoading, setPromptLoading] = useState(false);
   const [promptStatus, setPromptStatus] = useState("");
   const [isDragActive, setIsDragActive] = useState(false);
@@ -277,7 +281,7 @@ export function HomePage({
       return;
     }
 
-    function handlePointerDown(event: MouseEvent) {
+    function handlePointerDown(event: globalThis.MouseEvent) {
       if (preferenceMenuRef.current?.contains(event.target as Node)) {
         return;
       }
@@ -298,6 +302,38 @@ export function HomePage({
     };
   }, [preferenceMenuOpen]);
 
+  useEffect(() => {
+    if (!promptContextMenu) {
+      return;
+    }
+
+    function handlePointerDown(event: globalThis.MouseEvent) {
+      if (promptMenuRef.current?.contains(event.target as Node)) {
+        return;
+      }
+      setPromptContextMenu(null);
+    }
+
+    function closePromptContextMenu() {
+      setPromptContextMenu(null);
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setPromptContextMenu(null);
+      }
+    }
+
+    window.addEventListener("mousedown", handlePointerDown);
+    window.addEventListener("scroll", closePromptContextMenu, true);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("mousedown", handlePointerDown);
+      window.removeEventListener("scroll", closePromptContextMenu, true);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [promptContextMenu]);
+
   function updateSummaryPreference(nextPreference: SummaryPreference) {
     setSummaryPreference(nextPreference);
   }
@@ -305,6 +341,23 @@ export function HomePage({
   function updatePromptPreset(nextPresetId: string) {
     setPromptPresetId(nextPresetId || "general");
     setPromptStatus("");
+    setPromptContextMenu(null);
+  }
+
+  function openPromptContextMenu(event: MouseEvent<HTMLElement>) {
+    if (!selectedPrompt) {
+      return;
+    }
+    event.preventDefault();
+    setPromptContextMenu({ x: event.clientX, y: event.clientY, presetId: selectedPrompt.id });
+  }
+
+  function editSelectedPromptPreset() {
+    if (!promptContextMenu?.presetId) {
+      return;
+    }
+    onEditPromptPreset(promptContextMenu.presetId);
+    setPromptContextMenu(null);
   }
 
   function collectMediaFiles(files: Iterable<File>) {
@@ -472,7 +525,7 @@ export function HomePage({
               ) : null}
             </div>
           </div>
-          <div className="home-prompt-row" onPaste={handlePaste}>
+          <div className="home-prompt-row" onPaste={handlePaste} onContextMenu={openPromptContextMenu}>
             <label className="home-prompt-selector">
               <span className="home-prompt-label">Prompt</span>
               <select
@@ -503,6 +556,18 @@ export function HomePage({
                 <span className="home-prompt-description">{selectedPrompt.description}</span>
               ) : null}
             </div>
+            {promptContextMenu ? (
+              <div
+                className="home-prompt-context-menu"
+                ref={promptMenuRef}
+                role="menu"
+                style={{ left: promptContextMenu.x, top: promptContextMenu.y }}
+              >
+                <button type="button" role="menuitem" onClick={editSelectedPromptPreset}>
+                  编辑
+                </button>
+              </div>
+            ) : null}
           </div>
         </form>
 

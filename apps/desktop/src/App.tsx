@@ -53,6 +53,7 @@ export function App() {
   const [multiPageOptions, setMultiPageOptions] = useState<VideoPageBatchOption[]>([]);
   const [refreshSeed, setRefreshSeed] = useState(0);
   const [settingsFocusRequest, setSettingsFocusRequest] = useState<{ issueKey: string; nonce: number } | null>(null);
+  const [settingsPromptRequest, setSettingsPromptRequest] = useState<{ presetId: string; nonce: number } | null>(null);
   const [darkMode, setDarkMode] = useState<boolean>(() => {
     if (typeof window === "undefined") {
       return false;
@@ -454,6 +455,13 @@ export function App() {
     setSetupAssistantOpen(false);
     setSetupAssistantDismissed(true);
     setSettingsFocusRequest({ issueKey, nonce: Date.now() });
+    navigate("/settings");
+  }
+
+  function navigateToPromptPreset(presetId: string) {
+    setupAssistantForceRef.current = false;
+    setSetupAssistantOpen(false);
+    setSettingsPromptRequest({ presetId, nonce: Date.now() });
     navigate("/settings");
   }
 
@@ -929,6 +937,7 @@ export function App() {
                     promptRouterMode={snapshot.settings?.prompt_router_mode || "confirm"}
                     onOpenSetupAssistant={openConfigAssist}
                     onOpenConfigIssue={navigateToConfigIssue}
+                    onEditPromptPreset={navigateToPromptPreset}
                     favoriteVideos={favoriteVideos}
                     recentVideos={recentVideos}
                     onToggleFavorite={handleToggleFavorite}
@@ -997,6 +1006,7 @@ export function App() {
                     }}
                     snapshot={snapshot}
                     focusIssueRequest={settingsFocusRequest}
+                    promptPresetRequest={settingsPromptRequest}
                     updateInfo={updateState}
                     canCheckUpdate={canCheckUpdates}
                     canInstallUpdate={canInstallUpdates}

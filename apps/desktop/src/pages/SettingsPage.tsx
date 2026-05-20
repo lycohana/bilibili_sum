@@ -80,6 +80,7 @@ type SettingsPageProps = {
   snapshot: Snapshot;
   desktop: DesktopState;
   focusIssueRequest?: { issueKey: string; nonce: number } | null;
+  promptPresetRequest?: { presetId: string; nonce: number } | null;
   onRefresh(): void;
   onSettingsSaved(settings: ServiceSettings, environment: EnvironmentInfo | null): void;
   updateInfo: UpdateState;
@@ -237,6 +238,7 @@ export function SettingsPage({
   snapshot,
   desktop,
   focusIssueRequest,
+  promptPresetRequest,
   onRefresh,
   onSettingsSaved,
   updateInfo,
@@ -305,6 +307,7 @@ export function SettingsPage({
   const promptDetailsRefs = useRef<Record<string, HTMLDetailsElement | null>>({});
   const focusTargetRefs = useRef<Record<string, HTMLElement | null>>({});
   const lastHandledExternalFocusNonce = useRef<number | null>(null);
+  const lastHandledPromptPresetNonce = useRef<number | null>(null);
   const silentModelCheckRunId = useRef(0);
   const [promptPresets, setPromptPresets] = useState<PromptPreset[]>([]);
   const [hiddenPromptPresetIds, setHiddenPromptPresetIds] = useState<Set<string>>(() => loadHiddenPromptPresetIds());
@@ -373,6 +376,30 @@ export function SettingsPage({
       next.delete(presetId);
       return next;
     });
+  }
+
+  function openPromptPresetInSettings(presetId: string) {
+    const targetPreset = promptPresets.find((preset) => preset.id === presetId);
+    setActiveCategory("prompts");
+    setPresetsSectionOpen(true);
+    setShowNewPresetForm(false);
+    setPresetDeleteConfirm(null);
+    setSettingsSearchQuery("");
+    setPresetStatus(targetPreset ? `已定位到「${targetPreset.name}」` : "已打开 Prompt 预设库");
+    if (targetPreset) {
+      setExpandedPresetIds(new Set([targetPreset.id]));
+      setPresetForm({
+        name: targetPreset.name,
+        system_prompt: targetPreset.system_prompt,
+        user_prompt_template: targetPreset.user_prompt_template,
+        description: targetPreset.description || "",
+        category: targetPreset.category || "",
+        auto_match_keywords: targetPreset.auto_match_keywords || [],
+      });
+    }
+    window.setTimeout(() => {
+      focusTargetRefs.current.prompt_presets_library?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 80);
   }
 
   function savePreset() {
@@ -1045,6 +1072,17 @@ export function SettingsPage({
       setPendingFocusTarget(target.targetKey);
     }
   }, [focusIssueRequest, form]);
+
+  useEffect(() => {
+    if (!promptPresetRequest || !form) {
+      return;
+    }
+    if (lastHandledPromptPresetNonce.current === promptPresetRequest.nonce) {
+      return;
+    }
+    lastHandledPromptPresetNonce.current = promptPresetRequest.nonce;
+    openPromptPresetInSettings(promptPresetRequest.presetId);
+  }, [promptPresetRequest, form, promptPresets]);
 
   useEffect(() => {
     if (!pendingFocusTarget) {
@@ -3010,7 +3048,7 @@ export function SettingsPage({
                             <option value="openai-compatible">OpenAI Compatible</option>
                             <option value="openai">OpenAI</option>
                             <option value="anthropic">Anthropic</option>
-                            <option value="custom">自定义</option>
+                            <option value="custom">自建端点</option>
                           </select>
                         </label>
                         <label
@@ -3161,7 +3199,7 @@ export function SettingsPage({
               </details>
 
               {/* Custom collapse for presets section (no native <details> — breaks position:sticky) */}
-              <div className={`settings-prompt-collapse${presetsSectionOpen ? " open" : ""}`}>
+              <div className={`settings-prompt-collapse settings-focus-target ${presetsSectionOpen ? " open" : ""}`} ref={registerFocusTarget("prompt_presets_library") as (node: HTMLDivElement | null) => void}>
                 <div
                   className="settings-prompt-collapse-summary"
                   role="button"
@@ -3169,13 +3207,13 @@ export function SettingsPage({
                   onClick={handlePresetsSectionToggle}
                   onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); handlePresetsSectionToggle(); }}}
                 >
-                  Prompt 预设库（内置 {builtinPresetCount} 个，已隐藏 {hiddenBuiltinPresetCount} 个 / 自定义 {customPresetCount} 个），点击展开
+                  Prompt 预设库（内置 {builtinPresetCount} 个，已隐藏 {hiddenBuiltinPresetCount} 个 / 新增 {customPresetCount} 个），点击展开
                 </div>
                 {presetsSectionOpen && (
                   <div className="settings-form-group" style={{ position: "relative" }}>
                     <div className="settings-inline-alert info">
                       <strong>摘要预设</strong>
-                      <span>这些预设用于首页 Prompt 下拉框和自动推荐，只替换摘要 System Prompt / User Template。内置预设可查看或隐藏，隐藏后不会出现在首页 Prompt 下拉框和自动推荐里；自定义预设可编辑或删除。</span>
+                      <span>这些预设用于首页 Prompt 下拉框和自动推荐，只替换摘要 System Prompt / User Template。内置预设可查看或隐藏，隐藏后不会出现在首页 Prompt 下拉框和自动推荐里；新增预设可编辑或删除。</span>
                     </div>
                     {hiddenBuiltinPresets.length ? (
                       <div className="settings-hidden-preset-list">
@@ -3946,7 +3984,7 @@ export function SettingsPage({
                       <option value="openai-compatible">OpenAI Compatible</option>
                       <option value="openai">OpenAI</option>
                       <option value="anthropic">Anthropic</option>
-                      <option value="custom">自定义</option>
+                      <option value="custom">自建端点</option>
                     </select>
                   </label>
                   <label className={`settings-input-group settings-focus-target ${activeFocusTarget === "llm_base_url" ? "is-highlighted" : ""}`}>
@@ -3980,7 +4018,7 @@ export function SettingsPage({
                       <option value="openai-compatible">OpenAI Compatible</option>
                       <option value="openai">OpenAI</option>
                       <option value="anthropic">Anthropic</option>
-                      <option value="custom">自定义</option>
+                      <option value="custom">自建端点</option>
                     </select>
                   </label>
                   <label className="settings-input-group">

@@ -104,3 +104,13 @@ run("home prompt router calls match API and filters hidden presets", () => {
   assert.ok(homePageSource.includes("hiddenPromptPresetIds.has(result.preset.id)"), "hidden matched presets should not be recommended or auto-selected");
   assert.ok(homePageSource.includes("selectablePromptPresets.map"), "home prompt dropdown should only render visible presets");
 });
+
+run("home prompt presets can jump to settings editor", () => {
+  const homePageSource = readFileSync(join(projectRoot, "src/pages/HomePage.tsx"), "utf8");
+  const appSource = readFileSync(join(projectRoot, "src/App.tsx"), "utf8");
+  assert.ok(homePageSource.includes("onContextMenu={openPromptContextMenu}"), "home prompt selector should expose a context menu");
+  assert.ok(homePageSource.includes("onEditPromptPreset(promptContextMenu.presetId)"), "context menu should request prompt preset editing");
+  assert.ok(appSource.includes("navigateToPromptPreset"), "app should route prompt edit requests to settings");
+  assert.ok(settingsPageSource.includes("promptPresetRequest"), "settings page should accept prompt preset navigation requests");
+  assert.ok(settingsPageSource.includes("prompt_presets_library"), "settings page should focus the prompt preset library");
+});
