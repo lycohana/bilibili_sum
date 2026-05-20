@@ -994,6 +994,35 @@
   color: var(--danger);
 }
 
+.settings-preset-hide-button {
+  flex: 0 0 auto;
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--settings-border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+}
+.settings-preset-hide-button:hover {
+  color: var(--text-primary);
+  background: var(--settings-muted-bg);
+}
+.settings-hidden-preset-list {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border: 1px dashed var(--settings-border);
+  border-radius: 8px;
+  background: var(--settings-muted-bg);
+}
+.settings-hidden-preset-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
 /* Hidden builtins nested details */
 .settings-preset-hidden-builtins {
   margin-top: 4px;
@@ -2058,5 +2087,4 @@
     grid-template-columns: 1fr;
   }
 }
-
 

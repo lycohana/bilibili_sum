@@ -63,10 +63,11 @@ run("video settings can trigger bilibili cookie capture", () => {
   assert.ok(settingsPageSource.includes("登录获取"), "missing visible cookie capture button");
 });
 
-run("prompt presets expose builtin presets and custom presets together", () => {
-  assert.ok(settingsPageSource.includes("const visiblePresets = promptPresets"), "prompt preset list should include builtin presets for inspection");
-  assert.ok(settingsPageSource.includes("内置 {builtinPresetCount} 个 / 自定义 {customPresetCount} 个"), "preset section should explain builtin/custom counts");
-  assert.equal(settingsPageSource.includes("promptPresets.filter((p) => !p.is_builtin)"), false, "builtin presets should not be hidden from settings");
+run("prompt presets can hide builtin presets from homepage routing", () => {
+  assert.ok(settingsPageSource.includes("hiddenPromptPresetIds"), "settings should track hidden builtin prompt presets");
+  assert.ok(settingsPageSource.includes("settings-preset-hide-button"), "builtin preset cards should expose a hide action");
+  assert.ok(settingsPageSource.includes("hiddenBuiltinPresets.map"), "hidden builtin presets should be recoverable");
+  assert.ok(settingsPageSource.includes("bilisum:prompt-presets-visibility-changed"), "homepage should be notified when prompt visibility changes");
 });
 
 run("prompt templates are validated before settings save", () => {
@@ -94,4 +95,12 @@ run("settings return-to-top fab is available across categories", () => {
   const contentCloseIndex = settingsPageSource.indexOf('</main>', performanceIndex);
   assert.ok(fabIndex > performanceIndex, "return-to-top fab should be rendered after category sections, not inside prompts only");
   assert.ok(fabIndex < contentCloseIndex, "return-to-top fab should stay inside the settings content area");
+});
+
+run("home prompt router calls match API and filters hidden presets", () => {
+  const homePageSource = readFileSync(join(projectRoot, "src/pages/HomePage.tsx"), "utf8");
+  assert.ok(homePageSource.includes("api.matchPrompt(title)"), "home page should ask backend to match a prompt for the current input");
+  assert.ok(homePageSource.includes("promptRouterMode === \"auto\""), "auto prompt routing should apply the matched preset");
+  assert.ok(homePageSource.includes("hiddenPromptPresetIds.has(result.preset.id)"), "hidden matched presets should not be recommended or auto-selected");
+  assert.ok(homePageSource.includes("selectablePromptPresets.map"), "home prompt dropdown should only render visible presets");
 });

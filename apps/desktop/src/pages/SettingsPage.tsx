@@ -19,8 +19,11 @@ import { api } from "../api";
 import { SearchIcon } from "../components/AppIcons";
 import { FloatingNoticeStack } from "../components/FloatingNoticeStack";
 import type { EnvironmentInfo, PromptPreset, PromptPresetCreateRequest, RuntimeStatus, ServiceSettings, StorageLocationKind, StorageDirectoryStat, StorageOverview, TaskSummary } from "../types";
+
 import { formatDateTime, taskStatusLabel } from "../utils";
 import { settingsCategories, type SettingsCategory } from "./settingsConfig";
+
+const HIDDEN_PROMPT_PRESETS_STORAGE_KEY = "bilisum.hiddenPromptPresetIds";
 
 function SiliconFlowApiKeyHelp() {
   return (
@@ -54,6 +57,25 @@ function SiliconFlowApiKeyHelp() {
   );
 }
 
+function loadHiddenPromptPresetIds() {
+  if (typeof window === "undefined") {
+    return new Set<string>();
+  }
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(HIDDEN_PROMPT_PRESETS_STORAGE_KEY) || "[]") as unknown;
+    return new Set(Array.isArray(parsed) ? parsed.map((item) => String(item)).filter(Boolean) : []);
+  } catch {
+    return new Set<string>();
+  }
+}
+
+function persistHiddenPromptPresetIds(ids: Set<string>) {
+  if (typeof window === "undefined") {
+    return;
+  }
+  window.localStorage.setItem(HIDDEN_PROMPT_PRESETS_STORAGE_KEY, JSON.stringify(Array.from(ids)));
+  window.dispatchEvent(new Event("bilisum:prompt-presets-visibility-changed"));
+}
 type SettingsPageProps = {
   snapshot: Snapshot;
   desktop: DesktopState;
@@ -285,6 +307,7 @@ export function SettingsPage({
   const lastHandledExternalFocusNonce = useRef<number | null>(null);
   const silentModelCheckRunId = useRef(0);
   const [promptPresets, setPromptPresets] = useState<PromptPreset[]>([]);
+  const [hiddenPromptPresetIds, setHiddenPromptPresetIds] = useState<Set<string>>(() => loadHiddenPromptPresetIds());
   const [promptPresetsLoading, setPromptPresetsLoading] = useState(false);
   const [expandedPresetIds, setExpandedPresetIds] = useState<Set<string>>(new Set());
   const [showNewPresetForm, setShowNewPresetForm] = useState(false);
@@ -392,8 +415,25 @@ export function SettingsPage({
   }
 
   const builtinPresetCount = promptPresets.filter((p) => p.is_builtin).length;
+  const hiddenBuiltinPresetCount = promptPresets.filter((p) => p.is_builtin && hiddenPromptPresetIds.has(p.id)).length;
   const customPresetCount = promptPresets.length - builtinPresetCount;
-  const visiblePresets = promptPresets;
+  const visiblePresets = promptPresets.filter((p) => !p.is_builtin || !hiddenPromptPresetIds.has(p.id));
+  const hiddenBuiltinPresets = promptPresets.filter((p) => p.is_builtin && hiddenPromptPresetIds.has(p.id));
+
+
+  function setBuiltinPresetHidden(presetId: string, hidden: boolean) {
+    setHiddenPromptPresetIds((prev) => {
+      const next = new Set(prev);
+      if (hidden) {
+        next.add(presetId);
+        closeOnePreset(presetId);
+      } else {
+        next.delete(presetId);
+      }
+      persistHiddenPromptPresetIds(next);
+      return next;
+    });
+  }
 
   function renderPresetCard(preset: PromptPreset) {
     const isExpanded = expandedPresetIds.has(preset.id);
@@ -409,6 +449,15 @@ export function SettingsPage({
             <span className="settings-preset-keywords">{preset.auto_match_keywords?.join("、") || "无匹配关键词"}</span>
           </span>
           <span className="settings-preset-expand-hint">{isExpanded ? "收起 ▲" : preset.is_builtin ? "查看内容 ▼" : "展开编辑 ▼"}</span>
+          {preset.is_builtin && (
+            <button
+              className="settings-preset-hide-button"
+              type="button"
+              onClick={(event) => { event.stopPropagation(); setBuiltinPresetHidden(preset.id, true); }}
+            >
+              隐藏
+            </button>
+          )}
         </div>
         {(isExpanded && !preset.is_builtin) && (
           <div className="settings-preset-edit-body">
@@ -3120,14 +3169,26 @@ export function SettingsPage({
                   onClick={handlePresetsSectionToggle}
                   onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); handlePresetsSectionToggle(); }}}
                 >
-                  Prompt 预设库（内置 {builtinPresetCount} 个 / 自定义 {customPresetCount} 个），点击展开
+                  Prompt 预设库（内置 {builtinPresetCount} 个，已隐藏 {hiddenBuiltinPresetCount} 个 / 自定义 {customPresetCount} 个），点击展开
                 </div>
                 {presetsSectionOpen && (
                   <div className="settings-form-group" style={{ position: "relative" }}>
                     <div className="settings-inline-alert info">
                       <strong>摘要预设</strong>
-                      <span>这些预设用于首页 Prompt 下拉框和自动推荐，只替换摘要 System Prompt / User Template。内置预设可查看内容，自定义预设可编辑或删除。</span>
+                      <span>这些预设用于首页 Prompt 下拉框和自动推荐，只替换摘要 System Prompt / User Template。内置预设可查看或隐藏，隐藏后不会出现在首页 Prompt 下拉框和自动推荐里；自定义预设可编辑或删除。</span>
                     </div>
+                    {hiddenBuiltinPresets.length ? (
+                      <div className="settings-hidden-preset-list">
+                        <span className="settings-input-caption">已隐藏内置预设</span>
+                        <div className="settings-hidden-preset-actions">
+                          {hiddenBuiltinPresets.map((preset) => (
+                            <button className="secondary-button" type="button" key={preset.id} onClick={() => setBuiltinPresetHidden(preset.id, false)}>
+                              恢复 {preset.name}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    ) : null}
                     {promptPresetsLoading ? (
                       <span className="settings-input-caption">加载中...</span>
                     ) : promptPresets.length === 0 ? (

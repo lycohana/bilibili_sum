@@ -35,6 +35,7 @@ type SummaryPreference = {
 const SUMMARY_PREFERENCE_STORAGE_KEY = "bilisum.summaryPreference";
 const PREFERENCE_HINT_SEEN_KEY = "bilisum.summaryPreferenceHintSeen";
 const PROMPT_PRESET_STORAGE_KEY = "bilisum.promptPresetId";
+const HIDDEN_PROMPT_PRESETS_STORAGE_KEY = "bilisum.hiddenPromptPresetIds";
 const SUPPORTED_LOCAL_MEDIA_EXTENSIONS = new Set([
   ".mp4",
   ".mov",
@@ -78,6 +79,17 @@ function loadSummaryPreference(): SummaryPreference {
   }
 }
 
+function loadHiddenPromptPresetIds() {
+  if (typeof window === "undefined") {
+    return new Set<string>();
+  }
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(HIDDEN_PROMPT_PRESETS_STORAGE_KEY) || "[]") as unknown;
+    return new Set(Array.isArray(parsed) ? parsed.map((item) => String(item)).filter(Boolean) : []);
+  } catch {
+    return new Set<string>();
+  }
+}
 function loadPromptPresetId() {
   if (typeof window === "undefined") {
     return "general";
@@ -166,6 +178,7 @@ export function HomePage({
     return true;
   });
   const [promptPresets, setPromptPresets] = useState<PromptPreset[]>([]);
+  const [hiddenPromptPresetIds, setHiddenPromptPresetIds] = useState<Set<string>>(() => loadHiddenPromptPresetIds());
   const [promptPresetId, setPromptPresetId] = useState(() => loadPromptPresetId());
   const [recommendedPromptId, setRecommendedPromptId] = useState<string | null>(null);
   const [promptLoading, setPromptLoading] = useState(false);
@@ -192,9 +205,6 @@ export function HomePage({
           return;
         }
         setPromptPresets(presets);
-        if (presets.length && !presets.some((preset) => preset.id === promptPresetId)) {
-          setPromptPresetId(presets[0]?.id || "general");
-        }
       } catch (error) {
         if (!disposed) {
           setPromptStatus(error instanceof Error ? error.message : "Prompt 加载失败");
@@ -212,6 +222,25 @@ export function HomePage({
   }, []);
 
   useEffect(() => {
+    function handlePromptVisibilityChanged() {
+      setHiddenPromptPresetIds(loadHiddenPromptPresetIds());
+    }
+    window.addEventListener("bilisum:prompt-presets-visibility-changed", handlePromptVisibilityChanged);
+    window.addEventListener("storage", handlePromptVisibilityChanged);
+    return () => {
+      window.removeEventListener("bilisum:prompt-presets-visibility-changed", handlePromptVisibilityChanged);
+      window.removeEventListener("storage", handlePromptVisibilityChanged);
+    };
+  }, []);
+
+  useEffect(() => {
+    const visiblePresets = promptPresets.filter((preset) => !hiddenPromptPresetIds.has(preset.id));
+    if (visiblePresets.length && (!promptPresetId || !visiblePresets.some((preset) => preset.id === promptPresetId))) {
+      setPromptPresetId(visiblePresets[0]?.id || "general");
+    }
+  }, [hiddenPromptPresetIds, promptPresetId, promptPresets]);
+
+  useEffect(() => {
     const title = probeUrl.trim();
     if (!title) {
       setRecommendedPromptId(null);
@@ -219,6 +248,10 @@ export function HomePage({
     }
     const timer = window.setTimeout(() => {
       void api.matchPrompt(title).then((result) => {
+        if (hiddenPromptPresetIds.has(result.preset.id)) {
+          setRecommendedPromptId(null);
+          return;
+        }
         setRecommendedPromptId(result.preset.id);
         if (promptRouterMode === "auto") {
           setPromptPresetId(result.preset.id);
@@ -228,7 +261,7 @@ export function HomePage({
       });
     }, 360);
     return () => window.clearTimeout(timer);
-  }, [probeUrl, promptRouterMode]);
+  }, [hiddenPromptPresetIds, probeUrl, promptRouterMode]);
 
   const showPreferenceHint = preferenceMenuOpen && !preferenceHintDismissed;
 
@@ -334,8 +367,9 @@ export function HomePage({
     }
   }
 
-  const selectedPrompt = promptPresets.find((preset) => preset.id === promptPresetId) || promptPresets[0] || null;
-  const recommendedPrompt = promptPresets.find((preset) => preset.id === recommendedPromptId) || null;
+  const selectablePromptPresets = promptPresets.filter((preset) => !hiddenPromptPresetIds.has(preset.id));
+  const selectedPrompt = selectablePromptPresets.find((preset) => preset.id === promptPresetId) || selectablePromptPresets[0] || null;
+  const recommendedPrompt = selectablePromptPresets.find((preset) => preset.id === recommendedPromptId) || null;
   const promptModeLabel = promptRouterMode === "auto" ? "自动" : "确认";
 
   return (
@@ -444,10 +478,10 @@ export function HomePage({
               <select
                 className="select-field home-prompt-select"
                 value={selectedPrompt?.id || promptPresetId}
-                disabled={promptLoading || !promptPresets.length}
+                disabled={promptLoading || !selectablePromptPresets.length}
                 onChange={(event) => updatePromptPreset(event.target.value)}
               >
-                {promptPresets.map((preset) => (
+                {selectablePromptPresets.map((preset) => (
                   <option key={preset.id} value={preset.id}>
                     {preset.name}
                   </option>
